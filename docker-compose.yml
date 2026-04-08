@@ -1,0 +1,13 @@
+services:
+  klblend:
+    build: .
+    container_name: klblend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./runtime:/app/runtime
+      # Keep credentials under ./secrets to avoid host path confusion.
+      - ./secrets/credentials.json:/app/credentials.json:ro
