@@ -284,3 +284,5 @@ When coming back to the project, start by:
 1. Checking `.env` and `credentials.json` still match your Keitaro and Google accounts.
 2. Running `python run_daily_workflow.py --skip-keitaro` to verify Kelkoo + Sheets.
 3. Running `python run_keitaro_sync.py --date <date>` to sync offers/flows from a known good offers sheet.
+#   a d v a n t i x T L B X  
+ 
