@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SK QualityWL</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .muted { color: #9ca3af; }
+    .card { border: 1px solid #374151; border-radius: 8px; padding: 14px; background: #111827; margin-bottom: 16px; }
+    .btn { padding: 8px 10px; border-radius: 6px; border: 1px solid #374151; color: #e5e7eb; background: #1f2937; text-decoration: none; cursor: pointer; }
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+    .toolbar input, .toolbar select { padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #374151; text-align: left; padding: 6px; vertical-align: top; }
+    th { color: #93c5fd; position: sticky; top: 0; background: #111827; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: #bfdbfe; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+    .kpi { border:1px solid #334155; border-radius:8px; padding:10px; background:#0f172a; }
+    .kpi .v { font-size: 22px; font-weight: 700; }
+    .scroll { overflow: auto; max-height: 70vh; border: 1px solid #374151; border-radius: 8px; }
+    a { color: #86efac; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div><a href="/sk">Back to SK tools</a></div>
+  <h1>QualityWL Dashboard</h1>
+  <div class="muted">Spreadsheet: {{ spreadsheet_id }} | Tab: {{ tab }}</div>
+
+  <div class="card">
+    <form method="get" class="toolbar">
+      <label>Rows</label>
+      <input type="number" name="rows" min="50" max="2000" value="{{ rows_limit }}">
+      <button class="btn" type="submit">Reload</button>
+      <a class="btn" href="/sk/qualitywl?refresh=1&rows={{ rows_limit }}">Refresh Cache</a>
+    </form>
+  </div>
+
+  {% if error %}
+    <div class="card"><strong>Error:</strong> {{ error }}</div>
+  {% endif %}
+
+  <div class="card">
+    <div class="grid">
+      <div class="kpi"><div class="muted">Rows</div><div class="v">{{ metrics.total_rows }}</div></div>
+      <div class="kpi"><div class="muted">Active-like</div><div class="v">{{ metrics.active_like }}</div></div>
+      <div class="kpi"><div class="muted">Monetized-like</div><div class="v">{{ metrics.monetized_like }}</div></div>
+      <div class="kpi"><div class="muted">Not monetized-like</div><div class="v">{{ metrics.not_monetized_like }}</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <input id="searchBox" type="text" placeholder="Search any value...">
+      <button id="exportCsv" class="btn" type="button">Export CSV</button>
+      <span class="muted" id="rowsCount"></span>
+    </div>
+    {% if header and rows %}
+    <div class="scroll">
+      <table id="qTable">
+        <thead>
+          <tr>
+            {% for h in header %}
+            <th class="sortable" data-col="{{ loop.index0 }}">{{ h }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody id="qBody">
+          {% for row in rows %}
+          <tr>
+            {% for i in range(header|length) %}
+            <td>{{ row[i] if i < row|length else "" }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="muted">No data in QualityWL.</div>
+    {% endif %}
+  </div>
+
+  <script>
+    (function () {
+      const tbody = document.getElementById("qBody");
+      if (!tbody) return;
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const headers = Array.from(document.querySelectorAll("#qTable th.sortable"));
+      const search = document.getElementById("searchBox");
+      const count = document.getElementById("rowsCount");
+      let sortCol = 0;
+      let sortDir = 1;
+
+      function rowText(r) {
+        return (r.textContent || "").toLowerCase();
+      }
+
+      function applyFilter() {
+        const q = (search.value || "").trim().toLowerCase();
+        let visible = 0;
+        rows.forEach((r) => {
+          const show = !q || rowText(r).includes(q);
+          r.style.display = show ? "" : "none";
+          if (show) visible += 1;
+        });
+        count.textContent = `${visible} shown / ${rows.length} total`;
+      }
+
+      function cellValue(r, col) {
+        const td = r.children[col];
+        return (td ? td.textContent : "").trim();
+      }
+
+      function applySort() {
+        rows.sort((a, b) => {
+          const va = cellValue(a, sortCol);
+          const vb = cellValue(b, sortCol);
+          const na = Number(va), nb = Number(vb);
+          const bothNum = !Number.isNaN(na) && !Number.isNaN(nb) && va !== "" && vb !== "";
+          if (bothNum) return (na - nb) * sortDir;
+          return va.localeCompare(vb) * sortDir;
+        });
+        rows.forEach((r) => tbody.appendChild(r));
+      }
+
+      function updateHeaderState() {
+        headers.forEach((h) => {
+          const base = h.textContent.replace(/\s*[▲▼]$/, "");
+          const idx = Number(h.dataset.col || -1);
+          h.textContent = idx === sortCol ? `${base} ${sortDir === 1 ? "▲" : "▼"}` : base;
+        });
+      }
+
+      function exportCsv() {
+        const lines = [];
+        const headerCells = Array.from(document.querySelectorAll("#qTable thead th")).map((th) => `"${th.textContent.replace(/\s*[▲▼]$/, "").trim().replace(/"/g, '""')}"`);
+        lines.push(headerCells.join(","));
+        rows.forEach((r) => {
+          if (r.style.display === "none") return;
+          const vals = Array.from(r.querySelectorAll("td")).map((td) => `"${td.textContent.trim().replace(/"/g, '""')}"`);
+          lines.push(vals.join(","));
+        });
+        const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "sk_qualitywl_filtered.csv";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      headers.forEach((h) => {
+        h.addEventListener("click", () => {
+          const col = Number(h.dataset.col || 0);
+          if (sortCol === col) sortDir *= -1;
+          else { sortCol = col; sortDir = 1; }
+          applySort();
+          applyFilter();
+          updateHeaderState();
+        });
+      });
+      search.addEventListener("input", applyFilter);
+      document.getElementById("exportCsv").addEventListener("click", exportCsv);
+      applySort();
+      applyFilter();
+      updateHeaderState();
+    })();
+  </script>
+</body>
+</html>
+

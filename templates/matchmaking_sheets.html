@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Match Making - Sheet Bulk Check</title>
+  <style>
+    body { font-family: Inter, Segoe UI, Arial, sans-serif; margin: 0; background: #0b1020; color: #eaf1fb; }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
+    .card { border: 1px solid #2a3654; border-radius: 12px; padding: 14px; background: #121a2b; margin-bottom: 12px; }
+    .muted { color: #9aa4b2; }
+    input, button { padding: 8px 10px; border-radius: 8px; border: 1px solid #2a3654; background: #0d1426; color: #eaf1fb; }
+    button { background: #1d2b47; cursor: pointer; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0d1426; border: 1px solid #2a3654; padding: 10px; border-radius: 10px; max-height: 460px; overflow: auto; }
+    .status-success { color: #22c55e; font-weight: 700; }
+    .status-failed { color: #f59e0b; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Match Making - Sheet Bulk Monetization</h1>
+    <div class="muted">Runs <code>monetization_check.py</code> against the sourceToCheck sheet and writes Matches.</div>
+
+    <div class="card">
+      <form method="post">
+        <label>Max rows (optional)</label><br>
+        <input type="number" name="max_rows" min="1" step="1" placeholder="e.g. 50">
+        <button type="submit">Run Bulk Check</button>
+      </form>
+    </div>
+
+    {% if last_run %}
+    <div class="card">
+      <div><strong>Status:</strong> <span class="status-{{ last_run.status }}">{{ last_run.status }}</span></div>
+      <div class="muted">Finished: {{ last_run.finished_at_utc }} | Duration: {{ last_run.duration_seconds }}s | Exit: {{ last_run.exit_code }}</div>
+      <pre>{{ last_run.log }}</pre>
+    </div>
+    {% endif %}
+
+    <a href="/" style="color:#b9d0ff;">Back to Home</a>
+  </div>
+</body>
+</html>

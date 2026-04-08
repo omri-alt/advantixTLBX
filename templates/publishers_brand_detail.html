@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Publishers Hub - {{ brand_display }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .muted { color: #9ca3af; }
+    .card { border: 1px solid #374151; border-radius: 8px; padding: 14px; background: #111827; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #374151; text-align: left; padding: 8px; }
+    th { color: #93c5fd; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: #bfdbfe; }
+    a { color: #86efac; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div><a href="/publishers/brands">Back to brands</a></div>
+  <h1>Brand: {{ brand_display }}</h1>
+  <div class="muted">Campaigns across all integrated publishers.</div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" data-sort-key="platform">Platform</th>
+          <th class="sortable" data-sort-key="campaign_id">Campaign ID</th>
+          <th class="sortable" data-sort-key="campaign_name">Name</th>
+          <th class="sortable" data-sort-key="status">Status</th>
+          <th class="sortable" data-sort-key="reviewstatus">Review</th>
+          <th class="sortable" data-sort-key="geo">Geo</th>
+          <th class="sortable" data-sort-key="prefix">Prefix</th>
+          <th class="sortable" data-sort-key="alias">Alias</th>
+          <th class="sortable" data-sort-key="merchant_name">Merchant</th>
+          <th class="sortable" data-sort-key="refreshed_at_utc">Refreshed (UTC)</th>
+        </tr>
+      </thead>
+      <tbody id="hubCampaignsTbody">
+        {% for c in campaigns %}
+        <tr
+          data-platform="{{ c.platform|lower }}"
+          data-campaign-id="{{ c.campaign_id }}"
+          data-campaign-name="{{ c.campaign_name|lower }}"
+          data-status="{{ c.status|lower }}"
+          data-reviewstatus="{{ c.reviewstatus|lower }}"
+          data-geo="{{ c.geo|lower }}"
+          data-prefix="{{ c.prefix|lower }}"
+          data-alias="{{ c.alias|lower }}"
+          data-merchant-name="{{ c.merchant_name|lower }}"
+          data-refreshed-at-utc="{{ c.refreshed_at_utc }}"
+        >
+          <td>{{ c.platform }}</td>
+          <td>{{ c.campaign_id }}</td>
+          <td>{{ c.campaign_name }}</td>
+          <td>{{ c.status }}</td>
+          <td>{{ c.reviewstatus }}</td>
+          <td>{{ c.geo }}</td>
+          <td>{{ c.prefix }}</td>
+          <td>{{ c.alias }}</td>
+          <td>{{ c.merchant_name }}</td>
+          <td>{{ c.refreshed_at_utc }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <script>
+    (function () {
+      const tbody = document.getElementById("hubCampaignsTbody");
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const headers = Array.from(document.querySelectorAll("th.sortable"));
+      let sortKey = "status";
+      let sortDir = -1;
+
+      function value(r, key) {
+        switch (key) {
+          case "platform": return r.dataset.platform || "";
+          case "campaign_id": return r.dataset.campaignId || "";
+          case "campaign_name": return r.dataset.campaignName || "";
+          case "status": return r.dataset.status || "";
+          case "reviewstatus": return r.dataset.reviewstatus || "";
+          case "geo": return r.dataset.geo || "";
+          case "prefix": return r.dataset.prefix || "";
+          case "alias": return r.dataset.alias || "";
+          case "merchant_name": return r.dataset.merchantName || "";
+          case "refreshed_at_utc": return r.dataset.refreshedAtUtc || "";
+          default: return "";
+        }
+      }
+
+      function sortRows() {
+        rows.sort((a, b) => String(value(a, sortKey)).localeCompare(String(value(b, sortKey))) * sortDir);
+        rows.forEach((r) => tbody.appendChild(r));
+      }
+
+      function renderHeaderState() {
+        headers.forEach((h) => {
+          const base = h.textContent.replace(/\s*[▲▼]$/, "");
+          h.textContent = h.dataset.sortKey === sortKey ? `${base} ${sortDir === 1 ? "▲" : "▼"}` : base;
+        });
+      }
+
+      headers.forEach((h) => {
+        h.addEventListener("click", () => {
+          const key = h.dataset.sortKey || "";
+          if (!key) return;
+          if (sortKey === key) sortDir *= -1;
+          else {
+            sortKey = key;
+            sortDir = 1;
+          }
+          sortRows();
+          renderHeaderState();
+        });
+      });
+
+      sortRows();
+      renderHeaderState();
+    })();
+  </script>
+</body>
+</html>
+

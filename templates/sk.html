@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SK Tools</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .muted { color: #9ca3af; }
+    .card { border: 1px solid #374151; border-radius: 8px; padding: 14px; background: #111827; margin-bottom: 16px; }
+    .btn { display: inline-block; padding: 8px 10px; border-radius: 6px; border: 1px solid #374151; text-decoration: none; color: #e5e7eb; background: #1f2937; }
+    .btn:hover { background: #243244; }
+    input[type="text"], select { width: 360px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; }
+    button { padding: 8px 12px; background: #22c55e; border: 1px solid #16a34a; border-radius: 6px; color: #052e16; font-weight: 700; cursor: pointer; }
+    button:hover { background: #16a34a; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #374151; text-align: left; padding: 8px; }
+    th { color: #93c5fd; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: #bfdbfe; }
+    pre { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px; max-height: 360px; overflow: auto; white-space: pre-wrap; }
+    a { color: #86efac; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+    .toolbar input, .toolbar select { width:auto; min-width:180px; }
+    .btn-inline { padding: 8px 10px; border-radius: 6px; border: 1px solid #374151; color: #e5e7eb; background: #1f2937; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div><a href="/">Back to dashboard</a></div>
+  <h1>SourceKnowledge Tools</h1>
+  <div class="muted">Brands overview + prefix alias bulk migration.</div>
+  <div style="margin: 10px 0 16px 0;">
+    <a class="btn" href="/sk">SK Brands</a>
+    <a class="btn" href="/sk/qualitywl" style="margin-left:8px;">QualityWL Dashboard</a>
+  </div>
+
+  <div class="card">
+    <h3>Prefix to Alias Migration</h3>
+    <form method="post">
+      <div style="margin:8px 0;">
+        <label>Prefix</label><br>
+        <input type="text" name="prefix" placeholder="KLFIX or KLWL1" required>
+      </div>
+      <div style="margin:8px 0;">
+        <label>New Keitaro alias</label><br>
+        <input type="text" name="alias" placeholder="7VxRF9" required>
+      </div>
+      <div style="margin:8px 0;">
+        <label>Mode</label><br>
+        <select name="mode">
+          <option value="dry-run">Dry run</option>
+          <option value="apply">Apply</option>
+        </select>
+      </div>
+      <div style="margin:8px 0;">
+        <label><input type="checkbox" name="only_active" value="1"> only active campaigns</label>
+      </div>
+      <button type="submit">Run</button>
+    </form>
+    {% if migration_result %}
+      <hr style="border-color:#374151;">
+      <div>Status: <strong>{{ migration_result.status }}</strong> (exit {{ migration_result.exit_code }})</div>
+      <div class="muted">prefix={{ migration_result.prefix }}, alias={{ migration_result.alias }}, mode={{ migration_result.mode }}, only_active={{ migration_result.only_active }}</div>
+      <pre>{{ migration_result.log or "(No output)" }}</pre>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Unique Brands</h3>
+    <div class="toolbar">
+      <input id="brandSearch" type="text" placeholder="Search brand...">
+      <select id="activeFilter">
+        <option value="all">All</option>
+        <option value="yes">Has active = yes</option>
+        <option value="no">Has active = no</option>
+      </select>
+      <button id="exportBrandsCsv" class="btn-inline" type="button">Export CSV</button>
+      <span class="muted" id="brandsCount"></span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" data-sort-key="brand">Brand</th>
+          <th class="sortable" data-sort-key="campaigns_total">Total campaigns</th>
+          <th class="sortable" data-sort-key="active_campaigns">Active</th>
+          <th class="sortable" data-sort-key="inactive_campaigns">Inactive</th>
+          <th class="sortable" data-sort-key="has_active">Has active</th>
+          <th class="sortable" data-sort-key="advertiser_objects_count">Advertiser objects</th>
+        </tr>
+      </thead>
+      <tbody id="brandsTbody">
+      {% for b in brands %}
+        <tr
+          data-brand="{{ b.brand|lower }}"
+          data-has-active="{{ 'yes' if b.has_any_active else 'no' }}"
+          data-campaigns-total="{{ b.campaigns_total }}"
+          data-active-campaigns="{{ b.active_campaigns }}"
+          data-inactive-campaigns="{{ b.inactive_campaigns }}"
+          data-advertiser-objects-count="{{ b.advertiser_objects_count }}"
+        >
+          <td><a href="/sk/brands/{{ b.brand|urlencode }}">{{ b.brand }}</a></td>
+          <td>{{ b.campaigns_total }}</td>
+          <td>{{ b.active_campaigns }}</td>
+          <td>{{ b.inactive_campaigns }}</td>
+          <td>{{ "yes" if b.has_any_active else "no" }}</td>
+          <td>{{ b.advertiser_objects_count }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <script>
+    (function () {
+      const search = document.getElementById("brandSearch");
+      const active = document.getElementById("activeFilter");
+      const tbody = document.getElementById("brandsTbody");
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const count = document.getElementById("brandsCount");
+      const headers = Array.from(document.querySelectorAll("th.sortable"));
+      let sortKey = "";
+      let sortDir = 1;
+
+      function applyFilter() {
+        const q = (search.value || "").trim().toLowerCase();
+        const af = active.value;
+        let visible = 0;
+        rows.forEach((r) => {
+          const brand = r.dataset.brand || "";
+          const hasActive = r.dataset.hasActive || "no";
+          const okQ = !q || brand.includes(q);
+          const okA = af === "all" || hasActive === af;
+          const show = okQ && okA;
+          r.style.display = show ? "" : "none";
+          if (show) visible += 1;
+        });
+        count.textContent = `${visible} shown / ${rows.length} total`;
+      }
+
+      function rowValue(r, key) {
+        switch (key) {
+          case "brand": return r.dataset.brand || "";
+          case "campaigns_total": return Number(r.dataset.campaignsTotal || 0);
+          case "active_campaigns": return Number(r.dataset.activeCampaigns || 0);
+          case "inactive_campaigns": return Number(r.dataset.inactiveCampaigns || 0);
+          case "has_active": return (r.dataset.hasActive || "no") === "yes" ? 1 : 0;
+          case "advertiser_objects_count": return Number(r.dataset.advertiserObjectsCount || 0);
+          default: return "";
+        }
+      }
+
+      function applySort() {
+        if (!sortKey) return;
+        rows.sort((a, b) => {
+          const va = rowValue(a, sortKey);
+          const vb = rowValue(b, sortKey);
+          if (typeof va === "number" && typeof vb === "number") return (va - vb) * sortDir;
+          return String(va).localeCompare(String(vb)) * sortDir;
+        });
+        rows.forEach((r) => tbody.appendChild(r));
+      }
+
+      function updateHeaderLabels() {
+        headers.forEach((h) => {
+          const base = h.textContent.replace(/\s*[▲▼]$/, "");
+          h.textContent = h.dataset.sortKey === sortKey ? `${base} ${sortDir === 1 ? "▲" : "▼"}` : base;
+        });
+      }
+
+      function exportCsv() {
+        const header = ["brand", "campaigns_total", "active_campaigns", "inactive_campaigns", "has_any_active", "advertiser_objects_count"];
+        const lines = [header.join(",")];
+        rows.forEach((r) => {
+          if (r.style.display === "none") return;
+          const cells = Array.from(r.querySelectorAll("td")).map((td) => td.textContent.trim().replace(/"/g, '""'));
+          lines.push(cells.map((v) => `"${v}"`).join(","));
+        });
+        const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "sk_brands_filtered.csv";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      headers.forEach((h) => {
+        h.addEventListener("click", () => {
+          const key = h.dataset.sortKey || "";
+          if (!key) return;
+          if (sortKey === key) sortDir *= -1;
+          else {
+            sortKey = key;
+            sortDir = key === "has_active" ? -1 : 1;
+          }
+          applySort();
+          applyFilter();
+          updateHeaderLabels();
+        });
+      });
+
+      search.addEventListener("input", applyFilter);
+      active.addEventListener("change", applyFilter);
+      document.getElementById("exportBrandsCsv").addEventListener("click", exportCsv);
+      sortKey = "brand";
+      sortDir = 1;
+      applySort();
+      applyFilter();
+      updateHeaderLabels();
+    })();
+  </script>
+</body>
+</html>
+

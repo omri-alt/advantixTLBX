@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Publishers Hub</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .muted { color: #9ca3af; }
+    .card { border: 1px solid #374151; border-radius: 8px; padding: 14px; background: #111827; margin-bottom: 16px; }
+    .btn { padding: 8px 10px; border-radius: 6px; border: 1px solid #374151; color: #e5e7eb; background: #1f2937; cursor: pointer; text-decoration: none; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #374151; text-align: left; padding: 8px; }
+    th { color: #93c5fd; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: #bfdbfe; }
+    a { color: #86efac; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div><a href="/">Back to dashboard</a></div>
+  <h1>Publishers Hub</h1>
+  <div class="muted">Unified brands view across SK + EC.</div>
+
+  <div class="card">
+    <form method="post" style="display:flex; gap:8px; align-items:center;">
+      <button class="btn" type="submit">Refresh Snapshot</button>
+      <a class="btn" href="/publishers/brands?refresh=1">Force Refresh (GET)</a>
+    </form>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" data-sort-key="brand_display">Brand</th>
+          <th class="sortable" data-sort-key="campaigns_total">Total campaigns</th>
+          <th class="sortable" data-sort-key="active_total">Active total</th>
+          <th class="sortable" data-sort-key="sk_total">SK total</th>
+          <th class="sortable" data-sort-key="sk_active">SK active</th>
+          <th class="sortable" data-sort-key="ec_total">EC total</th>
+          <th class="sortable" data-sort-key="ec_active">EC active</th>
+        </tr>
+      </thead>
+      <tbody id="hubBrandsTbody">
+        {% for b in brands %}
+        <tr
+          data-brand-display="{{ b.brand_display|lower }}"
+          data-campaigns-total="{{ b.campaigns_total }}"
+          data-active-total="{{ b.active_total }}"
+          data-sk-total="{{ b.sk_total }}"
+          data-sk-active="{{ b.sk_active }}"
+          data-ec-total="{{ b.ec_total }}"
+          data-ec-active="{{ b.ec_active }}"
+        >
+          <td><a href="/publishers/brands/{{ b.brand_key|urlencode }}">{{ b.brand_display }}</a></td>
+          <td>{{ b.campaigns_total }}</td>
+          <td>{{ b.active_total }}</td>
+          <td>{{ b.sk_total }}</td>
+          <td>{{ b.sk_active }}</td>
+          <td>{{ b.ec_total }}</td>
+          <td>{{ b.ec_active }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <script>
+    (function () {
+      const tbody = document.getElementById("hubBrandsTbody");
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const headers = Array.from(document.querySelectorAll("th.sortable"));
+      let sortKey = "brand_display";
+      let sortDir = 1;
+
+      function value(r, key) {
+        switch (key) {
+          case "brand_display": return r.dataset.brandDisplay || "";
+          case "campaigns_total": return Number(r.dataset.campaignsTotal || 0);
+          case "active_total": return Number(r.dataset.activeTotal || 0);
+          case "sk_total": return Number(r.dataset.skTotal || 0);
+          case "sk_active": return Number(r.dataset.skActive || 0);
+          case "ec_total": return Number(r.dataset.ecTotal || 0);
+          case "ec_active": return Number(r.dataset.ecActive || 0);
+          default: return "";
+        }
+      }
+
+      function sortRows() {
+        rows.sort((a, b) => {
+          const va = value(a, sortKey);
+          const vb = value(b, sortKey);
+          if (typeof va === "number" && typeof vb === "number") return (va - vb) * sortDir;
+          return String(va).localeCompare(String(vb)) * sortDir;
+        });
+        rows.forEach((r) => tbody.appendChild(r));
+      }
+
+      function renderHeaderState() {
+        headers.forEach((h) => {
+          const base = h.textContent.replace(/\s*[▲▼]$/, "");
+          h.textContent = h.dataset.sortKey === sortKey ? `${base} ${sortDir === 1 ? "▲" : "▼"}` : base;
+        });
+      }
+
+      headers.forEach((h) => {
+        h.addEventListener("click", () => {
+          const key = h.dataset.sortKey || "";
+          if (!key) return;
+          if (sortKey === key) sortDir *= -1;
+          else {
+            sortKey = key;
+            sortDir = 1;
+          }
+          sortRows();
+          renderHeaderState();
+        });
+      });
+
+      sortRows();
+      renderHeaderState();
+    })();
+  </script>
+</body>
+</html>
+

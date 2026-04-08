@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SK Tools Sheet</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .muted { color: #9ca3af; }
+    .card { border: 1px solid #374151; border-radius: 8px; padding: 14px; background: #111827; margin-bottom: 16px; }
+    .btn { padding: 8px 10px; border-radius: 6px; border: 1px solid #374151; color: #e5e7eb; background: #1f2937; text-decoration: none; cursor: pointer; }
+    .btn:hover { background: #243244; }
+    select, input { padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #374151; text-align: left; padding: 6px; vertical-align: top; }
+    th { color: #93c5fd; position: sticky; top: 0; background: #111827; }
+    .scroll { overflow: auto; max-height: 70vh; border: 1px solid #374151; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div><a href="/">Back to dashboard</a></div>
+  <h1>SK Tools Sheet</h1>
+  <div class="muted">Spreadsheet ID: {{ spreadsheet_id }}</div>
+
+  <div class="card">
+    <form method="get" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <label>Tab</label>
+      <select name="tab">
+        {% for t in tabs %}
+          <option value="{{ t|e }}" {% if t == selected_tab %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      <label>Rows</label>
+      <input type="number" name="rows" min="20" max="1000" value="{{ rows_limit }}">
+      <button class="btn" type="submit">Load</button>
+      <a class="btn" href="/sk-tools-sheet?refresh=1">Refresh Cache</a>
+    </form>
+  </div>
+
+  {% if error %}
+    <div class="card">
+      <strong>Error:</strong> {{ error }}
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <h3>{{ selected_tab or "No tab selected" }}</h3>
+    {% if rows and rows|length > 0 %}
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              {% for h in rows[0] %}
+                <th>{{ h }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows[1:] %}
+              <tr>
+                {% for i in range(rows[0]|length) %}
+                  <td>{{ row[i] if i < row|length else "" }}</td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="muted" style="margin-top:8px;">Showing {{ (rows|length - 1) if rows|length > 0 else 0 }} rows (excluding header).</div>
+    {% else %}
+      <div class="muted">No data in this tab.</div>
+    {% endif %}
+  </div>
+</body>
+</html>
+

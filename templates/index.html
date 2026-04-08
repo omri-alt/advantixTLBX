@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KLblend MVP</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a2b;
+      --muted: #9aa4b2;
+      --text: #eaf1fb;
+      --line: #27324a;
+      --ok: #22c55e;
+      --bad: #f59e0b;
+      --accent: #4f8cff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, Segoe UI, Arial, sans-serif; background: linear-gradient(180deg, #0b1020, #0d1426 35%, #0b1020); color: var(--text); }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .hero { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 18px; }
+    .title { font-size: 30px; font-weight: 700; margin: 0; }
+    .muted { color: var(--muted); }
+    .nav { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 22px; }
+    .btn { display: inline-block; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); color: var(--text); text-decoration: none; background: #17223a; }
+    .btn:hover { border-color: #3a4e78; background: #1d2b47; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; }
+    .card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 14px; }
+    .card h3 { margin: 0 0 6px; }
+    .wf { border-top: 1px solid var(--line); padding: 10px 0 2px; margin-top: 8px; }
+    .wf:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+    .status-success { color: var(--ok); font-weight: 700; }
+    .status-failed { color: var(--bad); font-weight: 700; }
+    .coming { margin-top: 18px; border: 1px dashed #38507d; border-radius: 14px; padding: 14px; background: #101a2f; }
+    ul { margin: 8px 0 0 18px; }
+    code { color: #b9d0ff; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <h1 class="title">KLblend MVP Control Center</h1>
+        <div class="muted">Minimal working features for launch, with clean sections and run visibility.</div>
+      </div>
+    </div>
+
+    <div class="nav">
+      <a class="btn" href="/github">Connect GitHub</a>
+      <a class="btn" href="/matchmaking/manual">Match Making: Manual Check</a>
+      <a class="btn" href="/matchmaking/sheets">Match Making: Sheet Bulk Check</a>
+    </div>
+
+    <div class="grid">
+      {% for group in groups %}
+      <div class="card">
+        <h3>{{ group.title }}</h3>
+        {% if group.description %}<div class="muted">{{ group.description }}</div>{% endif %}
+        {% for wf in group["items"] %}
+        <div class="wf">
+          <div class="row">
+            <strong>{{ wf.title }}</strong>
+            {% if wf.last_run %}
+            <span class="status-{{ wf.last_run.status }}">{{ wf.last_run.status }}</span>
+            <span class="muted">({{ wf.last_run.finished_at_utc }}, {{ wf.last_run.duration_seconds }}s)</span>
+            {% else %}
+            <span class="muted">No run yet</span>
+            {% endif %}
+          </div>
+          <div class="muted" style="margin:4px 0 8px;">{{ wf.description }}</div>
+          <a class="btn" href="/workflows/{{ wf.key }}">Open</a>
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="coming">
+      <h3 style="margin-top:0;">Coming Soon</h3>
+      <div><strong>Daily Automations</strong></div>
+      <ul>
+        {% for item in coming_soon.daily_automations %}
+        <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+      <div style="margin-top:8px;"><strong>Publisher Tools</strong></div>
+      <ul>
+        {% for item in coming_soon.publisher_tools %}
+        <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body { font-family: 'Segoe UI', sans-serif; padding: 15px; background-color: #f8f9fa; }
+      .header { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 5px; }
+      .scroll-area { max-height: 380px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; background: white; border-radius: 4px; }
+      .row { display: flex; align-items: center; margin-bottom: 8px; }
+      .label { width: 45px; font-weight: bold; color: #555; text-transform: uppercase; font-size: 12px; }
+      input { flex: 1; padding: 6px; border: 1px solid #ced4da; border-radius: 3px; font-size: 12px; }
+      .btn-container { margin-top: 15px; }
+      button { width: 100%; padding: 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 8px; }
+      #runBtn { background-color: #1a73e8; color: white; }
+      #autoFillBtn { background-color: #34a853; color: white; }
+      button:disabled { background-color: #ccc; }
+      #status { margin-top: 10px; font-size: 11px; text-align: center; color: #666; }
+      select { padding: 6px; margin-bottom: 10px; width: 100%; border-radius: 3px; }
+    </style>
+  </head>
+  <body>
+    <div class="header">Global Campaign Audit</div>
+    <p style="font-size: 11px; color: #777;">Account: <strong id="accountLabel">1</strong>. Sheets: {date}_fixim_1, {date}_offers_1.</p>
+    <select id="accountSelect">
+      <option value="1">Account 1</option>
+      <option value="2">Account 2</option>
+    </select>
+
+    <div class="scroll-area" id="form-container"></div>
+
+    <div class="btn-container">
+      <button id="autoFillBtn" onclick="autoFillGreenGeos()">✨ Auto-Fill Green Merchants</button>
+      <button id="runBtn" onclick="startGlobalAudit()">Launch Workflow</button>
+    </div>
+    <div id="status">Ready</div>
+
+    <script>
+      const geos = ['fi', 'fr', 'gr', 'de', 'hu', 'id', 'ie', 'in', 'it', 'mx', 'nl', 'no', 'nz', 'pl', 'pt', 'ro', 'se', 'sk', 'uk', 'us'];
+
+      const container = document.getElementById('form-container');
+      geos.forEach(function (geo) {
+        const div = document.createElement('div');
+        div.className = 'row';
+        div.innerHTML = '<div class="label">' + geo + '</div><input type="text" id="input-' + geo + '" placeholder="Merchant ID">';
+        container.appendChild(div);
+      });
+
+      document.getElementById('accountSelect').onchange = function () {
+        document.getElementById('accountLabel').textContent = this.value;
+      };
+
+      function getAccount() { return parseInt(document.getElementById('accountSelect').value, 10) || 1; }
+
+      function startGlobalAudit() {
+        const btn = document.getElementById('runBtn');
+        const status = document.getElementById('status');
+        const mapping = {};
+        geos.forEach(function (geo) {
+          const val = document.getElementById('input-' + geo).value.trim();
+          if (val) mapping[geo] = val;
+        });
+        if (Object.keys(mapping).length === 0) {
+          alert('Please enter at least one Merchant ID.');
+          return;
+        }
+        const account = getAccount();
+        btn.disabled = true;
+        btn.innerText = 'Processing...';
+        status.innerText = 'Fetching data...';
+
+        google.script.run
+          .withSuccessHandler(function (msg) {
+            btn.disabled = false;
+            btn.innerText = 'Launch Workflow';
+            status.innerText = 'Complete!';
+            alert(msg);
+          })
+          .withFailureHandler(function (err) {
+            btn.disabled = false;
+            btn.innerText = 'Launch Workflow';
+            status.innerText = 'Error';
+            alert('Error: ' + err);
+          })
+          .runMultiCountryAudit(mapping, account);
+      }
+
+      function autoFillGreenGeos() {
+        const status = document.getElementById('status');
+        status.innerText = 'Scanning sheet for green offers...';
+        const account = getAccount();
+        google.script.run
+          .withSuccessHandler(function (mapping) {
+            let count = 0;
+            geos.forEach(function (geo) {
+              const input = document.getElementById('input-' + geo);
+              if (mapping[geo]) {
+                input.value = mapping[geo];
+                count++;
+              } else {
+                input.value = '';
+              }
+            });
+            status.innerText = 'Auto-filled ' + count + ' countries (Account ' + account + ').';
+          })
+          .withFailureHandler(function (err) {
+            alert('Auto-fill failed: ' + err);
+          })
+          .getGreenMerchantsForToday(account);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,563 @@
+#!/usr/bin/env python3
+"""
+Sync Keitaro campaign "Blend" (alias 9Xq9dSMh) from Google Sheet.
+
+Spreadsheet: ``BLEND_SHEETS_SPREADSHEET_ID`` from config (env override).
+Tab: Blend
+
+Expected columns (header row):
+  - brandName
+  - offerUrl
+  - clickCap
+  - geo
+  - merchantId (optional; used by potentialBlends generation)
+
+Behavior:
+  1) Ensure a country flow exists for each geo present in the sheet (name = geo).
+  2) Create/update offers per (geo, brandName) using name `blend_{geo}_{feed}_{slug(brandName)}`.
+     For feed kelkoo1/kelkoo2, offerUrl is passed as merchantUrl inside the same Kelkoo/sidehustle
+     wrapper as Nipuhim (not sent as a bare brand URL).
+  3) Attach offers to the geo flow with weighted shares proportional to clickCap.
+
+Usage:
+  python blend_sync_from_sheet.py
+  python blend_sync_from_sheet.py --geo fr
+"""
+import re
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dotenv import load_dotenv
+load_dotenv()
+
+from config import (
+    BLEND_SHEETS_SPREADSHEET_ID,
+    FEED1_API_KEY,
+    FEED2_API_KEY,
+    FEED1_KELKOO_ACCOUNT_ID,
+    FEED2_KELKOO_ACCOUNT_ID,
+    KELKOO_ACCOUNT_ID,
+    KELKOO_ACCOUNT_ID_2,
+)
+from assistance import (
+    build_offer_action_payload,
+    get_campaigns_data,
+    find_campaign_by_alias_or_name,
+    get_campaign_streams,
+    add_country_flow,
+    flow_name_to_geo,
+    set_flow_offers_weighted,
+)
+from integrations.keitaro import KeitaroClient, KeitaroClientError
+from integrations.kelkoo_search import kelkoo_merchant_link_check
+from workflows.kelkoo_daily import fetch_reports
+
+SPREADSHEET_ID = BLEND_SHEETS_SPREADSHEET_ID
+BLEND_SHEET_NAME = "Blend"
+BLEND_CAMPAIGN_ALIAS = "9Xq9dSMh"
+
+
+def get_credentials_path() -> str:
+    p = Path(__file__).resolve().parent / "credentials.json"
+    if not p.exists():
+        raise FileNotFoundError(f"credentials.json not found at {p}")
+    return str(p)
+
+
+def get_sheets_service():
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+
+    creds = service_account.Credentials.from_service_account_file(get_credentials_path())
+    return build("sheets", "v4", credentials=creds).spreadsheets()
+
+
+def _slug(s: str, max_len: int = 48) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    if not s:
+        return "unknown"
+    return s[:max_len].rstrip("_")
+
+
+@dataclass(frozen=True)
+class BlendRow:
+    brand_name: str
+    offer_url: str
+    click_cap: float
+    geo: str
+    auto_flag: str = "x"
+    feed_tag: str = "kelkoo1"
+    merchant_id: Optional[str] = None
+
+    @property
+    def offer_name(self) -> str:
+        feed_slug = _slug(self.feed_tag, max_len=24)
+        return f"blend_{self.geo}_{feed_slug}_{_slug(self.brand_name)}"
+
+
+def _normalize_geo(g: str) -> str:
+    return (g or "").strip().lower()[:2]
+
+
+def _parse_click_cap(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip().replace(",", "")
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def ensure_blend_sheet_headers(service) -> None:
+    """
+    Ensure the Blend tab has expected headers, and add merchantId if missing.
+    Does not modify any data rows.
+    """
+    quoted = BLEND_SHEET_NAME.replace("'", "''")
+    result = service.values().get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!1:1").execute()
+    rows = result.get("values") or [[]]
+    header = [c.strip() for c in (rows[0] if rows else [])]
+    if not header:
+        header = ["brandName", "offerUrl", "clickCap", "geo", "merchantId"]
+    required = ["brandName", "offerUrl", "clickCap", "geo"]
+    for r in required:
+        if r not in header:
+            header.append(r)
+    if "merchantId" not in header:
+        header.append("merchantId")
+    if "auto" not in header:
+        header.append("auto")
+    if "feed" not in header:
+        header.append("feed")
+    service.values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"'{quoted}'!A1",
+        valueInputOption="RAW",
+        body={"values": [header]},
+    ).execute()
+
+
+def read_blend_rows(service, only_geo: Optional[str] = None) -> List[BlendRow]:
+    quoted = BLEND_SHEET_NAME.replace("'", "''")
+    result = service.values().get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A:Z").execute()
+    rows = result.get("values") or []
+    if not rows:
+        return []
+    header = [str(c).strip() for c in rows[0]]
+    idx = {name.strip().lower(): i for i, name in enumerate(header)}
+
+    def get_cell(row: list, name: str) -> str:
+        i = idx.get((name or "").strip().lower())
+        if i is None or i >= len(row):
+            return ""
+        return str(row[i] or "").strip()
+
+    out: List[BlendRow] = []
+    for row in rows[1:]:
+        brand = get_cell(row, "brandName")
+        url = get_cell(row, "offerUrl")
+        geo = _normalize_geo(get_cell(row, "geo"))
+        cap = _parse_click_cap(get_cell(row, "clickCap"))
+        auto_flag = (get_cell(row, "auto") or "x").strip().lower()
+        feed_tag = (get_cell(row, "feed") or "kelkoo1").strip().lower()
+        mid = get_cell(row, "merchantId") if "merchantId" in idx else ""
+
+        if not brand or not url or not geo or cap is None:
+            continue
+        if cap <= 0:
+            continue
+        if only_geo and geo != only_geo:
+            continue
+        out.append(
+            BlendRow(
+                brand_name=brand,
+                offer_url=url,
+                click_cap=cap,
+                geo=geo,
+                auto_flag=auto_flag,
+                feed_tag=feed_tag,
+                merchant_id=mid or None,
+            )
+        )
+    return out
+
+
+def _kelkoo_api_key_for_feed_tag(feed_tag: str) -> Optional[str]:
+    ft = (feed_tag or "").strip().lower()
+    if ft == "kelkoo1":
+        return FEED1_API_KEY
+    if ft == "kelkoo2":
+        return FEED2_API_KEY
+    return None
+
+
+def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> str:
+    """
+    Kelkoo Blend rows: wrap offerUrl like Nipuhim (merchantUrl in permanentLinkGo / klk-merchant).
+    Other feed values: keep direct URL (e.g. future non-Kelkoo sources).
+    """
+    ft = (feed_tag or "").strip().lower()
+    if ft == "kelkoo1":
+        acc = (FEED1_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID
+        return build_offer_action_payload(geo, offer_url, account_id=acc, feed=1)
+    if ft == "kelkoo2":
+        acc = (FEED2_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID_2
+        return build_offer_action_payload(geo, offer_url, account_id=acc, feed=2)
+    return offer_url
+
+
+def _delete_rows_from_blend_sheet(service, row_numbers_1based: List[int]) -> None:
+    if not row_numbers_1based:
+        return
+    meta = service.get(
+        spreadsheetId=SPREADSHEET_ID,
+        fields="sheets(properties(sheetId,title))",
+    ).execute()
+    sheet_id = None
+    for s in meta.get("sheets", []):
+        if s.get("properties", {}).get("title") == BLEND_SHEET_NAME:
+            sheet_id = s.get("properties", {}).get("sheetId")
+            break
+    if sheet_id is None:
+        raise RuntimeError("Could not find sheetId for Blend tab")
+
+    sorted_rows = sorted(set(row_numbers_1based))
+    # Group contiguous 1-based rows.
+    groups: List[Tuple[int, int]] = []
+    start = prev = sorted_rows[0]
+    for rn in sorted_rows[1:]:
+        if rn == prev + 1:
+            prev = rn
+        else:
+            groups.append((start, prev))
+            start = prev = rn
+    groups.append((start, prev))
+
+    requests = []
+    for first_rn, last_rn in groups:
+        # 0-based startIndex; endIndex is exclusive.
+        # Delete rows [first..last] (1-based inclusive) => startIndex=first-1, endIndex=last.
+        requests.append(
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": int(sheet_id),
+                        "dimension": "ROWS",
+                        "startIndex": int(first_rn - 1),
+                        "endIndex": int(last_rn),
+                    }
+                }
+            }
+        )
+    service.batchUpdate(spreadsheetId=SPREADSHEET_ID, body={"requests": requests}).execute()
+
+
+def _filter_and_delete_non_monetized_auto_rows(
+    service,
+    only_geo: Optional[str],
+) -> int:
+    """
+    For rows with auto='v': check Kelkoo monetization using `feed` (kelkoo1/kelkoo2).
+    Delete rows that are not monetized so they do not receive Blend traffic.
+
+    Note: month-to-date "0 sales" suppression is handled in-memory (for attaching offers),
+    not by deleting sheet rows.
+    """
+    quoted = BLEND_SHEET_NAME.replace("'", "''")
+    result = service.values().get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A:Z").execute()
+    rows = result.get("values") or []
+    if len(rows) < 2:
+        return 0
+    header = [str(c).strip() for c in rows[0]]
+    idx = {name.strip().lower(): i for i, name in enumerate(header)}
+
+    def get_cell(row: list, name: str) -> str:
+        i = idx.get((name or "").strip().lower())
+        if i is None or i >= len(row):
+            return ""
+        return str(row[i] or "").strip()
+
+    to_delete: List[int] = []
+    for row_i, row in enumerate(rows[1:], start=2):  # 1-based sheet rows
+        geo = _normalize_geo(get_cell(row, "geo"))
+        if not geo:
+            continue
+        if only_geo and geo != only_geo:
+            continue
+
+        cap = _parse_click_cap(get_cell(row, "clickCap"))
+        if cap is None or cap <= 0:
+            continue
+
+        auto_flag = (get_cell(row, "auto") or "x").strip().lower()
+        if auto_flag != "v":
+            continue
+
+        brand = get_cell(row, "brandName")
+        url = get_cell(row, "offerUrl")
+        feed_tag = (get_cell(row, "feed") or "kelkoo1").strip().lower()
+        if not brand or not url:
+            continue
+
+        api_key = _kelkoo_api_key_for_feed_tag(feed_tag)
+        if not api_key:
+            # Not a Kelkoo feed we can check yet.
+            continue
+
+        # Legacy monetization gate: if Kelkoo does not consider this merchant as monetizable, delete it.
+        url_norm = (url or "").strip()
+        # Kelkoo expects a URL-like merchantUrl parameter; normalize bare domains.
+        if url_norm and not re.match(r"^https?://", url_norm, flags=re.IGNORECASE):
+            url_norm = "https://" + url_norm.lstrip("/")
+        res = kelkoo_merchant_link_check(url_norm, geo, api_key)
+        if not res.get("found"):
+            to_delete.append(row_i)
+
+    if to_delete:
+        _delete_rows_from_blend_sheet(service, to_delete)
+    return len(to_delete)
+
+
+def _suppress_auto_v_rows_without_mtd_sales(
+    rows: List[BlendRow],
+) -> Tuple[List[BlendRow], int]:
+    """
+    Month-start gating for Take-Down:
+    - Keep monetized Blend rows in the sheet.
+    - If an `auto='v'` merchant has 0 MTD sales, suppress it from being attached
+      to Keitaro flows (so traffic is taken down) until MTD sales becomes > 0.
+    """
+    today = datetime.now(timezone.utc).date()
+
+    month_start = today.replace(day=1).strftime("%Y-%m-%d")
+    month_end = today.strftime("%Y-%m-%d")
+
+    targets = [r for r in rows if (r.auto_flag or "").strip().lower() == "v" and r.merchant_id]
+    if not targets:
+        return rows, 0
+
+    reports_cache: Dict[str, Optional[Dict[str, Dict[str, int]]]] = {}
+    for r in targets:
+        feed_tag = (r.feed_tag or "kelkoo1").strip().lower()
+        if feed_tag in reports_cache:
+            continue
+        api_key = _kelkoo_api_key_for_feed_tag(feed_tag)
+        if not api_key:
+            # Can't verify; don't take down.
+            reports_cache[feed_tag] = None
+            continue
+        try:
+            reports_cache[feed_tag] = fetch_reports(api_key, month_start, month_end)
+        except Exception:
+            # Fail open: if we can't fetch, keep traffic attached to avoid accidental drop.
+            reports_cache[feed_tag] = None
+
+    kept: List[BlendRow] = []
+    suppressed = 0
+    for r in rows:
+        if (r.auto_flag or "").strip().lower() != "v" or not r.merchant_id:
+            kept.append(r)
+            continue
+        feed_tag = (r.feed_tag or "kelkoo1").strip().lower()
+        perf_map = reports_cache.get(feed_tag)
+        if perf_map is None:
+            kept.append(r)
+            continue
+        sales = int((perf_map.get(str(r.merchant_id)) or {}).get("sales", 0) or 0)
+        if sales <= 0:
+            suppressed += 1
+            continue
+        kept.append(r)
+
+    return kept, suppressed
+
+
+def _get_campaign_id_by_alias(alias: str) -> int:
+    campaigns = get_campaigns_data()
+    c = find_campaign_by_alias_or_name(campaigns, alias=alias, name=alias)
+    if not c or c.get("id") is None:
+        raise ValueError(f"Campaign not found by alias/name {alias!r}")
+    return int(c["id"])
+
+
+def _streams_by_geo(campaign_id: int) -> Dict[str, Dict[str, Any]]:
+    streams = get_campaign_streams(campaign_id)
+    out: Dict[str, Dict[str, Any]] = {}
+    for s in streams:
+        g = flow_name_to_geo(s.get("name") or "")
+        if g:
+            out[g] = s
+    return out
+
+
+def _get_offer_id_by_name(client: KeitaroClient, name: str) -> Optional[int]:
+    for o in client.get_offers():
+        if (o.get("name") or "").strip() == name:
+            oid = o.get("id")
+            return int(oid) if oid is not None else None
+    return None
+
+
+def _upsert_offer(client: KeitaroClient, name: str, url: str) -> int:
+    oid = _get_offer_id_by_name(client, name)
+    if oid is None:
+        created = client.create_offer(
+            {
+                "name": name,
+                "action_type": "http",
+                "action_payload": url,
+                "offer_type": "external",
+                "affiliate_network_id": 0,
+                "group_id": 0,
+                "state": "active",
+                "payout_value": 0,
+                "payout_currency": "USD",
+                "payout_type": "CPA",
+                "payout_auto": True,
+                "payout_upsell": True,
+            }
+        )
+        if created.get("id") is None:
+            raise ValueError(f"Create offer {name} did not return id: {created}")
+        return int(created["id"])
+    client.update_offer(oid, {"action_payload": url})
+    return oid
+
+
+def main() -> None:
+    argv = sys.argv[1:]
+    only_geo: Optional[str] = None
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--geo" and i + 1 < len(argv):
+            only_geo = _normalize_geo(argv[i + 1])
+            i += 2
+            continue
+        i += 1
+
+    service = get_sheets_service()
+    ensure_blend_sheet_headers(service)
+    deleted = _filter_and_delete_non_monetized_auto_rows(service, only_geo=only_geo)
+    if deleted:
+        print(f"Auto monetization gate: deleted {deleted} non-monetized Blend rows (auto='v').")
+    rows = read_blend_rows(service, only_geo=only_geo)
+    if not rows:
+        print("No valid rows found in Blend sheet.")
+        return
+
+    # Take-down without deleting sheet rows: on month start we suppress auto='v' merchants
+    # with 0 MTD sales from being attached to Keitaro flows.
+    rows_for_sync, suppressed = _suppress_auto_v_rows_without_mtd_sales(rows)
+    if suppressed:
+        print(f"MTD take-down: suppressed {suppressed} auto='v' Blend rows with 0 MTD sales (no sheet deletions).")
+
+    campaign_id = _get_campaign_id_by_alias(BLEND_CAMPAIGN_ALIAS)
+    print(f"Blend campaign id={campaign_id} alias={BLEND_CAMPAIGN_ALIAS}")
+
+    rows_by_geo: Dict[str, List[BlendRow]] = {}
+    for r in rows_for_sync:
+        rows_by_geo.setdefault(r.geo, []).append(r)
+
+    client = KeitaroClient()
+    streams_by_geo = _streams_by_geo(campaign_id)
+
+    created_offers = 0
+    updated_offers = 0
+    created_flows = 0
+
+    for geo, geo_rows in sorted(rows_by_geo.items()):
+        # 1) Ensure offers exist
+        offer_id_to_weight: Dict[int, float] = {}
+        for r in geo_rows:
+            name = r.offer_name
+            before = _get_offer_id_by_name(client, name)
+            action_payload = _blend_keitaro_action_payload(r.geo, r.offer_url, r.feed_tag)
+            oid = _upsert_offer(client, name, action_payload)
+            offer_id_to_weight[oid] = r.click_cap
+            if before is None:
+                created_offers += 1
+            else:
+                updated_offers += 1
+
+        # 2) Ensure flow exists
+        stream = streams_by_geo.get(geo)
+        if not stream:
+            created = add_country_flow(
+                campaign_id=campaign_id,
+                country_code=geo,
+                flow_name=geo,
+                offer_ids=list(offer_id_to_weight.keys()),
+                skip_if_exists=True,
+            )
+            created_flows += 0 if created.get("_skipped") else 1
+            stream = created
+            streams_by_geo[geo] = stream
+
+        # 3) Set weighted shares on flow
+        sid = int(stream["id"])
+        set_flow_offers_weighted(sid, offer_id_to_weight)
+        print(f"  {geo}: {len(offer_id_to_weight)} offers attached (weighted by clickCap)")
+
+    # If after auto-deletion a geo has no remaining rows in the sheet,
+    # disable all currently attached offers for that geo so we don't keep traffic alive.
+    for geo, stream in streams_by_geo.items():
+        if geo in rows_by_geo:
+            continue
+        sid = int(stream.get("id"))
+        attached_offers = stream.get("offers") or []
+        offers_payload = []
+        for o in attached_offers:
+            oid = o.get("offer_id")
+            if oid is None:
+                continue
+            offers_payload.append({"offer_id": int(oid), "state": "active", "share": 0})
+        if offers_payload:
+            client.update_stream(sid, {"offers": offers_payload})
+
+    # Archive stale Blend offers (offers named like "blend_...") that are not attached to any Blend flow.
+    expected_names = {r.offer_name for r in rows}
+    try:
+        streams_after = get_campaign_streams(campaign_id)
+        attached_offer_ids: set[int] = set()
+        for s in streams_after:
+            for o in s.get("offers") or []:
+                oid = o.get("offer_id")
+                if oid is not None:
+                    attached_offer_ids.add(int(oid))
+        for o in client.get_offers():
+            name = (o.get("name") or "").strip()
+            oid = o.get("id")
+            if not name or oid is None:
+                continue
+            if not name.startswith("blend_"):
+                continue
+            if name in expected_names:
+                continue
+            if int(oid) in attached_offer_ids:
+                continue
+            client.archive_offer(int(oid))
+    except KeitaroClientError as e:
+        print(f"Warning: could not archive stale Blend offers: {e}")
+
+    print()
+    print(f"Done. Offers created={created_offers}, updated={updated_offers}; flows created={created_flows}.")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeitaroClientError, ValueError, FileNotFoundError) as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+

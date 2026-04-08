@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EC Brand - {{ brand }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .muted { color: #9ca3af; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #374151; text-align: left; padding: 8px; }
+    th { color: #93c5fd; }
+    a { color: #86efac; text-decoration: none; }
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:12px 0; }
+    .toolbar input, .toolbar select { padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; }
+    .btn-inline { padding: 8px 10px; border-radius: 6px; border: 1px solid #374151; color: #e5e7eb; background: #1f2937; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div><a href="/ec">Back to EC tools</a></div>
+  <h1>Brand: {{ brand }}</h1>
+  <div class="muted">All EC campaigns for this brand.</div>
+  <div class="toolbar">
+    <input id="campSearch" type="text" placeholder="Search campaign name/id...">
+    <select id="statusFilter">
+      <option value="all">All statuses</option>
+      <option value="active">active</option>
+      <option value="paused">paused</option>
+    </select>
+    <select id="reviewFilter">
+      <option value="all">All review statuses</option>
+      <option value="approved">approved</option>
+      <option value="pending">pending</option>
+      <option value="rejected">rejected</option>
+    </select>
+    <button id="exportCampaignsCsv" class="btn-inline" type="button">Export CSV</button>
+    <span class="muted" id="campaignsCount"></span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Campaign ID</th>
+        <th>Name</th>
+        <th>Status</th>
+        <th>Review</th>
+        <th>Merchant Name</th>
+        <th>Geo</th>
+        <th>Prefix</th>
+        <th>Alias</th>
+      </tr>
+    </thead>
+    <tbody id="campaignsTbody">
+      {% for c in campaigns %}
+      <tr data-status="{{ c.status|lower }}" data-review="{{ c.reviewstatus|lower }}">
+        <td>{{ c.campaign_id }}</td>
+        <td>{{ c.campaign_name }}</td>
+        <td>{{ c.status }}</td>
+        <td>{{ c.reviewstatus }}</td>
+        <td>{{ c.merchant_name }}</td>
+        <td>{{ c.geo }}</td>
+        <td>{{ c.prefix }}</td>
+        <td>{{ c.alias }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <script>
+    (function () {
+      const search = document.getElementById("campSearch");
+      const status = document.getElementById("statusFilter");
+      const review = document.getElementById("reviewFilter");
+      const tbody = document.getElementById("campaignsTbody");
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const count = document.getElementById("campaignsCount");
+
+      function rowMatchesSearch(r, q) {
+        if (!q) return true;
+        const c0 = (r.children[0]?.textContent || "").toLowerCase();
+        const c1 = (r.children[1]?.textContent || "").toLowerCase();
+        const c4 = (r.children[4]?.textContent || "").toLowerCase();
+        const c5 = (r.children[5]?.textContent || "").toLowerCase();
+        return c0.includes(q) || c1.includes(q) || c4.includes(q) || c5.includes(q);
+      }
+
+      function applyFilter() {
+        const q = (search.value || "").trim().toLowerCase();
+        const s = status.value;
+        const rv = review.value;
+        let visible = 0;
+        rows.forEach((r) => {
+          const okS = s === "all" || (r.dataset.status || "") === s;
+          const okR = rv === "all" || (r.dataset.review || "") === rv;
+          const okQ = rowMatchesSearch(r, q);
+          const show = okS && okR && okQ;
+          r.style.display = show ? "" : "none";
+          if (show) visible += 1;
+        });
+        count.textContent = `${visible} shown / ${rows.length} total`;
+      }
+
+      function exportCsv() {
+        const lines = [];
+        const headers = Array.from(document.querySelectorAll("thead th")).map((th) => `"${th.textContent.trim().replace(/"/g, '""')}"`);
+        lines.push(headers.join(","));
+        rows.forEach((r) => {
+          if (r.style.display === "none") return;
+          const cells = Array.from(r.querySelectorAll("td")).map((td) => `"${td.textContent.trim().replace(/"/g, '""')}"`);
+          lines.push(cells.join(","));
+        });
+        const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "ec_brand_campaigns_filtered.csv";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      search.addEventListener("input", applyFilter);
+      status.addEventListener("change", applyFilter);
+      review.addEventListener("change", applyFilter);
+      document.getElementById("exportCampaignsCsv").addEventListener("click", exportCsv);
+      applyFilter();
+    })();
+  </script>
+</body>
+</html>
+

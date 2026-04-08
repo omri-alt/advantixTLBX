@@ -1,0 +1,15 @@
+# Secrets (use .env for real keys; never commit)
+.env
+payloads_dump.json
+credentials.json
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# IDE
+.idea/
+.vscode/

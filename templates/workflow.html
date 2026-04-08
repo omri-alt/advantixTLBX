@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ workflow.title }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .row { margin: 10px 0; }
+    .muted { color: #9ca3af; }
+    .status-success { color: #22c55e; font-weight: 700; }
+    .status-failed { color: #9ca3af; font-weight: 700; }
+    input[type="text"] { width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; }
+    button { padding: 8px 12px; background: #22c55e; border: 1px solid #16a34a; border-radius: 6px; color: #052e16; font-weight: 700; cursor: pointer; }
+    button:hover { background: #16a34a; }
+    pre { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px; max-height: 420px; overflow: auto; white-space: pre-wrap; }
+    a { color: #86efac; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div><a href="/">Back to dashboard</a></div>
+  <h1>{{ workflow.title }}</h1>
+  <div class="muted">{{ workflow.description }}</div>
+
+  <form method="post" class="row">
+    <label for="args_template">Args template (optional)</label><br>
+    <select id="args_template" name="args_template" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+      {% if workflow.args_templates %}
+        {% for t in workflow.args_templates %}
+          <option value="{{ t.value | e }}">{{ t.label }}</option>
+        {% endfor %}
+      {% endif %}
+    </select>
+    <div style="height: 8px;"></div>
+    <label for="extra_args">Command args (optional)</label><br>
+    <input id="extra_args" name="extra_args" type="text" placeholder="{{ workflow.args_hint }}">
+    <button type="submit">Play</button>
+  </form>
+  <script>
+    (function() {
+      const sel = document.getElementById('args_template');
+      const input = document.getElementById('extra_args');
+      if (!sel || !input) return;
+      // When user changes template, overwrite text input.
+      sel.addEventListener('change', function() {
+        input.value = sel.value || '';
+      });
+    })();
+  </script>
+
+  {% if last_run %}
+    <h2>Last Run</h2>
+    <div class="row">
+      Status: <span class="status-{{ last_run.status }}">{{ last_run.status }}</span><br>
+      Started: {{ last_run.started_at_utc }}<br>
+      Finished: {{ last_run.finished_at_utc }}<br>
+      Duration: {{ last_run.duration_seconds }}s<br>
+      Exit code: {{ last_run.exit_code }}
+    </div>
+    <div class="row"><strong>Log</strong></div>
+    <pre>{{ last_run.log or "(No output)" }}</pre>
+  {% else %}
+    <p>No run yet for this workflow.</p>
+  {% endif %}
+</body>
+</html>

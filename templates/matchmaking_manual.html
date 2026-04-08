@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Match Making - Manual Monetization Check</title>
+  <style>
+    body { font-family: Inter, Segoe UI, Arial, sans-serif; margin: 0; background: #0b1020; color: #eaf1fb; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .card { border: 1px solid #2a3654; border-radius: 12px; padding: 14px; background: #121a2b; margin-bottom: 12px; }
+    .muted { color: #9aa4b2; }
+    input, select, button { padding: 8px 10px; border-radius: 8px; border: 1px solid #2a3654; background: #0d1426; color: #eaf1fb; }
+    button { background: #1d2b47; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #2a3654; padding: 8px; text-align: left; }
+    th { background: #17223a; }
+    .ok { color: #22c55e; font-weight: 700; }
+    .bad { color: #f59e0b; font-weight: 700; }
+    .err { color: #f87171; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Match Making - Manual Check</h1>
+    <div class="muted">Enter a domain/URL and check monetization across feeds.</div>
+
+    <div class="card">
+      <form method="post">
+        <label>Domain or URL</label><br>
+        <input type="text" name="domain" value="{{ submitted.domain }}" placeholder="example.com" style="width:min(560px, 100%);"><br><br>
+        <label>Geo</label><br>
+        <select name="geo">
+          <option value="all" {% if submitted.geo == "all" %}selected{% endif %}>All geos</option>
+          <option value="fi" {% if submitted.geo == "fi" %}selected{% endif %}>fi</option>
+          <option value="fr" {% if submitted.geo == "fr" %}selected{% endif %}>fr</option>
+          <option value="de" {% if submitted.geo == "de" %}selected{% endif %}>de</option>
+          <option value="it" {% if submitted.geo == "it" %}selected{% endif %}>it</option>
+          <option value="nl" {% if submitted.geo == "nl" %}selected{% endif %}>nl</option>
+          <option value="uk" {% if submitted.geo == "uk" %}selected{% endif %}>uk</option>
+          <option value="us" {% if submitted.geo == "us" %}selected{% endif %}>us</option>
+        </select>
+        <button type="submit">Run Check</button>
+      </form>
+      {% if error %}
+      <div class="err" style="margin-top:8px;">{{ error }}</div>
+      {% endif %}
+    </div>
+
+    {% if result_rows %}
+    <div class="card">
+      <strong>Results</strong>
+      <table>
+        <thead>
+          <tr>
+            <th>Geo</th>
+            <th>Kelkoo feed1</th>
+            <th>Kelkoo feed2</th>
+            <th>Yadore non-coupon</th>
+            <th>Yadore coupon</th>
+            <th>Feed1 CPC</th>
+            <th>Feed2 CPC</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in result_rows %}
+          <tr>
+            <td>{{ r.geo }}</td>
+            <td class="{{ 'ok' if r.kelkoo1_found else 'bad' }}">{{ 'FOUND' if r.kelkoo1_found else 'NO' }}</td>
+            <td class="{{ 'ok' if r.kelkoo2_found else 'bad' }}">{{ 'FOUND' if r.kelkoo2_found else 'NO' }}</td>
+            <td class="{{ 'ok' if r.yadore_non_coupon_found else 'bad' }}">{{ 'FOUND' if r.yadore_non_coupon_found else 'NO' }}</td>
+            <td class="{{ 'ok' if r.yadore_coupon_found else 'bad' }}">{{ 'FOUND' if r.yadore_coupon_found else 'NO' }}</td>
+            <td>{{ r.kelkoo1_cpc }}</td>
+            <td>{{ r.kelkoo2_cpc }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    <a href="/" style="color:#b9d0ff;">Back to Home</a>
+  </div>
+</body>
+</html>
