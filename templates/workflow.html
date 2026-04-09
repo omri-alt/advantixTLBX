@@ -32,6 +32,16 @@
         {% endfor %}
       {% endif %}
     </select>
+    {% if workflow_key == 'blend' %}
+    <div style="height: 12px;"></div>
+    <label for="blend_feed">Kelkoo feed (potentialBlends)</label><br>
+    <select id="blend_feed" name="blend_feed" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+      <option value="both" selected>Both (kelkoo1 + kelkoo2)</option>
+      <option value="kelkoo1">Feed 1 (kelkoo1)</option>
+      <option value="kelkoo2">Feed 2 (kelkoo2)</option>
+    </select>
+    <div class="muted" style="margin-top:6px;">Required for step 2. Appends <code>--feed …</code> to the command (before your optional args).</div>
+    {% endif %}
     <div style="height: 8px;"></div>
     <label for="extra_args">Command args (optional)</label><br>
     <input id="extra_args" name="extra_args" type="text" placeholder="{{ workflow.args_hint }}">

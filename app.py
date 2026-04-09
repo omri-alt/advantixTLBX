@@ -32,6 +32,8 @@ from workflows.campaign_setup import run_create_campaign_workflow
 from integrations.keitaro import KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
 from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
+from integrations.adexa import links_merchant_check as adexa_links_check, AdexaClientError
+from integrations.monetization_geo import geo_for_adexa, yadore_feed_class
 from assistance import (
     get_campaigns_data,
     clone_campaign_copy,
@@ -364,14 +366,15 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "script": "run_blend_workflow.py",
         "description": "Sync Blend offers/flows and potentialBlends.",
         "group": "daily-automations",
-        "args_hint": "Optional args, e.g. --geo fr --skip-potential",
+        "args_hint": "Optional args, e.g. --geo fr --skip-potential (feed: use dropdown)",
         "args_templates": [
-            {"label": "Default (all)", "value": ""},
+            {"label": "Default (extra args empty)", "value": ""},
             {"label": "Geo only (example)", "value": "--geo fr"},
             {"label": "Geo + Skip potential (example)", "value": "--geo fr --skip-potential"},
             {"label": "Only potential (no sync)", "value": "--only-potential"},
             {"label": "Skip potential", "value": "--skip-potential"},
             {"label": "Range (example)", "value": "--start 2026-03-01 --end 2026-03-10"},
+            {"label": "Only monetized merchants (example)", "value": "--only-monetized"},
         ],
     },
     "monetization-check": {
@@ -741,6 +744,13 @@ def ui_matchmaking_manual():
                     y_c_found = bool(y_c.get("found"))
                 except YadoreClientError:
                     y_c_found = False
+                try:
+                    ax = adexa_links_check(domain, geo_for_adexa(g))
+                    adexa_found = bool(ax.get("found"))
+                    adexa_note = str(ax.get("note") or "")
+                except AdexaClientError as e:
+                    adexa_found = False
+                    adexa_note = str(e)[:120]
                 result_rows.append(
                     {
                         "geo": g,
@@ -748,6 +758,9 @@ def ui_matchmaking_manual():
                         "kelkoo2_found": bool(k2.get("found")),
                         "yadore_non_coupon_found": y_nc_found,
                         "yadore_coupon_found": y_c_found,
+                        "yadore_class": yadore_feed_class(y_nc_found, y_c_found),
+                        "adexa_found": adexa_found,
+                        "adexa_note": adexa_note,
                         "kelkoo1_cpc": str(k1.get("estimatedCpc", "")),
                         "kelkoo2_cpc": str(k2.get("estimatedCpc", "")),
                     }
@@ -1083,9 +1096,16 @@ def ui_sk_qualitywl():
                 monet_val = (str(row[idx_monet]).strip().lower() if idx_monet >= 0 and idx_monet < len(row) else "")
                 if status_val in ("active", "running", "live", "approved"):
                     metrics["active_like"] += 1
-                if "not_monet" in monet_val or monet_val in ("no", "false"):
+                if "not_monet" in monet_val or monet_val in ("no", "false", "none"):
                     metrics["not_monetized_like"] += 1
-                elif "monet" in monet_val or monet_val in ("yes", "true", "any"):
+                elif "monet" in monet_val or monet_val in (
+                    "yes",
+                    "true",
+                    "any",
+                    "both",
+                    "non_coupon_only",
+                    "coupon_only",
+                ):
                     metrics["monetized_like"] += 1
     except Exception as e:
         error = str(e)
@@ -1110,6 +1130,18 @@ def ui_workflow(workflow_key: str):
     current_run = None
     if request.method == "POST":
         extra_args = (request.form.get("extra_args") or "").strip()
+        if workflow_key == "blend":
+            bf = (request.form.get("blend_feed") or "both").strip().lower()
+            if bf in ("kelkoo1", "kelkoo2", "both"):
+                # Avoid duplicate --feed if user pasted one in the text box; dropdown wins.
+                extra_args = re.sub(
+                    r"--feed\s+(kelkoo1|kelkoo2|both)\b",
+                    "",
+                    extra_args,
+                    flags=re.IGNORECASE,
+                )
+                extra_args = " ".join(extra_args.split())
+                extra_args = f"--feed {bf} {extra_args}".strip()
         current_run = _run_workflow(workflow_key, extra_args)
     last_run = current_run or _load_last_run(workflow_key)
     return render_template(

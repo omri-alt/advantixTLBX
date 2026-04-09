@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
-Monetization checker (Kelkoo feed1 + Yadore feed3) driven by Google Sheets.
+Monetization checker (Kelkoo feed1/2, Yadore feed3, Adexa feed4) driven by Google Sheets.
 
 Spreadsheet: 1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0
 Input sheet: sourceToCheck (columns: url, geo)
 Output sheet: Matches
 
 For each (url, geo):
-  - Kelkoo link check: GET /publisher/shopping/v2/search/link?country=..&merchantUrl=..
-  - Yadore deeplink: POST /v2/deeplink
+  - Kelkoo link check (feed1/2): GET …/search/link
+  - Yadore deeplink (feed3): POST /v2/deeplink with ``isCouponing`` false and true
+  - Adexa Link Monetizer (feed4): GET …/LinksMerchant.php
 
-Writes one row per input line with statuses and deeplink details.
+Writes one row per input line with statuses and CPC fields where available.
 
 Usage:
   python monetization_check.py
 """
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -27,10 +29,15 @@ load_dotenv()
 from config import FEED1_API_KEY, FEED2_API_KEY
 from integrations.kelkoo_search import kelkoo_merchant_link_check as kelkoo_check
 from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
+from integrations.adexa import links_merchant_check as adexa_links_check, AdexaClientError
+from integrations.monetization_geo import geo_for_adexa, yadore_feed_class
 
 SPREADSHEET_ID = "1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0"
 INPUT_SHEET = "sourceToCheck"
 OUTPUT_SHEET = "Matches"
+
+# Parallel HTTP calls per row (Kelkoo×2 + Yadore×2 + Adexa).
+_ROW_POOL_WORKERS = 5
 
 
 def get_credentials_path() -> str:
@@ -92,6 +99,57 @@ def read_source_rows(service) -> List[Tuple[str, str]]:
     return out
 
 
+def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
+    """Run all feed checks for one row in parallel (same network time ≈ one slowest call)."""
+
+    def _k1() -> Dict[str, Any]:
+        return kelkoo_check(url, geo, FEED1_API_KEY)
+
+    def _k2() -> Dict[str, Any]:
+        return kelkoo_check(url, geo, FEED2_API_KEY)
+
+    def _ync() -> Dict[str, Any]:
+        try:
+            return yadore_deeplink(url, geo, is_couponing=False)
+        except YadoreClientError:
+            return {"found": False, "estimatedCpc_amount": "", "estimatedCpc_currency": ""}
+
+    def _yc() -> Dict[str, Any]:
+        try:
+            return yadore_deeplink(url, geo, is_couponing=True)
+        except YadoreClientError:
+            return {"found": False, "estimatedCpc_amount": "", "estimatedCpc_currency": ""}
+
+    def _ax() -> Dict[str, Any]:
+        try:
+            return adexa_links_check(url, geo_for_adexa(geo))
+        except AdexaClientError as e:
+            return {"found": False, "note": str(e)[:200]}
+
+    futures = {}
+    with ThreadPoolExecutor(max_workers=_ROW_POOL_WORKERS) as ex:
+        futures[ex.submit(_k1)] = "k1"
+        futures[ex.submit(_k2)] = "k2"
+        futures[ex.submit(_ync)] = "ync"
+        futures[ex.submit(_yc)] = "yc"
+        futures[ex.submit(_ax)] = "ax"
+
+    out: Dict[str, Any] = {}
+    for fut in as_completed(futures):
+        key = futures[fut]
+        try:
+            out[key] = fut.result()
+        except Exception as e:
+            if key == "k1" or key == "k2":
+                out[key] = {"found": False, "estimatedCpc": ""}
+            elif key in ("ync", "yc"):
+                out[key] = {"found": False, "estimatedCpc_amount": "", "estimatedCpc_currency": ""}
+            else:
+                out[key] = {"found": False, "note": str(e)[:200]}
+
+    return out
+
+
 def main() -> None:
     argv = sys.argv[1:]
     max_rows = None
@@ -111,6 +169,8 @@ def main() -> None:
         "yadore_monetization",
         "yadore_nc_found",
         "yadore_c_found",
+        "adexa_found",
+        "adexa_note",
         "kelkoo1_found",
         "kelkoo2_found",
         "yadore_nc_cpc",
@@ -134,35 +194,24 @@ def main() -> None:
     total = len(rows)
     for idx, (url, geo) in enumerate(rows, start=1):
         print(f"[{idx}/{total}] {geo} {url[:60]}...")
-        k1 = kelkoo_check(url, geo, FEED1_API_KEY)
-        k2 = kelkoo_check(url, geo, FEED2_API_KEY)
-        # Yadore: check both non-coupon and coupon traffic
-        try:
-            y_nc = yadore_deeplink(url, geo, is_couponing=False)
-            y_nc_found = bool(y_nc.get("found"))
-            y_nc_cpc = y_nc.get("estimatedCpc_amount") or ""
-            y_nc_cur = y_nc.get("estimatedCpc_currency") or ""
-        except YadoreClientError:
-            y_nc_found = False
-            y_nc_cpc = ""
-            y_nc_cur = ""
+        r = _run_row_checks(url, geo)
+        k1 = r["k1"]
+        k2 = r["k2"]
+        y_nc = r["ync"]
+        y_c = r["yc"]
+        ax = r["ax"]
 
-        try:
-            y_c = yadore_deeplink(url, geo, is_couponing=True)
-            y_c_found = bool(y_c.get("found"))
-            y_c_cpc = y_c.get("estimatedCpc_amount") or ""
-            y_c_cur = y_c.get("estimatedCpc_currency") or ""
-        except YadoreClientError:
-            y_c_found = False
-            y_c_cpc = ""
-            y_c_cur = ""
+        y_nc_found = bool(y_nc.get("found"))
+        y_nc_cpc = y_nc.get("estimatedCpc_amount") or ""
+        y_nc_cur = y_nc.get("estimatedCpc_currency") or ""
+        y_c_found = bool(y_c.get("found"))
+        y_c_cpc = y_c.get("estimatedCpc_amount") or ""
+        y_c_cur = y_c.get("estimatedCpc_currency") or ""
 
-        if y_nc_found:
-            y_class = "any"
-        elif y_c_found:
-            y_class = "coupons_only"
-        else:
-            y_class = "no"
+        y_class = yadore_feed_class(y_nc_found, y_c_found)
+
+        ax_found = bool(ax.get("found"))
+        ax_note = str(ax.get("note") or "")
 
         out_rows.append(
             [
@@ -172,6 +221,8 @@ def main() -> None:
                 y_class,
                 str(y_nc_found),
                 str(y_c_found),
+                str(ax_found),
+                ax_note,
                 str(bool(k1.get("found"))),
                 str(bool(k2.get("found"))),
                 str(y_nc_cpc),

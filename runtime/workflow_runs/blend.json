@@ -3,13 +3,18 @@
   "workflow_title": "Blend Workflow",
   "status": "success",
   "exit_code": 0,
-  "started_at_utc": "2026-03-26T08:02:40Z",
-  "finished_at_utc": "2026-03-26T08:03:44Z",
-  "duration_seconds": 63.57,
+  "started_at_utc": "2026-04-08T15:50:30Z",
+  "finished_at_utc": "2026-04-08T15:52:07Z",
+  "duration_seconds": 96.85,
   "command": [
     "C:\\Python314\\python.exe",
-    "C:\\Users\\Acer\\KLblend\\run_blend_workflow.py"
+    "C:\\Users\\Acer\\KLblend\\run_blend_workflow.py",
+    "--feed",
+    "kelkoo1"
   ],
-  "args": [],
-  "log": "Blend campaign id=2 alias=9Xq9dSMh\n  de: 4 offers attached (weighted by clickCap)\n  fr: 2 offers attached (weighted by clickCap)\n\nDone. Offers created=0, updated=6; flows created=0.\nKelkoo reports (feed1): 2026-03-01 -> 2026-03-25\nWrote 13 potential blends to sheet 'potentialBlends' (min_sales=1, min_leads=0).\n1) Syncing Blend offers/flows to Keitaro ...\n\n2) Generating potentialBlends from Kelkoo reports ...\n\nMerchants id: status 403"
+  "args": [
+    "--feed",
+    "kelkoo1"
+  ],
+  "log": "Blend campaign id=2 alias=9Xq9dSMh\n  at: 1 offers attached (weighted by clickCap)\n  de: 6 offers attached (weighted by clickCap)\n  fr: 6 offers attached (weighted by clickCap)\n  no: 1 offers attached (weighted by clickCap)\n  se: 1 offers attached (weighted by clickCap)\n  uk: 4 offers attached (weighted by clickCap)\nWarning: could not archive stale Blend offers: Keitaro API error: 404\n\nDone. Offers created=0, updated=21; flows created=0.\nKelkoo reports (kelkoo1): 2026-04-01 -> 2026-04-07\nWrote 15 rows to 'potentialKelkoo1'. Checked=15. only_monetized=False\n1) Syncing Blend offers/flows to Keitaro ...\n\n2) Generating potentialBlends from Kelkoo reports (kelkoo1) ...\n\nMerchants id: status 403"
 }

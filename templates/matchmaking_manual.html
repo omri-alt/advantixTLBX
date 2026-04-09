@@ -55,8 +55,10 @@
             <th>Geo</th>
             <th>Kelkoo feed1</th>
             <th>Kelkoo feed2</th>
+            <th>Yadore class</th>
             <th>Yadore non-coupon</th>
             <th>Yadore coupon</th>
+            <th>Adexa</th>
             <th>Feed1 CPC</th>
             <th>Feed2 CPC</th>
           </tr>
@@ -67,8 +69,10 @@
             <td>{{ r.geo }}</td>
             <td class="{{ 'ok' if r.kelkoo1_found else 'bad' }}">{{ 'FOUND' if r.kelkoo1_found else 'NO' }}</td>
             <td class="{{ 'ok' if r.kelkoo2_found else 'bad' }}">{{ 'FOUND' if r.kelkoo2_found else 'NO' }}</td>
+            <td class="muted">{{ r.yadore_class }}</td>
             <td class="{{ 'ok' if r.yadore_non_coupon_found else 'bad' }}">{{ 'FOUND' if r.yadore_non_coupon_found else 'NO' }}</td>
             <td class="{{ 'ok' if r.yadore_coupon_found else 'bad' }}">{{ 'FOUND' if r.yadore_coupon_found else 'NO' }}</td>
+            <td class="{{ 'ok' if r.adexa_found else 'bad' }}">{{ 'FOUND' if r.adexa_found else 'NO' }}{% if r.adexa_note %} <span class="muted" title="{{ r.adexa_note }}">({{ r.adexa_note[:24] }}{% if r.adexa_note|length > 24 %}…{% endif %})</span>{% endif %}</td>
             <td>{{ r.kelkoo1_cpc }}</td>
             <td>{{ r.kelkoo2_cpc }}</td>
           </tr>

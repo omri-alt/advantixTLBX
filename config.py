@@ -133,3 +133,19 @@ if not YADORE_PROJECT_ID:
     YADORE_PROJECT_ID = _read_env_fallback("YADORE_PROJECT_ID")
 YADORE_PROJECT_ID = (YADORE_PROJECT_ID or "").strip().lstrip("= ").strip().strip('"').strip("'")
 
+# Adexa (feed4) — site ID + API key (GetMerchant, feeds). Names from .env:
+#   ADEXA_SITE_ID or AdexSiteID | ADEXA_API_KEY or KeyAdex or KEY_ADEX
+ADEXA_SITE_ID = (os.getenv("ADEXA_SITE_ID") or os.getenv("AdexSiteID") or "").strip()
+if not ADEXA_SITE_ID:
+    ADEXA_SITE_ID = _read_env_fallback("ADEXA_SITE_ID") or _read_env_fallback("AdexSiteID")
+ADEXA_SITE_ID = (ADEXA_SITE_ID or "").strip().lstrip("= ").strip().strip('"').strip("'")
+
+ADEXA_API_KEY = (os.getenv("ADEXA_API_KEY") or os.getenv("KeyAdex") or os.getenv("KEY_ADEX") or "").strip()
+if not ADEXA_API_KEY:
+    ADEXA_API_KEY = (
+        _read_env_fallback("ADEXA_API_KEY")
+        or _read_env_fallback("KeyAdex")
+        or _read_env_fallback("KEY_ADEX")
+    )
+ADEXA_API_KEY = (ADEXA_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
+

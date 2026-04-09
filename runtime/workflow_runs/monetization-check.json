@@ -1,0 +1,15 @@
+{
+  "workflow_key": "monetization-check",
+  "workflow_title": "Monetization Check",
+  "status": "success",
+  "exit_code": 0,
+  "started_at_utc": "2026-04-09T06:31:07Z",
+  "finished_at_utc": "2026-04-09T06:32:40Z",
+  "duration_seconds": 92.56,
+  "command": [
+    "C:\\Python314\\python.exe",
+    "C:\\Users\\Acer\\KLblend\\monetization_check.py"
+  ],
+  "args": [],
+  "log": "[1/64] fr https://www.boulanger.com...\n[2/64] fr https://www.my-origines.com...\n[3/64] fr https://www.vertbaudet.fr...\n[4/64] fr https://www.primor.eu...\n[5/64] fr https://www.uniqlo.com...\n[6/64] fr https://www.wyylde.com...\n[7/64] fr https://www.deporvillage.fr...\n[8/64] fr https://www.histoiredor.com...\n[9/64] fr https://www.airfrance.fr...\n[10/64] fr https://www.aboutyou.com...\n[11/64] fr https://www.amazon.fr...\n[12/64] fr https://www.la-becanerie.com...\n[13/64] fr https://www.pierreetvacances.com...\n[14/64] fr https://www.parfumdo.com...\n[15/64] fr https://www.metaffiliation.com...\n[16/64] fr https://www.certideal.com...\n[17/64] fr https://www.burga.fr...\n[18/64] fr https://www.adopt.com...\n[19/64] fr https://www.manomano.fr...\n[20/64] fr https://www.fram.fr...\n[21/64] fr https://www.racetools.fr...\n[22/64] fr https://www.uber.com...\n[23/64] fr https://www.mms.com...\n[24/64] fr https://www.woodbrass.com...\n[25/64] fr https://www.animalis.com...\n[26/64] fr https://www.ullapopken.fr...\n[27/64] fr https://www.eram.fr...\n[28/64] fr https://www.3suisses.fr...\n[29/64] fr https://www.carrefour.fr...\n[30/64] fr https://www.gfl85trk.com...\n[31/64] fr https://www.fdj.fr...\n[32/64] fr https://www.moulinex.fr...\n[33/64] fr https://www.camif.fr...\n[34/64] to https://www.temu.to...\n[35/64] fr https://www.corsica-ferries.fr...\n[36/64] fr https://www.nannybag.com...\n[37/64] fr https://www.winparts.fr...\n[38/64] fr https://www.psg.fr...\n[39/64] fr https://www.asos.com...\n[40/64] fr https://www.guess.eu...\n[41/64] fr https://www.1001pneus.fr...\n[42/64] fr https://www.cdiscount.com...\n[43/64] fr https://www.rowenta.fr...\n[44/64] fr https://www.jott.com...\n[45/64] fr https://www.123consommables.com...\n[46/64] fr https://www.vvf.fr...\n[47/64] fr https://www.bricorama.fr...\n[48/64] fr https://www.paulaschoice.fr...\n[49/64] fr https://www.carhartt-wip.com...\n[50/64] fr https://www.selency.fr...\n[51/64] fr https://www.maison123.com...\n[52/64] fr https://www.loccitane.com...\n[53/64] fr https://www.ubereats.com...\n[54/64] fr https://www.temu.com...\n[55/64] fr https://www.labellevie.com...\n[56/64] fr https://www.erborian.com...\n[57/64] fr https://www.ekoi.fr...\n[58/64] fr https://www.promosejours.com...\n[59/64] fr https://www.affilae.com...\n[60/64] fr https://www.sandro-paris.com...\n[61/64] fr https://www.miles-and-more.com...\n[62/64] fr https://www.net-a-porter.com...\n[63/64] fr https://www.fossil.com...\n[64/64] fr https://www.123gelules.com...\nWrote 64 rows to Matches."
+}

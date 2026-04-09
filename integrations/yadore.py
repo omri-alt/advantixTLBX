@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from config import YADORE_API_KEY, YADORE_PROJECT_ID
+from integrations.monetization_geo import geo_for_yadore
 
 YADORE_BASE_URL = "https://api.yadore.com"
 
@@ -42,7 +43,7 @@ def deeplink(
         "API-Key": token,
     }
     payload = {
-        "market": (geo or "").strip().lower(),
+        "market": geo_for_yadore(geo or ""),
         "placementId": placement_id,
         "isCouponing": bool(is_couponing),
         "urls": [{"url": url}],
@@ -100,7 +101,7 @@ def direct_redirect_probe(
     endpoint = f"{base_url.rstrip('/')}/v2/d"
     params = {
         "url": url,
-        "market": (geo or "").strip().lower(),
+        "market": geo_for_yadore(geo or ""),
         "placementId": placement_id,
         "isCouponing": "true" if is_couponing else "false",
     }
