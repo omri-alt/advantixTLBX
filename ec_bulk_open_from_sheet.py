@@ -15,7 +15,7 @@ configurable Keitaro ``alias`` (trck path) and affiliation ``prefix`` (sub_id_6 
 
 Examples:
   python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --dry-run
-  python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --tab bulkEC-KLFIX --apply
+  python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --tab bulk --apply
 """
 from __future__ import annotations
 
@@ -38,7 +38,8 @@ from config import (  # noqa: E402
     EC_SHEETS_SPREADSHEET_ID,
 )
 
-DEFAULT_INPUT_TAB = "bulkEC-KLFIX"
+# Default tab name in the EC spreadsheet (also accepts gid from URL, case-insensitive match).
+DEFAULT_INPUT_TAB = "bulk"
 REQUEST_TIMEOUT = 60
 COOLDOWN_SECONDS = 30
 ROW_DELAY_SECONDS = 15
@@ -138,6 +139,58 @@ def _build_tracking_url(brand_key: str, geo_sheet: str, hp_fallback: str, prefix
     return f"https://shopli.city/raini?rain={rain}"
 
 
+def _sheet_title_a1_range(title: str, cell_range: str = "A:Z") -> str:
+    """Build an A1 range with proper quoting for Google Sheets API."""
+    q = title.replace("'", "''")
+    return f"'{q}'!{cell_range}"
+
+
+def _resolve_sheet_title(service: Any, spreadsheet_id: str, tab: str) -> str:
+    """
+    Match user input to a real sheet tab title.
+
+    - Exact match, then case-insensitive match (handles casing / stray spaces).
+    - If ``tab`` is all digits, treat it as the sheet **gid** from the URL
+      (e.g. ...#gid=1288950387) and resolve by sheetId.
+    """
+    tab = (tab or "").strip()
+    if not tab:
+        raise RuntimeError("Empty sheet tab name.")
+
+    meta = service.get(spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId,title))").execute()
+    sheets = meta.get("sheets") or []
+    pairs: list[tuple[int | None, str]] = []
+    for s in sheets:
+        p = s.get("properties") or {}
+        sid = p.get("sheetId")
+        title = (p.get("title") or "").strip()
+        if title:
+            pairs.append((int(sid) if sid is not None else None, title))
+
+    titles = [t for _, t in pairs]
+
+    if tab in titles:
+        return tab
+    tab_lower = tab.lower()
+    for _, title in pairs:
+        if title.lower() == tab_lower:
+            return title
+
+    if tab.isdigit():
+        want = int(tab)
+        for sid, title in pairs:
+            if sid == want:
+                return title
+
+    preview = ", ".join(titles[:45])
+    more = f" … (+{len(titles) - 45} more)" if len(titles) > 45 else ""
+    raise RuntimeError(
+        f"Sheet tab {tab!r} not found in this spreadsheet. "
+        f"Use the exact tab name, or paste the numeric gid from the URL (#gid=…). "
+        f"Available ({len(titles)}): {preview}{more}"
+    )
+
+
 def _read_input_rows(tab_name: str) -> list[dict[str, str]]:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -145,8 +198,9 @@ def _read_input_rows(tab_name: str) -> list[dict[str, str]]:
     creds = service_account.Credentials.from_service_account_file(_get_credentials_path())
     service = build("sheets", "v4", credentials=creds).spreadsheets()
 
-    quoted = tab_name.replace("'", "''")
-    res = service.values().get(spreadsheetId=EC_SHEETS_SPREADSHEET_ID, range=f"'{quoted}'!A:Z").execute()
+    resolved = _resolve_sheet_title(service, EC_SHEETS_SPREADSHEET_ID, tab_name)
+    rng = _sheet_title_a1_range(resolved, "A:Z")
+    res = service.values().get(spreadsheetId=EC_SHEETS_SPREADSHEET_ID, range=rng).execute()
     values = res.get("values") or []
     if not values:
         return []
@@ -174,7 +228,7 @@ def _read_input_rows(tab_name: str) -> list[dict[str, str]]:
     if i_fb < 0:
         missing.append("hpfb or fbhp")
     if missing:
-        _usage_error(f"Input tab {tab_name!r} missing columns: {', '.join(missing)}")
+        _usage_error(f"Input tab {resolved!r} missing columns: {', '.join(missing)}")
 
     out: list[dict[str, str]] = []
     for r in values[1:]:

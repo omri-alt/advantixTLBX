@@ -960,7 +960,7 @@ def ui_ec():
     if request.method == "POST":
         prefix = (request.form.get("prefix") or "").strip()
         alias = (request.form.get("alias") or "").strip()
-        tab = (request.form.get("tab") or "bulkEC-KLFIX").strip()
+        tab = (request.form.get("tab") or "bulk").strip()
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         apply = mode == "apply"
 
