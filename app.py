@@ -882,111 +882,41 @@ def ui_matchmaking_sheets():
 
 @app.route("/sk", methods=["GET", "POST"])
 def ui_sk():
-    refresh = (request.args.get("refresh") or "").strip().lower() in ("1", "true", "yes")
-    if refresh:
-        _cache_clear("sk:")
-
-    migration_result = None
     bulk_open_result = None
     if request.method == "POST":
-        action = (request.form.get("action") or "prefix-alias-migration").strip().lower()
         prefix = (request.form.get("prefix") or "").strip()
         alias = (request.form.get("alias") or "").strip()
+        tab = (request.form.get("tab") or "bulkSK-KLFIX").strip()
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         apply = mode == "apply"
 
-        if action == "bulk-open":
-            tab = (request.form.get("tab") or "bulkSK-KLFIX").strip()
-            if prefix and alias and tab:
-                script = ROOT_DIR / "sk_bulk_open_from_sheet.py"
-                args = [
-                    sys.executable,
-                    str(script),
-                    "--prefix",
-                    prefix,
-                    "--alias",
-                    alias,
-                    "--tab",
-                    tab,
-                    "--apply" if apply else "--dry-run",
-                ]
-                proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
-                output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
-                bulk_open_result = {
-                    "status": "success" if proc.returncode == 0 else "failed",
-                    "exit_code": proc.returncode,
-                    "log": output[-20000:],
-                    "prefix": prefix,
-                    "alias": alias,
-                    "tab": tab,
-                    "mode": "apply" if apply else "dry-run",
-                }
-                _cache_clear("sk:")
-        else:
-            only_active = bool(request.form.get("only_active"))
-            if prefix and alias:
-                script = ROOT_DIR / "migrate_sk_prefix_alias.py"
-                args = [sys.executable, str(script), "--prefix", prefix, "--alias", alias, "--apply" if apply else "--dry-run"]
-                if only_active:
-                    args.append("--only-active")
-                proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
-                output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
-                migration_result = {
-                    "status": "success" if proc.returncode == 0 else "failed",
-                    "exit_code": proc.returncode,
-                    "log": output[-20000:],
-                    "prefix": prefix,
-                    "alias": alias,
-                    "mode": "apply" if apply else "dry-run",
-                    "only_active": only_active,
-                }
-                _cache_clear("sk:")
-
-    campaigns = _sk_list_campaigns(only_active=False)
-    by_brand: dict[str, dict[str, Any]] = {}
-    for camp in campaigns:
-        adv = camp.get("advertiser") if isinstance(camp, dict) else None
-        adv_name = str(adv.get("name") if isinstance(adv, dict) else "").strip()
-        parsed = _extract_brand_geo_prefix(adv_name)
-        brand = parsed[0] if parsed else adv_name or "unknown"
-        entry = by_brand.setdefault(
-            brand,
-            {
-                "brand": brand,
-                "active_campaigns": 0,
-                "inactive_campaigns": 0,
-                "advertiser_names": set(),
-                "campaigns_total": 0,
-            },
-        )
-        entry["campaigns_total"] += 1
-        if bool(camp.get("active")):
-            entry["active_campaigns"] += 1
-        else:
-            entry["inactive_campaigns"] += 1
-        if adv_name:
-            entry["advertiser_names"].add(adv_name)
-
-    rows = []
-    for v in by_brand.values():
-        rows.append(
-            {
-                "brand": v["brand"],
-                "campaigns_total": v["campaigns_total"],
-                "active_campaigns": v["active_campaigns"],
-                "inactive_campaigns": v["inactive_campaigns"],
-                "has_any_active": v["active_campaigns"] > 0,
-                "advertiser_objects_count": len(v["advertiser_names"]),
+        if prefix and alias and tab:
+            script = ROOT_DIR / "sk_bulk_open_from_sheet.py"
+            args = [
+                sys.executable,
+                str(script),
+                "--prefix",
+                prefix,
+                "--alias",
+                alias,
+                "--tab",
+                tab,
+                "--apply" if apply else "--dry-run",
+            ]
+            proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
+            output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
+            bulk_open_result = {
+                "status": "success" if proc.returncode == 0 else "failed",
+                "exit_code": proc.returncode,
+                "log": output[-20000:],
+                "prefix": prefix,
+                "alias": alias,
+                "tab": tab,
+                "mode": "apply" if apply else "dry-run",
             }
-        )
-    rows.sort(key=lambda x: x["brand"].lower())
+            _cache_clear("sk:")
 
-    return render_template(
-        "sk.html",
-        brands=rows,
-        migration_result=migration_result,
-        bulk_open_result=bulk_open_result,
-    )
+    return render_template("sk.html", bulk_open_result=bulk_open_result)
 
 
 @app.route("/sk/brands/<path:brand_name>", methods=["GET"])
@@ -1026,73 +956,41 @@ def ui_sk_brand_details(brand_name: str):
 
 @app.route("/ec", methods=["GET", "POST"])
 def ui_ec():
-    refresh = (request.args.get("refresh") or "").strip().lower() in ("1", "true", "yes")
-    if refresh:
-        _cache_clear("ec:")
-
-    migration_result = None
+    bulk_open_result = None
     if request.method == "POST":
         prefix = (request.form.get("prefix") or "").strip()
         alias = (request.form.get("alias") or "").strip()
-        only_active = bool(request.form.get("only_active"))
+        tab = (request.form.get("tab") or "bulkEC-KLFIX").strip()
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         apply = mode == "apply"
-        if prefix and alias:
-            script = ROOT_DIR / "migrate_ec_prefix_alias.py"
-            args = [sys.executable, str(script), "--prefix", prefix, "--alias", alias, "--apply" if apply else "--dry-run"]
-            if only_active:
-                args.append("--only-active")
+
+        if prefix and alias and tab:
+            script = ROOT_DIR / "ec_bulk_open_from_sheet.py"
+            args = [
+                sys.executable,
+                str(script),
+                "--prefix",
+                prefix,
+                "--alias",
+                alias,
+                "--tab",
+                tab,
+                "--apply" if apply else "--dry-run",
+            ]
             proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
             output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
-            migration_result = {
+            bulk_open_result = {
                 "status": "success" if proc.returncode == 0 else "failed",
                 "exit_code": proc.returncode,
                 "log": output[-20000:],
                 "prefix": prefix,
                 "alias": alias,
+                "tab": tab,
                 "mode": "apply" if apply else "dry-run",
-                "only_active": only_active,
             }
             _cache_clear("ec:")
 
-    campaigns = _ec_get_campaigns()
-    merchants = _ec_get_merchants_map()
-    by_brand: dict[str, dict[str, Any]] = {}
-    for camp in campaigns:
-        brand = _ec_extract_brand(camp, merchants)
-        entry = by_brand.setdefault(
-            brand,
-            {
-                "brand": brand,
-                "active_campaigns": 0,
-                "inactive_campaigns": 0,
-                "campaigns_total": 0,
-                "merchant_names": set(),
-            },
-        )
-        entry["campaigns_total"] += 1
-        if str(camp.get("status") or "").lower() == "active":
-            entry["active_campaigns"] += 1
-        else:
-            entry["inactive_campaigns"] += 1
-        mid = str(camp.get("mid") or "").strip()
-        if mid and mid in merchants:
-            entry["merchant_names"].add(merchants[mid])
-
-    rows = []
-    for v in by_brand.values():
-        rows.append(
-            {
-                "brand": v["brand"],
-                "campaigns_total": v["campaigns_total"],
-                "active_campaigns": v["active_campaigns"],
-                "inactive_campaigns": v["inactive_campaigns"],
-                "has_any_active": v["active_campaigns"] > 0,
-                "merchant_objects_count": len(v["merchant_names"]),
-            }
-        )
-    rows.sort(key=lambda x: x["brand"].lower())
-    return render_template("ec.html", brands=rows, migration_result=migration_result)
+    return render_template("ec.html", bulk_open_result=bulk_open_result)
 
 
 @app.route("/ec/brands/<path:brand_name>", methods=["GET"])
