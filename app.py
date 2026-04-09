@@ -11,6 +11,7 @@ import sqlite3
 import shlex
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,6 +53,9 @@ app = Flask(__name__)
 ROOT_DIR = Path(__file__).resolve().parent
 RUNS_DIR = ROOT_DIR / "runtime" / "workflow_runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+_WORKFLOW_THREADS_LOCK = threading.Lock()
+_WORKFLOW_THREADS: dict[str, threading.Thread] = {}
 PUBLISHERS_DB_PATH = ROOT_DIR / "runtime" / "publishers.db"
 SK_TOOLS_SPREADSHEET_ID = "176wSQDDz9D1APmAXiYPeECwMqCQm3mvMBwgj8MKqmgk"
 
@@ -459,6 +463,94 @@ def _run_workflow(workflow_key: str, extra_args: str = "") -> Dict[str, Any]:
     }
     _save_last_run(workflow_key, result)
     return result
+
+
+def _run_workflow_in_background(workflow_key: str, extra_args: str = "") -> Dict[str, Any]:
+    """
+    Start workflow process in background and return immediately.
+    Prevents gateway/proxy timeouts for long workflows (daily/blend/etc.).
+    """
+    wf = WORKFLOWS[workflow_key]
+    script = ROOT_DIR / wf["script"]
+    args = shlex.split(extra_args.strip(), posix=False) if extra_args.strip() else []
+    cmd = [sys.executable, str(script)] + args
+
+    with _WORKFLOW_THREADS_LOCK:
+        existing = _WORKFLOW_THREADS.get(workflow_key)
+        if existing and existing.is_alive():
+            last = _load_last_run(workflow_key)
+            if last:
+                return last
+
+        started = time.time()
+        started_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        running_result = {
+            "workflow_key": workflow_key,
+            "workflow_title": wf["title"],
+            "status": "running",
+            "exit_code": None,
+            "started_at_utc": started_iso,
+            "finished_at_utc": "",
+            "duration_seconds": 0,
+            "command": cmd,
+            "args": args,
+            "pid": proc.pid,
+            "log": "Workflow started in background. Refresh to see final logs.",
+        }
+        _save_last_run(workflow_key, running_result)
+
+        def _wait_and_store() -> None:
+            try:
+                out, err = proc.communicate()
+                finished = time.time()
+                finished_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                output = (out or "") + ("\n" if out and err else "") + (err or "")
+                output = output.strip()
+                result = {
+                    "workflow_key": workflow_key,
+                    "workflow_title": wf["title"],
+                    "status": "success" if proc.returncode == 0 else "failed",
+                    "exit_code": proc.returncode,
+                    "started_at_utc": started_iso,
+                    "finished_at_utc": finished_iso,
+                    "duration_seconds": round(finished - started, 2),
+                    "command": cmd,
+                    "args": args,
+                    "pid": proc.pid,
+                    "log": output[-20000:],
+                }
+                _save_last_run(workflow_key, result)
+            except Exception as e:
+                failed = {
+                    "workflow_key": workflow_key,
+                    "workflow_title": wf["title"],
+                    "status": "failed",
+                    "exit_code": -1,
+                    "started_at_utc": started_iso,
+                    "finished_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "duration_seconds": 0,
+                    "command": cmd,
+                    "args": args,
+                    "pid": proc.pid,
+                    "log": f"Background workflow runner error: {e}",
+                }
+                _save_last_run(workflow_key, failed)
+            finally:
+                with _WORKFLOW_THREADS_LOCK:
+                    _WORKFLOW_THREADS.pop(workflow_key, None)
+
+        t = threading.Thread(target=_wait_and_store, daemon=True, name=f"wf-{workflow_key}")
+        _WORKFLOW_THREADS[workflow_key] = t
+        t.start()
+        return running_result
 
 
 def _sk_headers() -> dict[str, str]:
@@ -1142,7 +1234,8 @@ def ui_workflow(workflow_key: str):
                 )
                 extra_args = " ".join(extra_args.split())
                 extra_args = f"--feed {bf} {extra_args}".strip()
-        current_run = _run_workflow(workflow_key, extra_args)
+        # Run workflow pages in background to avoid nginx/gateway timeout on long jobs.
+        current_run = _run_workflow_in_background(workflow_key, extra_args)
     last_run = current_run or _load_last_run(workflow_key)
     return render_template(
         "workflow.html",
