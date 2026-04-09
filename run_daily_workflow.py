@@ -22,6 +22,8 @@ Requires .env: KEITARO_BASE_URL, KEITARO_API_KEY, FEED1_API_KEY, FEED2_API_KEY; 
   python run_daily_workflow.py --feed1-traffic-only
   python run_daily_workflow.py --multi-merchant-fallback
   python run_daily_workflow.py --skip-blend
+  python run_daily_workflow.py --skip-blend-sync
+  python run_daily_workflow.py --geo uk
   python run_daily_workflow.py --include-flex
 """
 from __future__ import annotations
@@ -103,7 +105,7 @@ def run_blend_sync_from_sheet(extra_args: list[str] | None = None) -> bool:
     return subprocess.run(cmd).returncode == 0
 
 
-def run_blend_daily_steps(*, skip_keitaro: bool, skip_blend: bool) -> None:
+def run_blend_daily_steps(*, skip_keitaro: bool, skip_blend: bool, skip_blend_sync: bool) -> None:
     if skip_blend:
         return
     print("7. Blend workflow (spreadsheet + Keitaro campaign) ...")
@@ -113,6 +115,10 @@ def run_blend_daily_steps(*, skip_keitaro: bool, skip_blend: bool) -> None:
             print(f"   Warning: populate_blend_from_potential ({feed}) exited non-zero.")
     if skip_keitaro:
         print("   7b. Skipping Blend Keitaro sync (--skip-keitaro).")
+        print()
+        return
+    if skip_blend_sync:
+        print("   7b. Skipping Blend Keitaro sync (--skip-blend-sync).")
         print()
         return
     print("   7b. blend_sync_from_sheet (prune auto='v' non-monetized + Keitaro) ...")
@@ -246,15 +252,23 @@ def main() -> None:
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     skip_keitaro = "--skip-keitaro" in argv
     skip_blend = "--skip-blend" in argv
+    skip_blend_sync = "--skip-blend-sync" in argv
     feed1_traffic_only = "--feed1-traffic-only" in argv
     blend_multi_merchant_fallback = "--multi-merchant-fallback" in argv
     include_flex_merchants = "--include-flex" in argv
     static_only = not include_flex_merchants
+    only_geo: str | None = None
 
     i = 0
     while i < len(argv):
         if argv[i] == "--date" and i + 1 < len(argv):
             date_str = argv[i + 1].strip()
+            i += 2
+            continue
+        if argv[i] == "--geo" and i + 1 < len(argv):
+            g = argv[i + 1].strip().lower()[:2]
+            if len(g) == 2:
+                only_geo = g
             i += 2
             continue
         i += 1
@@ -272,6 +286,8 @@ def main() -> None:
     yesterday_str = (datetime.strptime(date_str, "%Y-%m-%d").date() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     print(f"Daily workflow for {date_str}")
+    if only_geo:
+        print(f"Country override: {only_geo} only")
     print(f"Reports: {start_str} to {end_str} (month to yesterday)")
     _lk = logging.getLogger("workflows.kelkoo_daily")
     _lk.setLevel(logging.INFO)
@@ -359,6 +375,11 @@ def main() -> None:
     chosen2 = get_top_merchants_per_geo(
         service, SPREADSHEET_ID, fixim_2, perf2, top_n=TOP_MERCHANTS_PER_GEO
     )
+    if only_geo:
+        # Country rerun mode: keep full fixim + colors for all geos, but only refresh
+        # offers/sync for the selected geo.
+        chosen1 = {k: v for k, v in chosen1.items() if k == only_geo}
+        chosen2 = {k: v for k, v in chosen2.items() if k == only_geo}
     print(f"   Feed1: {len(chosen1)} geos")
     print(f"   Feed2: {len(chosen2)} geos")
     for label, ch in (("Feed1", chosen1), ("Feed2", chosen2)):
@@ -417,14 +438,14 @@ def main() -> None:
 
     if skip_keitaro:
         print("Skipping Keitaro sync (--skip-keitaro).")
-        run_blend_daily_steps(skip_keitaro=True, skip_blend=skip_blend)
+        run_blend_daily_steps(skip_keitaro=True, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
         return
 
     if not rows1 and not rows2:
         print("6. Syncing to Keitaro ...")
         print("   No offers generated for either feed today; skipping Keitaro sync.")
         print()
-        run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend)
+        run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
         print("Done. No offers to sync.")
         return
 
@@ -440,7 +461,7 @@ def main() -> None:
     if feed1_traffic_only:
         print("   Feed2 traffic disabled (skipping feed2 sync).")
         print()
-        run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend)
+        run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
         print("Done. Feed1 traffic only synced to Keitaro.")
         return
 
@@ -451,7 +472,7 @@ def main() -> None:
         print("   Feed2 sync failed.")
         sys.exit(1)
     print()
-    run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend)
+    run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
     print("Done. Both feeds synced to Keitaro.")
 
 

@@ -38,6 +38,7 @@
   <div class="card">
     <h3>Prefix to Alias Migration</h3>
     <form method="post">
+      <input type="hidden" name="action" value="prefix-alias-migration">
       <div style="margin:8px 0;">
         <label>Prefix</label><br>
         <input type="text" name="prefix" placeholder="KLFIX or KLWL1" required>
@@ -63,6 +64,40 @@
       <div>Status: <strong>{{ migration_result.status }}</strong> (exit {{ migration_result.exit_code }})</div>
       <div class="muted">prefix={{ migration_result.prefix }}, alias={{ migration_result.alias }}, mode={{ migration_result.mode }}, only_active={{ migration_result.only_active }}</div>
       <pre>{{ migration_result.log or "(No output)" }}</pre>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Bulk Open Campaigns From SK Sheet</h3>
+    <div class="muted">Uses the SK tools spreadsheet input tab and creates advertisers + campaigns with your chosen prefix and Keitaro alias.</div>
+    <form method="post">
+      <input type="hidden" name="action" value="bulk-open">
+      <div style="margin:8px 0;">
+        <label>Prefix</label><br>
+        <input type="text" name="prefix" placeholder="KLFIX / KLFLEX / KLWL..." required>
+      </div>
+      <div style="margin:8px 0;">
+        <label>Keitaro alias (tracking domain id)</label><br>
+        <input type="text" name="alias" placeholder="7FDKRK or your custom alias" required>
+      </div>
+      <div style="margin:8px 0;">
+        <label>Input tab</label><br>
+        <input type="text" name="tab" value="bulkSK-KLFIX" placeholder="bulkSK-KLFIX" required>
+      </div>
+      <div style="margin:8px 0;">
+        <label>Mode</label><br>
+        <select name="mode">
+          <option value="dry-run">Dry run</option>
+          <option value="apply">Apply</option>
+        </select>
+      </div>
+      <button type="submit">Run Bulk Open</button>
+    </form>
+    {% if bulk_open_result %}
+      <hr style="border-color:#374151;">
+      <div>Status: <strong>{{ bulk_open_result.status }}</strong> (exit {{ bulk_open_result.exit_code }})</div>
+      <div class="muted">prefix={{ bulk_open_result.prefix }}, alias={{ bulk_open_result.alias }}, tab={{ bulk_open_result.tab }}, mode={{ bulk_open_result.mode }}</div>
+      <pre>{{ bulk_open_result.log or "(No output)" }}</pre>
     {% endif %}
   </div>
 

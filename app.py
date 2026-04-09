@@ -345,11 +345,13 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "script": "run_daily_workflow.py",
         "description": "Full daily pipeline: feeds, reports, offers, and Keitaro sync.",
         "group": "daily-automations",
-        "args_hint": 'Optional args, e.g. --date 2026-03-08 --skip-keitaro',
+        "args_hint": "Optional args, e.g. --date 2026-03-08 --skip-keitaro (country/blend sync use controls below)",
         "args_templates": [
             {"label": "Default (no args)", "value": ""},
             {"label": "Skip Keitaro", "value": "--skip-keitaro"},
             {"label": "Feed1 traffic only", "value": "--feed1-traffic-only"},
+            {"label": "Skip Blend sync to Keitaro", "value": "--skip-blend-sync"},
+            {"label": "UK rerun (example)", "value": "--geo uk"},
             {"label": "Date + Skip Keitaro (example)", "value": "--date 2026-03-08 --skip-keitaro"},
             {"label": "Date only (example)", "value": "--date 2026-03-08"},
         ],
@@ -885,30 +887,60 @@ def ui_sk():
         _cache_clear("sk:")
 
     migration_result = None
+    bulk_open_result = None
     if request.method == "POST":
+        action = (request.form.get("action") or "prefix-alias-migration").strip().lower()
         prefix = (request.form.get("prefix") or "").strip()
         alias = (request.form.get("alias") or "").strip()
-        only_active = bool(request.form.get("only_active"))
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         apply = mode == "apply"
 
-        if prefix and alias:
-            script = ROOT_DIR / "migrate_sk_prefix_alias.py"
-            args = [sys.executable, str(script), "--prefix", prefix, "--alias", alias, "--apply" if apply else "--dry-run"]
-            if only_active:
-                args.append("--only-active")
-            proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
-            output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
-            migration_result = {
-                "status": "success" if proc.returncode == 0 else "failed",
-                "exit_code": proc.returncode,
-                "log": output[-20000:],
-                "prefix": prefix,
-                "alias": alias,
-                "mode": "apply" if apply else "dry-run",
-                "only_active": only_active,
-            }
-            _cache_clear("sk:")
+        if action == "bulk-open":
+            tab = (request.form.get("tab") or "bulkSK-KLFIX").strip()
+            if prefix and alias and tab:
+                script = ROOT_DIR / "sk_bulk_open_from_sheet.py"
+                args = [
+                    sys.executable,
+                    str(script),
+                    "--prefix",
+                    prefix,
+                    "--alias",
+                    alias,
+                    "--tab",
+                    tab,
+                    "--apply" if apply else "--dry-run",
+                ]
+                proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
+                output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
+                bulk_open_result = {
+                    "status": "success" if proc.returncode == 0 else "failed",
+                    "exit_code": proc.returncode,
+                    "log": output[-20000:],
+                    "prefix": prefix,
+                    "alias": alias,
+                    "tab": tab,
+                    "mode": "apply" if apply else "dry-run",
+                }
+                _cache_clear("sk:")
+        else:
+            only_active = bool(request.form.get("only_active"))
+            if prefix and alias:
+                script = ROOT_DIR / "migrate_sk_prefix_alias.py"
+                args = [sys.executable, str(script), "--prefix", prefix, "--alias", alias, "--apply" if apply else "--dry-run"]
+                if only_active:
+                    args.append("--only-active")
+                proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
+                output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
+                migration_result = {
+                    "status": "success" if proc.returncode == 0 else "failed",
+                    "exit_code": proc.returncode,
+                    "log": output[-20000:],
+                    "prefix": prefix,
+                    "alias": alias,
+                    "mode": "apply" if apply else "dry-run",
+                    "only_active": only_active,
+                }
+                _cache_clear("sk:")
 
     campaigns = _sk_list_campaigns(only_active=False)
     by_brand: dict[str, dict[str, Any]] = {}
@@ -949,7 +981,12 @@ def ui_sk():
         )
     rows.sort(key=lambda x: x["brand"].lower())
 
-    return render_template("sk.html", brands=rows, migration_result=migration_result)
+    return render_template(
+        "sk.html",
+        brands=rows,
+        migration_result=migration_result,
+        bulk_open_result=bulk_open_result,
+    )
 
 
 @app.route("/sk/brands/<path:brand_name>", methods=["GET"])
@@ -1234,6 +1271,25 @@ def ui_workflow(workflow_key: str):
                 )
                 extra_args = " ".join(extra_args.split())
                 extra_args = f"--feed {bf} {extra_args}".strip()
+        if workflow_key == "daily":
+            dg = (request.form.get("daily_geo") or "").strip().lower()[:2]
+            # Remove a manually-typed --geo; the dedicated control wins when set.
+            extra_args = re.sub(
+                r"--geo\s+[a-zA-Z]{2}\b",
+                "",
+                extra_args,
+                flags=re.IGNORECASE,
+            )
+            extra_args = " ".join(extra_args.split())
+            if len(dg) == 2:
+                extra_args = f"--geo {dg} {extra_args}".strip()
+
+            blend_sync_mode = (request.form.get("daily_blend_sync") or "on").strip().lower()
+            # Normalize user args to a single source of truth.
+            extra_args = re.sub(r"--skip-blend-sync\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = " ".join(extra_args.split())
+            if blend_sync_mode == "off":
+                extra_args = f"--skip-blend-sync {extra_args}".strip()
         # Run workflow pages in background to avoid nginx/gateway timeout on long jobs.
         current_run = _run_workflow_in_background(workflow_key, extra_args)
     last_run = current_run or _load_last_run(workflow_key)

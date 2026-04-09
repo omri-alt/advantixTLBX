@@ -42,6 +42,19 @@
     </select>
     <div class="muted" style="margin-top:6px;">Required for step 2. Appends <code>--feed …</code> to the command (before your optional args).</div>
     {% endif %}
+    {% if workflow_key == 'daily' %}
+    <div style="height: 12px;"></div>
+    <label for="daily_geo">Country rerun (optional)</label><br>
+    <input id="daily_geo" name="daily_geo" type="text" placeholder="e.g. uk, fr, de" style="width: 220px;">
+    <div class="muted" style="margin-top:6px;">When set, appends <code>--geo xx</code> so the run targets one country only.</div>
+
+    <div style="height: 12px;"></div>
+    <label for="daily_blend_sync">Blend sheet → Keitaro sync (step 7b)</label><br>
+    <select id="daily_blend_sync" name="daily_blend_sync" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+      <option value="on" selected>On (default)</option>
+      <option value="off">Off (skip blend_sync_from_sheet)</option>
+    </select>
+    {% endif %}
     <div style="height: 8px;"></div>
     <label for="extra_args">Command args (optional)</label><br>
     <input id="extra_args" name="extra_args" type="text" placeholder="{{ workflow.args_hint }}">
