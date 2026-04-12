@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} — Daily postbacks</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .muted { color: #9ca3af; font-size: 14px; line-height: 1.45; }
+    a { color: #86efac; text-decoration: none; }
+    .card { border: 1px solid #374151; border-radius: 8px; padding: 14px; background: #111827; margin-bottom: 16px; max-width: 1100px; }
+    input[type="text"], select { padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; }
+    input[type="checkbox"] { accent-color: #22c55e; }
+    button { padding: 8px 14px; background: #22c55e; border: 1px solid #16a34a; border-radius: 6px; color: #052e16; font-weight: 700; cursor: pointer; margin-top: 10px; }
+    button:hover { background: #16a34a; }
+    pre { background: #0f172a; border: 1px solid #334155; padding: 12px; border-radius: 6px; overflow: auto; font-size: 12px; color: #cbd5e1; max-height: 420px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #374151; text-align: left; padding: 8px; }
+    th { color: #93c5fd; }
+    .ok { color: #4ade80; }
+    .bad { color: #f87171; }
+    label { display: inline-block; margin-top: 8px; }
+    h1 { margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div><a href="{{ url_for('ui_kelkoo_daily_postbacks_hub') }}">All feeds</a> &middot; <a href="/">Home</a></div>
+  <h1>{{ title }}</h1>
+  <p class="muted">State file: <code>{{ state_path_display }}</code>. Change <strong>Report date</strong> below to inspect another day’s resume rows (<code>?date=YYYY-MM-DD</code> in the URL).</p>
+
+  <div class="card">
+    <h3 style="margin-top:0;color:#93c5fd;">Last run (logged)</h3>
+    {% if history and history.get('at_utc') %}
+      <p class="muted">
+        <strong>{{ history.at_utc }}</strong>
+        &mdash; report date <code>{{ history.report_date }}</code>
+        &mdash; {% if history.dry_run %}dry run{% else %}apply{% endif %}
+        &mdash; {% if history.ok %}<span class="ok">ok</span>{% else %}<span class="bad">exit {{ history.exit_code }}</span>{% endif %}
+      </p>
+      <pre>{{ history.summary | tojson }}</pre>
+    {% else %}
+      <p class="muted">No run has been logged yet for this feed from the UI or CLI (after deploy, runs are recorded automatically).</p>
+    {% endif %}
+  </div>
+
+  {% if kelkoo_detail %}
+  <div class="card">
+    <h3 style="margin-top:0;color:#93c5fd;">Resume snapshot — <code>{{ kelkoo_detail.report_date }}</code></h3>
+    <p class="muted">
+      Complete: <strong>{{ kelkoo_detail.done_count }}</strong> / {{ kelkoo_detail.total_geos }}
+      &mdash; in progress: {{ kelkoo_detail.partial_geos|length }}
+      &mdash; errors: {{ kelkoo_detail.error_geos|length }}
+      &mdash; not started: {{ kelkoo_detail.not_started_geos|length }}
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Country</th>
+          <th>Status</th>
+          <th>Rows</th>
+          <th>Postbacks</th>
+          <th>Next row</th>
+          <th>Completed at</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in kelkoo_detail.rows %}
+        <tr>
+          <td><code>{{ r.geo }}</code></td>
+          <td>{{ r.status }}</td>
+          <td>{{ r.rows_in_file if r.rows_in_file is not none else "—" }}</td>
+          <td>{{ r.postbacks_sent if r.postbacks_sent is not none else "—" }}</td>
+          <td>{{ r.next_row_index if r.next_row_index is not none else "—" }}{% if r.row_stage %} ({{ r.row_stage }}){% endif %}</td>
+          <td>{{ r.completed_at_utc or "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if kelkoo_detail.done_geos %}
+    <p class="muted" style="margin-top:10px;"><strong>Done:</strong> {{ kelkoo_detail.done_geos | join(", ") }}</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if flat_detail %}
+  <div class="card">
+    <h3 style="margin-top:0;color:#93c5fd;">Resume snapshot — <code>{{ flat_detail.report_date }}</code></h3>
+    <pre>{{ flat_detail.flat | tojson }}</pre>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h3 style="margin-top:0;color:#93c5fd;">Run this feed</h3>
+    <form method="post">
+      <div>
+        <label for="report_date">Report date</label><br>
+        <input type="text" id="report_date" name="report_date" value="{{ request.form.get('report_date', report_date or default_report_date) }}" style="width:200px;">
+      </div>
+      {% if feed_key == 'kelkoo1' or feed_key == 'kelkoo2' %}
+      <div>
+        <label for="only_geo">Single country only (optional)</label><br>
+        <input type="text" id="only_geo" name="only_geo" value="{{ request.form.get('only_geo', '') }}" placeholder="e.g. uk" style="width:120px;">
+      </div>
+      {% endif %}
+      <div>
+        <label for="mode">Mode</label><br>
+        <select id="mode" name="mode">
+          <option value="dry-run" {% if request.form.get('mode', 'dry-run') != 'apply' %}selected{% endif %}>Dry run</option>
+          <option value="apply" {% if request.form.get('mode') == 'apply' %}selected{% endif %}>Apply</option>
+        </select>
+      </div>
+      <div>
+        <label><input type="checkbox" name="no_resume" value="1" {% if request.form.get('no_resume') %}checked{% endif %}> Ignore saved progress (<code>--no-resume</code>)</label>
+      </div>
+      <div>
+        <label><input type="checkbox" name="reset_state" value="1" {% if request.form.get('reset_state') %}checked{% endif %}> Clear resume state for this feed + date before run</label>
+      </div>
+      <button type="submit">Run</button>
+    </form>
+
+    {% if run_result is not none %}
+    <hr style="border-color:#374151;margin:16px 0;">
+    {% if run_result.error %}
+      <p class="bad"><strong>Error:</strong> {{ run_result.error }}</p>
+    {% else %}
+      <p>
+        {% if run_result.ok %}<span class="ok"><strong>Finished OK</strong></span>{% else %}<span class="bad"><strong>Finished with errors</strong></span>{% endif %}
+        exit_code={{ run_result.exit_code }}
+      </p>
+      {% for row in run_result.results %}
+        <h4 style="margin:12px 0 6px;">{{ row.target }}</h4>
+        <pre>{{ row.summary | tojson }}</pre>
+      {% endfor %}
+    {% endif %}
+    {% endif %}
+  </div>
+</body>
+</html>

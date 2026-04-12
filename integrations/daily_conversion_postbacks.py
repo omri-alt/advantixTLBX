@@ -717,13 +717,33 @@ def run_daily_conversion_postbacks_batch(
             rc = 2
             results.append({"target": t, "summary": {"ok": False, "error": f"unknown target {t!r}"}})
 
-    return {
+    out: Dict[str, Any] = {
         "ok": rc == 0,
         "exit_code": rc,
         "results": results,
         "report_date": report_date,
         "state_path": str(state_path),
     }
+    try:
+        from integrations.daily_postbacks_run_history import record_last_run
+
+        for row in results:
+            tid = str(row.get("target") or "").strip().lower()
+            if not tid:
+                continue
+            summ = row.get("summary") or {}
+            record_last_run(
+                tid,
+                report_date,
+                dry_run=dry_run,
+                ok=bool(summ.get("ok")),
+                summary=summ,
+                batch_exit_code=rc,
+            )
+    except Exception:
+        logger.exception("daily postbacks: could not write last-run history")
+
+    return out
 
 
 def run_daily_conversion_postbacks_main(

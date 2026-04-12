@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daily conversion postbacks</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .muted { color: #9ca3af; font-size: 14px; line-height: 1.5; }
+    a { color: #86efac; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1 { margin-top: 8px; }
+    .tile-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 14px;
+      margin-top: 20px;
+      max-width: 1200px;
+    }
+    .tile {
+      display: block;
+      border: 1px solid #374151;
+      border-radius: 12px;
+      padding: 16px;
+      background: #111827;
+      color: inherit;
+      text-decoration: none;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .tile:hover {
+      border-color: #4f8cff;
+      background: #151f33;
+    }
+    .tile h2 { margin: 0 0 10px; font-size: 1.05rem; font-weight: 700; color: #f1f5f9; }
+    .tile .ts { font-size: 13px; color: #94a3b8; margin-bottom: 10px; }
+    .tile .ts strong { color: #e2e8f0; }
+    .pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .pill {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+    }
+    .pill.done { background: rgba(34, 197, 94, 0.12); border-color: #166534; color: #86efac; }
+    .pill.warn { background: rgba(245, 158, 11, 0.1); border-color: #92400e; color: #fcd34d; }
+    .stat-line { font-size: 13px; color: #cbd5e1; margin-top: 6px; }
+    .badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <div><a href="/">Back to dashboard</a></div>
+  <h1>Daily conversion postbacks</h1>
+  <p class="muted">
+    Keitaro GET postbacks from Kelkoo (per country), Adexa StatsRaw, and Yadore conversion/detail.
+    Resume state: <code>{{ state_path_display }}</code>. Click a feed for last-run log and to run again.
+  </p>
+
+  <div class="tile-grid">
+    {% for f in feeds %}
+    <a class="tile" href="{{ url_for('ui_kelkoo_daily_postbacks_feed', feed_key=f.key) }}">
+      <div class="badge">Feed</div>
+      <h2>{{ f.title }}</h2>
+      <div class="ts">
+        Last activity: <strong>{{ f.last_run_at or "—" }}</strong>
+        {% if f.last_run_from_history %}<span class="muted">(run logged)</span>{% endif %}
+      </div>
+      {% if f.primary_date %}
+      <div class="stat-line muted">Resume snapshot date: <code>{{ f.primary_date }}</code></div>
+      {% endif %}
+
+      {% if f.kelkoo %}
+      <div class="stat-line">
+        <strong>{{ f.kelkoo.done_count }}</strong> / {{ f.kelkoo.total_geos }} countries complete
+        {% if f.kelkoo.error_count %}· <span class="pill warn" style="display:inline;padding:2px 6px;">{{ f.kelkoo.error_count }} errors</span>{% endif %}
+        {% if f.kelkoo.partial_count %}· {{ f.kelkoo.partial_count }} in progress{% endif %}
+      </div>
+      {% if f.kelkoo.done_sample %}
+      <div class="pill-row">
+        {% for g in f.kelkoo.done_sample %}
+        <span class="pill done">{{ g }}</span>
+        {% endfor %}
+        {% if f.kelkoo.has_more_done %}<span class="pill">+ more</span>{% endif %}
+      </div>
+      {% endif %}
+      {% elif f.flat %}
+      <div class="stat-line">
+        Status: <strong>{{ f.flat.run_status }}</strong>
+        {% if f.flat.postbacks_sent is not none %}· {{ f.flat.postbacks_sent }} postbacks sent{% endif %}
+        {% if f.flat.total_items is not none %}· {{ f.flat.total_items }} items{% endif %}
+      </div>
+      {% endif %}
+    </a>
+    {% endfor %}
+  </div>
+</body>
+</html>

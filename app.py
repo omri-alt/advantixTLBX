@@ -30,6 +30,7 @@ from config import (
     FEED2_API_KEY,
     KELKOO_LATE_SALES_SPREADSHEET_ID,
     LATE_SALES_POSTBACK_BASE,
+    DAILY_CONVERSION_POSTBACK_STATE_PATH,
     OVERVIEW_SNAPSHOT_TZ,
     OVERVIEW_SNAPSHOT_HOUR,
 )
@@ -65,6 +66,7 @@ from integrations.daily_conversion_postbacks import (
     default_report_date_str,
     run_daily_conversion_postbacks_batch,
 )
+from integrations.daily_postbacks_dashboard import build_dashboard_cards, feed_detail_context
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1071,45 +1073,77 @@ def ui_kelkoo_late_sales():
     return render_template("late_sales.html", late_sales_result=late_sales_result)
 
 
-@app.route("/kelkoo/daily-postbacks", methods=["GET", "POST"])
-def ui_kelkoo_daily_postbacks():
+DAILY_POSTBACK_FEED_KEYS = frozenset({"kelkoo1", "kelkoo2", "adexa", "yadore"})
+
+
+@app.route("/kelkoo/daily-postbacks", methods=["GET"])
+def ui_kelkoo_daily_postbacks_hub():
+    """Tile dashboard: last run + resume snapshot per feed; click through for log + run form."""
+    state_path = Path(DAILY_CONVERSION_POSTBACK_STATE_PATH)
+    feeds = build_dashboard_cards(state_path)
+    return render_template(
+        "daily_postbacks_dashboard.html",
+        feeds=feeds,
+        default_report_date=default_report_date_str(),
+        state_path_display=str(state_path),
+    )
+
+
+@app.route("/kelkoo/daily-postbacks/<feed_key>", methods=["GET", "POST"])
+def ui_kelkoo_daily_postbacks_feed(feed_key: str):
     """
-    Kelkoo (per-geo) + Adexa + Yadore → Keitaro conversion postbacks (same logic as ``run_daily_conversion_postbacks.py``).
-    Full Kelkoo all-geos runs can take many minutes; your HTTP proxy / worker timeout must allow it.
+    Per-feed detail: last run JSON, geo / flat resume table, and run controls.
+    Full Kelkoo all-geos runs can take many minutes — raise proxy/worker timeouts if needed.
     """
-    daily_postbacks_result: dict[str, Any] | None = None
+    fk = (feed_key or "").strip().lower()
+    if fk not in DAILY_POSTBACK_FEED_KEYS:
+        abort(404)
+
+    state_path = Path(DAILY_CONVERSION_POSTBACK_STATE_PATH)
+    run_result: dict[str, Any] | None = None
+    focus_date: str | None = (request.args.get("date") or "").strip() or None
+
     if request.method == "POST":
         report_date = (request.form.get("report_date") or "").strip() or default_report_date_str()
-        only = (request.form.get("only") or "all").strip().lower()
+        focus_date = report_date
         only_geo_raw = (request.form.get("only_geo") or "").strip().lower()
         only_geo = only_geo_raw[:2] if len(only_geo_raw) >= 2 else None
+        if fk not in ("kelkoo1", "kelkoo2"):
+            only_geo = None
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         dry_run = mode != "apply"
         no_resume = (request.form.get("no_resume") or "").strip().lower() in ("1", "on", "yes", "true")
-        reset_raw = (request.form.get("reset_sources") or "").strip()
-        reset_sources = [x.strip().lower() for x in reset_raw.split(",") if x.strip()] if reset_raw else None
+        reset_sources = (
+            [fk]
+            if (request.form.get("reset_state") or "").strip().lower() in ("1", "on", "yes", "true")
+            else None
+        )
         try:
-            daily_postbacks_result = run_daily_conversion_postbacks_batch(
+            run_result = run_daily_conversion_postbacks_batch(
                 report_date=report_date,
-                only=only,
+                only=fk,
                 only_geo=only_geo,
                 dry_run=dry_run,
                 no_resume=no_resume,
                 reset_sources=reset_sources,
             )
         except Exception as e:
-            logger.exception("Kelkoo daily conversion postbacks (UI)")
-            daily_postbacks_result = {
+            logger.exception("Kelkoo daily postbacks feed %s", fk)
+            run_result = {
                 "ok": False,
                 "exit_code": 1,
                 "error": str(e),
                 "results": [],
                 "report_date": report_date,
             }
+
+    ctx = feed_detail_context(state_path, fk, focus_date)
     return render_template(
-        "daily_postbacks.html",
-        daily_postbacks_result=daily_postbacks_result,
+        "daily_postbacks_feed.html",
+        run_result=run_result,
         default_report_date=default_report_date_str(),
+        state_path_display=str(state_path),
+        **ctx,
     )
 
 
