@@ -1,5 +1,5 @@
 """
-Daily conversion postbacks to Keitaro: Kelkoo (per geo), Adexa (single report), Yadore (single report).
+Daily conversion postbacks to Keitaro: Kelkoo (per geo), Adexa (single report), Yadore (``/v2/report/detail`` per market).
 
 State file avoids double-firing after partial runs (see ``DAILY_CONVERSION_POSTBACK_STATE_PATH``).
 """
@@ -9,6 +9,7 @@ import copy
 import csv
 import logging
 import re
+import time
 from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
@@ -27,6 +28,7 @@ from config import (
     FEED1_API_KEY,
     FEED2_API_KEY,
     KELKOO_RAW_REPORT_GEOS,
+    YADORE_REPORT_DETAIL_MARKETS,
 )
 from integrations.adexa import AdexaClientError, fetch_stats_raw
 from integrations.daily_conversion_postback_state import (
@@ -36,11 +38,48 @@ from integrations.daily_conversion_postback_state import (
     reset_source_date,
     save_state_atomic,
 )
-from integrations.yadore import YadoreClientError, fetch_conversion_detail
+from integrations.yadore import YadoreClientError, fetch_report_detail_clicks
 
 logger = logging.getLogger(__name__)
 
+# Brief pause after click before sale on flat feeds (Adexa/Yadore) so Keitaro can persist the click first.
+_FLAT_CLICK_TO_SALE_DELAY_SEC = 0.25
+
 KELKOO_RAW_REPORT_URL = "https://api.kelkoogroup.net/publisher/reports/v1/raw"
+
+
+def _money_scalar(row: Dict[str, Any], keys: Sequence[str]) -> str:
+    """First non-empty monetary value from row keys; supports nested ``{'amount': ...}``."""
+    for k in keys:
+        v = row.get(k)
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            amt = v.get("amount")
+            if amt is not None and str(amt).strip():
+                return str(amt).strip()
+        elif str(v).strip():
+            return str(v).strip()
+    return "0"
+
+
+def _send_click_postback_with_retries(
+    session: requests.Session,
+    url: str,
+    *,
+    dry_run: bool,
+    label: str,
+    subid_prefix: str,
+) -> int:
+    """Fire click postback; retry a few times on HTTP errors (flat feeds)."""
+    last = 0
+    for attempt in range(3):
+        last = send_postback_get(session, url, dry_run=dry_run)
+        if dry_run or last < 400:
+            return last
+        time.sleep(0.2 * (attempt + 1))
+    logger.warning("%s: click postback still failing HTTP %s subid=%s", label, last, subid_prefix[:40])
+    return last
 
 
 def _utc_today() -> date:
@@ -334,46 +373,114 @@ def run_kelkoo_feed_postbacks(
 
 
 def _adexa_stat_actions(stat: Dict[str, Any]) -> Optional[Tuple[str, str, bool, str]]:
-    cid = str(stat.get("publisherClickId") or stat.get("publisherClickID") or "").strip()
+    cid = str(
+        stat.get("publisherClickId")
+        or stat.get("publisherClickID")
+        or stat.get("clickId")
+        or stat.get("click_id")
+        or stat.get("trackingId")
+        or ""
+    ).strip()
     if not cid:
         return None
-    cpc = str(stat.get("commission") or "0").strip() or "0"
+    cpc = _money_scalar(
+        stat,
+        (
+            "commission",
+            "clickCommission",
+            "cpc",
+            "estimatedCpc",
+            "leadCommission",
+            "publisherCommission",
+        ),
+    )
     try:
-        sale_count = int(stat.get("saleCount") or 0)
+        sale_count = int(stat.get("saleCount") or stat.get("sales") or stat.get("orderCount") or 0)
     except (TypeError, ValueError):
         sale_count = 0
-    sale_val = str(stat.get("saleValue") or stat.get("saleValueUsd") or "0").strip() or "0"
-    is_sale = sale_count > 0
+    sale_val = _money_scalar(
+        stat,
+        (
+            "saleValue",
+            "saleValueUsd",
+            "sale_value",
+            "saleAmount",
+            "orderValue",
+            "order_value",
+            "publisherSaleValue",
+            "totalSaleValue",
+            "revenue",
+            "publisherRevenue",
+            "payout",
+        ),
+    )
+    sale_flag = stat.get("sale")
+    if isinstance(sale_flag, str):
+        has_sale_flag = sale_flag.lower() in ("true", "1", "yes")
+    else:
+        has_sale_flag = bool(sale_flag)
+    try:
+        sale_positive = float(str(sale_val).replace(",", ".")) > 0
+    except ValueError:
+        sale_positive = False
+    is_sale = sale_count > 0 or has_sale_flag or sale_positive
     return (cid, cpc, is_sale, sale_val)
 
 
 def _yadore_click_actions(click: Dict[str, Any]) -> Optional[Tuple[str, str, bool, str]]:
     cid = None
-    for k in ("publisherClickId", "publisherClickID", "clickId", "trackingId", "tracking_id", "subId", "id"):
+    for k in (
+        "placementId",
+        "publisherClickId",
+        "publisherClickID",
+        "placementClickId",
+        "clickId",
+        "clickID",
+        "trackingId",
+        "tracking_id",
+        "subId",
+        "subid",
+        "id",
+    ):
         v = click.get(k)
         if v is not None and str(v).strip():
             cid = str(v).strip()
             break
     if not cid:
         return None
-    cpc = "0"
-    for k in ("commission", "cpc", "estimatedCpc", "revenue", "payout", "clickCommission"):
-        v = click.get(k)
-        if v is not None and str(v).strip():
-            if isinstance(v, dict):
-                amt = v.get("amount")
-                if amt is not None:
-                    cpc = str(amt).strip()
-                    break
-            else:
-                cpc = str(v).strip()
+    cpc = _money_scalar(
+        click,
+        (
+            "commission",
+            "cpc",
+            "estimatedCpc",
+            "estimated_cpc",
+            "clickCommission",
+            "clickRevenue",
+            "revenue",
+            "payout",
+        ),
+    )
+    sale_val = _money_scalar(
+        click,
+        (
+            "saleValue",
+            "saleValueUsd",
+            "conversionValue",
+            "orderValue",
+            "conversionRevenue",
+            "saleRevenue",
+            "revenue",
+        ),
+    )
+    for sub in (click.get("sale"), click.get("conversion"), click.get("order")):
+        if isinstance(sub, dict) and (not sale_val or sale_val == "0"):
+            sale_val = _money_scalar(
+                sub,
+                ("value", "amount", "saleValue", "orderValue", "revenue", "total"),
+            )
+            if sale_val and sale_val != "0":
                 break
-    sale_val = None
-    for k in ("saleValue", "saleValueUsd", "conversionValue", "orderValue", "conversionRevenue"):
-        v = click.get(k)
-        if v is not None and str(v).strip():
-            sale_val = str(v).strip()
-            break
     if not sale_val:
         sale_val = "0"
     try:
@@ -505,7 +612,15 @@ def run_flat_report_postbacks(
                 payout=str(cpc),
                 status=DAILY_CONVERSION_POSTBACK_CLICK_STATUS,
             )
-            send_postback_get(session, url_click, dry_run=dry_run)
+            _send_click_postback_with_retries(
+                session,
+                url_click,
+                dry_run=dry_run,
+                label=source_key,
+                subid_prefix=click_id,
+            )
+            if not dry_run:
+                time.sleep(_FLAT_CLICK_TO_SALE_DELAY_SEC)
             pb1 = int(read_flat().get("postbacks_sent") or 0) + 1
             write_flat(next_index=idx, row_stage="after_click", postbacks_sent=pb1, status="partial")
 
@@ -529,7 +644,13 @@ def run_flat_report_postbacks(
                 payout=str(cpc),
                 status=DAILY_CONVERSION_POSTBACK_CLICK_STATUS,
             )
-            send_postback_get(session, url_click, dry_run=dry_run)
+            _send_click_postback_with_retries(
+                session,
+                url_click,
+                dry_run=dry_run,
+                label=source_key,
+                subid_prefix=click_id,
+            )
             pb = int(read_flat().get("postbacks_sent") or 0) + 1
             write_flat(
                 next_index=idx + 1,
@@ -579,7 +700,8 @@ def run_yadore_postbacks(
     session: requests.Session,
 ) -> Dict[str, Any]:
     try:
-        clicks = fetch_conversion_detail(report_date)
+        mkts = [m for m in (YADORE_REPORT_DETAIL_MARKETS or []) if str(m).strip()]
+        clicks = fetch_report_detail_clicks(report_date, markets=mkts or None)
     except YadoreClientError as e:
         return {"ok": False, "error": str(e)}
     return run_flat_report_postbacks(
