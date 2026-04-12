@@ -52,6 +52,13 @@
     .ov-card .lbl { font-size: 11px; color: var(--muted); margin-top: 6px; }
     .ov-card .err { font-size: 11px; color: #fdba74; margin-top: 8px; }
     .ov-card.placeholder { opacity: 0.65; border-style: dashed; }
+    .ov-card { position: relative; }
+    .ov-card h4 { padding-right: 52px; }
+    .ov-badge { position: absolute; top: 10px; right: 12px; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px; letter-spacing: 0.03em; text-transform: uppercase; }
+    .ov-badge.wait { background: #334155; color: #e2e8f0; }
+    .ov-badge.ok { background: rgba(34, 197, 94, 0.18); color: #4ade80; }
+    .ov-badge.err { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+    .ov-tile-loading { min-height: 92px; }
     .ov-spin { display: inline-block; width: 18px; height: 18px; border: 2px solid #334155; border-top-color: var(--accent); border-radius: 50%; animation: ovrot 0.7s linear infinite; vertical-align: middle; margin-right: 8px; }
     @keyframes ovrot { to { transform: rotate(360deg); } }
   </style>
@@ -76,15 +83,24 @@
     <section class="overview" id="overview-widget" aria-live="polite">
       <h2>Performance overview</h2>
       <div class="ov-actions">
-        <button type="button" class="btn" id="overview-refresh-btn">Refresh overview</button>
-        <span class="muted" id="overview-snap-hint">Loads saved snapshot; refresh pulls live APIs (slow).</span>
+        <button type="button" class="btn" id="overview-refresh-btn">Reload all tiles</button>
+        <span class="muted" id="overview-snap-hint">Each metric loads on its own; badges show OK vs issues. Snapshot file (8:00) is separate from this live view.</span>
       </div>
-      <div id="overview-loading" class="muted"><span class="ov-spin" aria-hidden="true"></span> Loading snapshot…</div>
       <div id="overview-fail" class="muted" style="display:none;"></div>
-      <div id="overview-body" style="display:none;">
-        <div class="ov-meta" id="overview-ranges"></div>
-        <div class="ov-row-top" id="overview-top"></div>
-        <div class="ov-row-costs" id="overview-costs"></div>
+      <div id="overview-body">
+        <div class="ov-meta" id="overview-ranges">Preparing…</div>
+        <div class="ov-row-top">
+          <div id="tile-revenue"></div>
+          <div id="tile-net"></div>
+        </div>
+        <div class="ov-row-costs" id="overview-costs">
+          <div id="tile-zeropark"></div>
+          <div id="tile-sourceknowledge"></div>
+          <div id="tile-ecomnia"></div>
+          <div class="ov-card placeholder"><h4>Cost · Thrillion</h4><span class="ov-badge wait">—</span><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>
+          <div class="ov-card placeholder"><h4>Cost · Yesshh</h4><span class="ov-badge wait">—</span><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>
+          <div id="tile-total"></div>
+        </div>
       </div>
     </section>
 
@@ -136,11 +152,15 @@
       if (isNaN(n)) return "—";
       return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
-    function cardHtml(title, y, m, err, placeholder) {
+    function cardHtml(title, y, m, err, placeholder, badgeKind) {
       var cls = "ov-card" + (err ? " has-err" : "") + (placeholder ? " placeholder" : "");
-      var errHtml = err ? '<div class="err">Error: ' + String(err).slice(0, 160) + (String(err).length > 160 ? "…" : "") + "</div>" : "";
+      var errHtml = err ? '<div class="err">Error: ' + String(err).slice(0, 200) + (String(err).length > 200 ? "…" : "") + "</div>" : "";
+      var bk = badgeKind || (err ? "err" : "ok");
+      var bl = bk === "ok" ? "OK" : bk === "err" ? "Issue" : bk === "wait" ? "…" : "—";
+      var badge = '<span class="ov-badge ' + bk + '">' + bl + "</span>";
       return (
         '<div class="' + cls + '">' +
+          badge +
           "<h4>" + title + "</h4>" +
           '<div class="lbl">Yesterday (UTC)</div>' +
           '<div class="amt">' + money(y) + "</div>" +
@@ -150,109 +170,176 @@
         "</div>"
       );
     }
-    var loadEl = document.getElementById("overview-loading");
-    var failEl = document.getElementById("overview-fail");
-    var bodyEl = document.getElementById("overview-body");
-    var rangesEl = document.getElementById("overview-ranges");
-    var topEl = document.getElementById("overview-top");
-    var costsEl = document.getElementById("overview-costs");
-    if (!loadEl || !bodyEl) return;
-    if (!failEl || !rangesEl || !topEl || !costsEl) return;
+    function tileLoading(title) {
+      return (
+        '<div class="ov-card ov-tile-loading">' +
+          '<span class="ov-badge wait">…</span>' +
+          "<h4>" + title + "</h4>" +
+          '<div class="muted"><span class="ov-spin" aria-hidden="true"></span> Loading…</div>' +
+        "</div>"
+      );
+    }
 
-    var overviewUrl = {{ url_for("api_overview") | tojson }};
-    var refreshUrl = {{ url_for("api_overview_refresh") | tojson }};
+    var failEl = document.getElementById("overview-fail");
+    var rangesEl = document.getElementById("overview-ranges");
+    var refreshBtn = document.getElementById("overview-refresh-btn");
+    var snapHintEl = document.getElementById("overview-snap-hint");
     var ovTz = {{ overview_snapshot_tz | tojson }};
     var ovHr = {{ overview_snapshot_hour | int }};
-    var snapHintEl = document.getElementById("overview-snap-hint");
-    var refreshBtn = document.getElementById("overview-refresh-btn");
 
-    function renderOverview(data) {
-      bodyEl.style.display = "block";
-      failEl.style.display = "none";
-      var rg = data.ranges || {};
-      var snap = data.snapshot_saved_utc || "";
-      var st = data.snapshot_status || "";
+    var TILE_KEYS = ["revenue", "zeropark", "sourceknowledge", "ecomnia"];
+    var TITLES = {
+      revenue: "Revenue (Keitaro)",
+      zeropark: "Cost · Zeropark",
+      sourceknowledge: "Cost · SourceKnowledge",
+      ecomnia: "Cost · Ecomnia",
+    };
+    var urls = {
+      revenue: {{ url_for("api_overview_slice_revenue") | tojson }},
+      zeropark: {{ url_for("api_overview_slice_zeropark") | tojson }},
+      sourceknowledge: {{ url_for("api_overview_slice_sourceknowledge") | tojson }},
+      ecomnia: {{ url_for("api_overview_slice_ecomnia") | tojson }},
+    };
+
+    var tileState = {};
+    var rangesSet = false;
+
+    if (!rangesEl || !failEl) return;
+
+    if (snapHintEl) {
+      snapHintEl.textContent =
+        "Each tile calls its own API. Badges: OK vs Issue. Reload all tiles retries every source in parallel. Snapshot file (scheduled " +
+        String(ovHr).padStart(2, "0") +
+        ":00 " +
+        ovTz +
+        ") is separate.";
+    }
+
+    function applyRangesOnce(payload) {
+      if (rangesSet || !payload || !payload.ranges) return;
+      rangesSet = true;
+      var rg = payload.ranges;
       rangesEl.textContent =
-        (snap ? "Saved " + snap + " · " : "") +
-        (st ? "status " + st + " · " : "") +
-        "Yesterday " + (rg.yesterday || "") +
-        " · MTD " + (rg.mtd_from || "") + " → " + (rg.mtd_to || "") +
-        (data.as_of_utc ? " · data as of " + data.as_of_utc : "");
+        "Yesterday " +
+        (rg.yesterday || "") +
+        " · MTD " +
+        (rg.mtd_from || "") +
+        " → " +
+        (rg.mtd_to || "") +
+        " · live per tile · snapshot job " +
+        String(ovHr).padStart(2, "0") +
+        ":00 " +
+        ovTz;
+    }
 
-      if (snapHintEl) {
-        snapHintEl.textContent = snap
-          ? "Showing snapshot from " + snap + ". Daily rebuild at " + String(ovHr).padStart(2, "0") + ":00 (" + ovTz + ")."
-          : "No snapshot file yet — click Refresh overview or wait for the scheduler.";
+    function nz(v) {
+      if (v === null || v === undefined || v === "") return 0;
+      var n = Number(v);
+      return isNaN(n) ? 0 : n;
+    }
+
+    function paintRollup() {
+      var netEl = document.getElementById("tile-net");
+      var totEl = document.getElementById("tile-total");
+      if (!netEl || !totEl) return;
+      var pend = TILE_KEYS.some(function(k) {
+        return tileState[k] === undefined;
+      });
+      if (pend) {
+        netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Waiting for other tiles…", false, "wait");
+        totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", null, null, "Waiting for other tiles…", false, "wait");
+        return;
       }
-
-      var rev = data.revenue || {};
-      topEl.innerHTML =
-        cardHtml("Revenue (Keitaro)", rev.yesterday, rev.mtd, rev.error, false) +
-        cardHtml("Net (revenue − cost)", (data.net || {}).yesterday, (data.net || {}).mtd, null, false);
-
-      var c = data.costs || {};
-      var parts = "";
-      parts += cardHtml("Cost · Zeropark", (c.zeropark || {}).yesterday, (c.zeropark || {}).mtd, (c.zeropark || {}).error, false);
-      parts += cardHtml("Cost · SourceKnowledge", (c.sourceknowledge || {}).yesterday, (c.sourceknowledge || {}).mtd, (c.sourceknowledge || {}).error, false);
-      parts += cardHtml("Cost · Ecomnia", (c.ecomnia || {}).yesterday, (c.ecomnia || {}).mtd, (c.ecomnia || {}).error, false);
-      parts += '<div class="ov-card placeholder"><h4>Cost · Thrillion</h4><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>';
-      parts += '<div class="ov-card placeholder"><h4>Cost · Yesshh</h4><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>';
-      var tc = data.total_cost || {};
-      parts += cardHtml("Total cost (ZP + SK + EC)", tc.yesterday, tc.mtd, null, false);
-      costsEl.innerHTML = parts;
+      var ty = nz(tileState.zeropark.yesterday) + nz(tileState.sourceknowledge.yesterday) + nz(tileState.ecomnia.yesterday);
+      var tm = nz(tileState.zeropark.mtd) + nz(tileState.sourceknowledge.mtd) + nz(tileState.ecomnia.mtd);
+      var ry = tileState.revenue.yesterday;
+      var rm = tileState.revenue.mtd;
+      var netY = nz(ry) - ty;
+      var netM = nz(rm) - tm;
+      var errs = [];
+      TILE_KEYS.forEach(function(k) {
+        var s = tileState[k];
+        if (!s) return;
+        if (s.httpErr) errs.push(k + ": " + s.httpErr);
+        else if (s.error) errs.push(k + ": " + String(s.error).slice(0, 120));
+      });
+      var totalErr = errs.length ? errs.join(" · ") : null;
+      totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", ty, tm, totalErr, false, totalErr ? "err" : "ok");
+      var revErr = tileState.revenue.error || tileState.revenue.httpErr;
+      var netErr = [revErr, totalErr].filter(Boolean).join(" · ") || null;
+      netEl.innerHTML = cardHtml("Net (revenue − cost)", netY, netM, netErr, false, netErr ? "err" : "ok");
     }
 
-    function loadSnapshot() {
-      loadEl.style.display = "block";
-      bodyEl.style.display = "none";
+    function paintTileFromSlice(key, payload) {
+      applyRangesOnce(payload);
+      var d = (payload && payload.data) || {};
+      tileState[key] = {
+        yesterday: d.yesterday,
+        mtd: d.mtd,
+        error: d.error || null,
+        httpErr: null,
+      };
+      var el = document.getElementById("tile-" + key);
+      var err = d.error || null;
+      var badge = err ? "err" : "ok";
+      if (el) el.innerHTML = cardHtml(TITLES[key], d.yesterday, d.mtd, err, false, badge);
+      paintRollup();
+    }
+
+    function initTilesToLoading() {
+      TILE_KEYS.forEach(function(k) {
+        tileState[k] = undefined;
+        var el = document.getElementById("tile-" + k);
+        if (el) el.innerHTML = tileLoading(TITLES[k]);
+      });
+      paintRollup();
+    }
+
+    function reloadAllTiles() {
       failEl.style.display = "none";
-      return fetch(overviewUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
-        .then(function(r) {
-          if (r.status === 401) throw new Error("HTTP 401 (sign in again; overview API uses the same UI auth)");
-          if (!r.ok) throw new Error("HTTP " + r.status);
-          return r.json();
-        })
-        .then(function(data) {
-          loadEl.style.display = "none";
-          renderOverview(data);
-        });
-    }
-
-    loadSnapshot().catch(function(e) {
-      loadEl.style.display = "none";
-      failEl.style.display = "block";
-      failEl.textContent = "Overview snapshot could not load: " + (e && e.message ? e.message : String(e)) + " · " + overviewUrl;
-    });
-
-    if (refreshBtn) {
-      refreshBtn.addEventListener("click", function() {
-        refreshBtn.disabled = true;
-        loadEl.style.display = "block";
-        bodyEl.style.display = "none";
-        var ropts = { method: "POST", credentials: "same-origin", headers: { Accept: "application/json" } };
-        if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
-          ropts.signal = AbortSignal.timeout(900000);
-        }
-        fetch(refreshUrl, ropts)
+      rangesSet = false;
+      rangesEl.textContent = "Loading date ranges…";
+      initTilesToLoading();
+      if (refreshBtn) refreshBtn.disabled = true;
+      var remaining = TILE_KEYS.length;
+      TILE_KEYS.forEach(function(key) {
+        fetch(urls[key], { credentials: "same-origin", headers: { Accept: "application/json" } })
           .then(function(r) {
-            if (r.status === 401) throw new Error("HTTP 401");
-            if (!r.ok) return r.text().then(function(t) { throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200)); });
+            if (r.status === 401) throw new Error("HTTP 401 — sign in again");
+            if (!r.ok) throw new Error("HTTP " + r.status);
             return r.json();
           })
-          .then(function(data) {
-            loadEl.style.display = "none";
-            renderOverview(data);
+          .then(function(payload) {
+            paintTileFromSlice(key, payload);
           })
           .catch(function(e) {
-            loadEl.style.display = "none";
-            failEl.style.display = "block";
-            failEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
+            var msg = e && e.message ? e.message : String(e);
+            tileState[key] = { yesterday: null, mtd: null, error: null, httpErr: msg };
+            var el = document.getElementById("tile-" + key);
+            if (el) el.innerHTML = cardHtml(TITLES[key], null, null, msg, false, "err");
+            paintRollup();
           })
           .finally(function() {
-            refreshBtn.disabled = false;
+            remaining--;
+            if (remaining <= 0) {
+              if (refreshBtn) refreshBtn.disabled = false;
+              if (!rangesSet) {
+                rangesEl.textContent =
+                  "Could not read date window from any slice (check auth / network). Snapshot job " +
+                  String(ovHr).padStart(2, "0") +
+                  ":00 " +
+                  ovTz +
+                  ".";
+              }
+            }
           });
       });
     }
+
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", reloadAllTiles);
+    }
+    reloadAllTiles();
   })();
   </script>
 </body>

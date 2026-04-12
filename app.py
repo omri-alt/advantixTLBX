@@ -49,6 +49,12 @@ from assistance import (
     get_full_setup,
 )
 from kelkoo_late_sales import run_late_sales_flow
+from integrations.overview import (
+    slice_ecomnia,
+    slice_revenue,
+    slice_sourceknowledge,
+    slice_zeropark,
+)
 from integrations.overview_snapshot import (
     read_snapshot_for_api,
     refresh_overview_snapshot,
@@ -1405,6 +1411,27 @@ def api_overview():
     out["snapshot_status"] = "ready"
     out["snapshot_saved_utc"] = saved
     return jsonify(out)
+
+
+@app.route("/api/overview/slice/revenue", methods=["GET"])
+def api_overview_slice_revenue():
+    """Live Keitaro revenue slice for dashboard tiles (independent of snapshot)."""
+    return jsonify(slice_revenue())
+
+
+@app.route("/api/overview/slice/zeropark", methods=["GET"])
+def api_overview_slice_zeropark():
+    return jsonify(slice_zeropark())
+
+
+@app.route("/api/overview/slice/sourceknowledge", methods=["GET"])
+def api_overview_slice_sourceknowledge():
+    return jsonify(slice_sourceknowledge())
+
+
+@app.route("/api/overview/slice/ecomnia", methods=["GET"])
+def api_overview_slice_ecomnia():
+    return jsonify(slice_ecomnia())
 
 
 @app.route("/api/v1/workflows/create-campaign", methods=["POST"])
