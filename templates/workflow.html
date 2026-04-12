@@ -40,7 +40,16 @@
       <option value="kelkoo1">Feed 1 (kelkoo1)</option>
       <option value="kelkoo2">Feed 2 (kelkoo2)</option>
     </select>
-    <div class="muted" style="margin-top:6px;">Required for step 2. Appends <code>--feed …</code> to the command (before your optional args).</div>
+    <div class="muted" style="margin-top:6px;">
+      Used for the <strong>potentialKelkoo*</strong> step only. The Blend sheet → Keitaro step reads every row
+      (column <code>feed</code> = <code>kelkoo1</code> or <code>kelkoo2</code> per merchant).
+    </div>
+    {% endif %}
+    {% if workflow_key == 'blend-keitaro-sync' %}
+    <div style="height: 12px;"></div>
+    <label for="blend_sync_geo">Country (optional)</label><br>
+    <input id="blend_sync_geo" name="blend_sync_geo" type="text" placeholder="e.g. uk, fr — blank = all geos" style="width: 320px;">
+    <div class="muted" style="margin-top:6px;">When set, appends <code>--geo xx</code> (same as typing it in optional args).</div>
     {% endif %}
     {% if workflow_key == 'daily' %}
     <div style="height: 12px;"></div>

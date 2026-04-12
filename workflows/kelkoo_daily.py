@@ -74,6 +74,7 @@ def download_merchants_feed(
     geos = geos or KELKOO_FEED_GEOS
     all_merchants: List[Dict[str, Any]] = []
     all_keys: set = {"geo_origin"}
+    skipped_forbidden: List[str] = []
 
     for geo in geos:
         try:
@@ -83,6 +84,10 @@ def download_merchants_feed(
                 headers=_headers(api_key),
                 timeout=30,
             )
+            if r.status_code == 403:
+                # Common when a publisher key has only a subset of markets (e.g. feed2 vs feed1).
+                skipped_forbidden.append(geo)
+                continue
             if r.status_code != 200:
                 logger.warning("Merchants %s: status %s", geo, r.status_code)
                 continue
@@ -99,6 +104,16 @@ def download_merchants_feed(
                 all_merchants.append(m)
         except Exception as e:
             logger.warning("Merchants %s: %s", geo, e)
+    if skipped_forbidden:
+        skipped_forbidden.sort()
+        tail = ", ".join(skipped_forbidden[:24])
+        if len(skipped_forbidden) > 24:
+            tail += f", … (+{len(skipped_forbidden) - 24} more)"
+        logger.info(
+            "Merchants feed: skipped %d country request(s) with HTTP 403 (not available for this API key): %s",
+            len(skipped_forbidden),
+            tail,
+        )
     return all_merchants
 
 
@@ -258,14 +273,19 @@ def fetch_report_merchant_names(
     return out
 
 
-def build_merchant_id_to_name_from_feed(api_key: str) -> Dict[str, str]:
+def build_merchant_id_to_name_from_feed(
+    api_key: str,
+    geos: Optional[List[str]] = None,
+) -> Dict[str, str]:
     """
     Map merchant id (and ``websiteId``) -> display ``name`` from the live merchants feed.
 
     Uses ``static_only=False`` so ids that only appear in reports can still resolve when
     Kelkoo returns them in the feed (same idea as ``blend_potential_merchants``).
+
+    ``geos``: optional subset of ``KELKOO_FEED_GEOS`` (e.g. feed2-only markets from config).
     """
-    merchants = download_merchants_feed(api_key, static_only=False)
+    merchants = download_merchants_feed(api_key, geos, static_only=False)
     out: Dict[str, str] = {}
     for m in merchants:
         name = str(m.get("name") or "").strip()

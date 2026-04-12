@@ -35,7 +35,7 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
 - Includes `_read_env_fallback()` for malformed `.env` lines (extra spaces, `KEY = = value`).
 - Important variables:
   - **Keitaro:** `KEITARO_BASE_URL`, `KEITARO_API_KEY`, optional campaign alias/id.
-  - **Kelkoo / Sheets:** `FEED1_API_KEY`, `FEED2_API_KEY`, `KELKOO_SHEETS_SPREADSHEET_ID`, `BLEND_SHEETS_SPREADSHEET_ID`.
+  - **Kelkoo / Sheets:** `FEED1_API_KEY`, `FEED2_API_KEY`, optional `FEED2_MERCHANTS_GEOS` (comma 2-letter geos for feed2 merchants API only—skips markets you have on feed1 but not on feed2), `KELKOO_SHEETS_SPREADSHEET_ID`, `BLEND_SHEETS_SPREADSHEET_ID`.
   - **SourceKnowledge:** `SOURCEKNOWLEDGE_API_KEY` from `KEYSK` or legacy `keySK` (see below).
   - **Zeropark / Yadore:** `KEYZP`, `YADORE_API_KEY`, etc.
 
@@ -53,7 +53,7 @@ Rough order: monthly log for yesterday → optional Blend potential refresh → 
 
 **Blend block (step 7):**
 
-- Refreshes **potentialKelkoo*** sheets per `BLEND_POTENTIAL_FEEDS` (currently `kelkoo1` only unless extended).
+- Refreshes **potentialKelkoo*** sheets per `BLEND_POTENTIAL_FEEDS` in `.env` (default `kelkoo1,kelkoo2`; feeds without an API key are skipped).
 - Runs `populate_blend_from_potential.py` (monetized rows, dedupe, `clickCap` 50, `--max-add` daily cap).
 - Runs `blend_sync_from_sheet.py` — prunes bad `auto='v'` rows, syncs Keitaro Blend campaign (alias documented in `README.md`).
 

@@ -104,6 +104,22 @@ BLEND_SHEETS_SPREADSHEET_ID = (
     os.getenv("BLEND_SHEETS_SPREADSHEET_ID") or "1h9lBPTREEJO9VVvj6wctCgCOn3YcwJBGIk_MBwXw-xY"
 ).strip()
 
+
+def _parse_blend_potential_feeds() -> tuple[str, ...]:
+    """
+    Comma-separated Kelkoo feeds used for Blend ``potentialKelkoo*`` refresh and
+    ``populate_blend_from_potential`` in the daily workflow. Each run still requires
+    the matching ``FEED*_API_KEY`` or that feed is skipped with a log line.
+    """
+    raw = (os.getenv("BLEND_POTENTIAL_FEEDS") or "kelkoo1,kelkoo2").strip().lower()
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    allowed = {"kelkoo1", "kelkoo2"}
+    out = tuple(p for p in parts if p in allowed)
+    return out if out else ("kelkoo1", "kelkoo2")
+
+
+BLEND_POTENTIAL_FEEDS: tuple[str, ...] = _parse_blend_potential_feeds()
+
 # Kelkoo
 FEED1_API_KEY = (os.getenv("FEED1_API_KEY") or "").strip()
 FEED2_API_KEY = (os.getenv("FEED2_API_KEY") or "").strip()
@@ -113,16 +129,49 @@ KELKOO_ACCOUNT_ID_2 = (os.getenv("KELKOO_ACCOUNT_ID_2") or "").strip() or None
 FEED1_KELKOO_ACCOUNT_ID = (os.getenv("FEED1_KELKOO_ACCOUNT_ID") or "").strip() or KELKOO_ACCOUNT_ID
 FEED2_KELKOO_ACCOUNT_ID = (os.getenv("FEED2_KELKOO_ACCOUNT_ID") or "").strip() or (KELKOO_ACCOUNT_ID_2 or "")
 
+
+def _parse_feed2_merchants_geos() -> tuple[str, ...] | None:
+    """
+    Optional comma-separated 2-letter geos for Kelkoo **feed2** merchants API only.
+    When set, feed2 merchant downloads (daily fixim, Blend potential, monthly name/url lookups)
+    request only these countries—avoids HTTP 403 noise for markets enabled on feed1 but not on feed2.
+    Example: ``FEED2_MERCHANTS_GEOS=it,fr,uk``
+    """
+    raw = (os.getenv("FEED2_MERCHANTS_GEOS") or "").strip().lower()
+    if not raw:
+        return None
+    out: list[str] = []
+    for part in raw.split(","):
+        p = part.strip().lower()
+        if len(p) >= 2 and p[:2].isalpha():
+            out.append(p[:2])
+    # de-dupe preserving order
+    seen: set[str] = set()
+    uniq = []
+    for g in out:
+        if g not in seen:
+            seen.add(g)
+            uniq.append(g)
+    return tuple(uniq) if uniq else None
+
+
+FEED2_MERCHANTS_GEOS: tuple[str, ...] | None = _parse_feed2_merchants_geos()
+
 # Zeropark
 KEYZP = (os.getenv("KEYZP") or "").strip()
 if not KEYZP:
     KEYZP = _read_env_fallback("KEYZP")
+# Publisher stats API (``panel/reports/*``) needs domainer id from Zeropark Publisher Team
+ZEROPARK_PUBLISHER_DID = (os.getenv("ZEROPARK_PUBLISHER_DID") or os.getenv("ZEROPARK_DID") or "").strip()
 
 # SourceKnowledge (affiliate API — X-API-KEY)
 SOURCEKNOWLEDGE_API_KEY = (os.getenv("KEYSK") or os.getenv("keySK") or "").strip()
 if not SOURCEKNOWLEDGE_API_KEY:
     SOURCEKNOWLEDGE_API_KEY = _read_env_fallback("KEYSK") or _read_env_fallback("keySK")
 SOURCEKNOWLEDGE_API_KEY = (SOURCEKNOWLEDGE_API_KEY or "").strip()
+
+# Optional: GET URL template for SK account-level spend in overview (``{from}`` / ``{to}`` = YYYY-MM-DD)
+SK_ACCOUNT_STATS_URL = (os.getenv("SK_ACCOUNT_STATS_URL") or "").strip()
 
 # Ecomnia (advertiser API keys)
 EC_ADVERTISER_KEY = (os.getenv("ADVERTISER_KEY") or "").strip()
@@ -136,6 +185,9 @@ if not EC_AUTH_KEY:
 EC_SECRET_KEY = (os.getenv("SECRET_KEY") or "").strip()
 if not EC_SECRET_KEY:
     EC_SECRET_KEY = _read_env_fallback("SECRET_KEY")
+
+# Ecomnia reporting host (``adv-stats-by-date`` / similar)
+ECOMNIA_REPORT_BASE = (os.getenv("ECOMNIA_REPORT_BASE") or "https://report.ecomnia.com").strip().rstrip("/")
 
 # Ecomnia bulk sheet (default: same notebook as legacy bulkEC / ec (2).py)
 EC_SHEETS_SPREADSHEET_ID = (

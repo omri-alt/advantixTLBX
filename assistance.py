@@ -284,7 +284,9 @@ def build_offer_action_payload(
     """
     Build action_payload URL for a Kelkoo offer.
     feed=1: permanentLinkGo (Kelkoo) with account_id, {var10}, {subid}.
-    feed=2: sidehustlerbaby.com/klk-merchant with geo, merchantUrl, pub_click_id={subid}.
+    feed=2: same rain shell as feed1-style Blend URLs; inner target is ``sidehustlerbaby.com/klk-merchant``
+    with literal ``geo`` + URL-encoded ``merchantUrl`` + ``pub_click_id={subid}`` (Keitaro macro), matching
+    ``https://shopli.city/rainotest?rain=https://sidehustlerbaby.com/klk-merchant?geo=...&merchantUrl=...``.
     """
     geo = (geo or "").strip().lower()[:2]
     encoded = quote(product_url or "https://example.com/placeholder", safe="")

@@ -34,7 +34,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import BLEND_SHEETS_SPREADSHEET_ID, FEED1_API_KEY, FEED2_API_KEY
+from config import BLEND_SHEETS_SPREADSHEET_ID, FEED1_API_KEY, FEED2_API_KEY, FEED2_MERCHANTS_GEOS
 from workflows.kelkoo_daily import download_merchants_feed, REPORTS_AGGREGATED_URL, _headers
 from integrations.kelkoo_search import kelkoo_merchant_link_check, format_kelkoo_monetization_status
 
@@ -145,7 +145,8 @@ def main() -> None:
         raise RuntimeError(f"Reports API {r.status_code}: {r.text[:500]}")
     report_items = r.json() or []
 
-    merchants_feed = download_merchants_feed(api_key, static_only=False)
+    geo_list = list(FEED2_MERCHANTS_GEOS) if args.feed == "kelkoo2" and FEED2_MERCHANTS_GEOS else None
+    merchants_feed = download_merchants_feed(api_key, geo_list, static_only=False)
     feed_by_id: Dict[str, Dict[str, str]] = {}
     for m in merchants_feed:
         keys: List[str] = []

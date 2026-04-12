@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import FEED1_API_KEY, FEED2_API_KEY, KELKOO_SHEETS_SPREADSHEET_ID
+from config import FEED1_API_KEY, FEED2_API_KEY, FEED2_MERCHANTS_GEOS, KELKOO_SHEETS_SPREADSHEET_ID
 from workflows.monthly_log_monetization import (
     build_merchant_geo_url_lookup,
     count_enrich_candidates,
@@ -101,7 +101,8 @@ def main() -> None:
             print(f"Feed {feed} ({log_name}): would run {c} Kelkoo link checks (dry-run)")
             continue
 
-        by_geo_id, by_id = build_merchant_geo_url_lookup(api_key)
+        mg = list(FEED2_MERCHANTS_GEOS) if feed == 2 and FEED2_MERCHANTS_GEOS else None
+        by_geo_id, by_id = build_merchant_geo_url_lookup(api_key, mg)
         new_rows, calls = enrich_log_rows_monetization(
             rows,
             api_key,

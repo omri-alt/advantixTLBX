@@ -11,6 +11,7 @@ import time
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
+from config import FEED2_MERCHANTS_GEOS
 from integrations.kelkoo_search import format_kelkoo_monetization_status, kelkoo_merchant_link_check
 from workflows.kelkoo_daily import build_merchant_id_to_name_from_feed, download_merchants_feed
 
@@ -41,9 +42,12 @@ def country_to_kelkoo_geo(country: str) -> str:
     return c[:2] if len(c) > 2 else c
 
 
-def build_merchant_geo_url_lookup(api_key: str) -> Tuple[Dict[Tuple[str, str], str], Dict[str, str]]:
+def build_merchant_geo_url_lookup(
+    api_key: str,
+    geos: Optional[List[str]] = None,
+) -> Tuple[Dict[Tuple[str, str], str], Dict[str, str]]:
     """(geo, merchant_id) -> merchant url, and merchant_id -> url (any geo)."""
-    merchants = download_merchants_feed(api_key, static_only=False)
+    merchants = download_merchants_feed(api_key, geos, static_only=False)
     by_geo_id: Dict[Tuple[str, str], str] = {}
     by_id: Dict[str, str] = {}
     for m in merchants:
@@ -310,10 +314,13 @@ def upsert_run_merchants_into_monthly_log(
     name_lookup: Dict[str, str] = {}
     by_geo_id: Dict[Tuple[str, str], str] = {}
     by_id: Dict[str, str] = {}
+    merchants_geos: Optional[List[str]] = None
+    if feed == 2 and FEED2_MERCHANTS_GEOS:
+        merchants_geos = list(FEED2_MERCHANTS_GEOS)
     if api_key:
-        name_lookup = build_merchant_id_to_name_from_feed(api_key)
+        name_lookup = build_merchant_id_to_name_from_feed(api_key, merchants_geos)
         if check_monetization:
-            by_geo_id, by_id = build_merchant_geo_url_lookup(api_key)
+            by_geo_id, by_id = build_merchant_geo_url_lookup(api_key, merchants_geos)
 
     raw = read_sheet_values_raw(service, spreadsheet_id, log_name, "A:Z")
     body: List[List[Any]] = normalize_log_rows_to_five_cols(raw[1:]) if raw else []

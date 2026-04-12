@@ -35,6 +35,21 @@
     .coming { margin-top: 18px; border: 1px dashed #38507d; border-radius: 14px; padding: 14px; background: #101a2f; }
     ul { margin: 8px 0 0 18px; }
     code { color: #b9d0ff; }
+    .overview { margin: 8px 0 28px; }
+    .overview h2 { margin: 0 0 10px; font-size: 1.15rem; font-weight: 700; }
+    .ov-meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+    .ov-row-top { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+    @media (max-width: 720px) { .ov-row-top { grid-template-columns: 1fr; } }
+    .ov-row-costs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+    .ov-card { border: 1px solid var(--line); border-radius: 12px; background: #151f33; padding: 12px 14px; }
+    .ov-card.has-err { border-color: #92400e; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.15); }
+    .ov-card h4 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: #cbd5e1; }
+    .ov-card .amt { font-size: 18px; font-weight: 700; color: var(--text); }
+    .ov-card .lbl { font-size: 11px; color: var(--muted); margin-top: 6px; }
+    .ov-card .err { font-size: 11px; color: #fdba74; margin-top: 8px; }
+    .ov-card.placeholder { opacity: 0.65; border-style: dashed; }
+    .ov-spin { display: inline-block; width: 18px; height: 18px; border: 2px solid #334155; border-top-color: var(--accent); border-radius: 50%; animation: ovrot 0.7s linear infinite; vertical-align: middle; margin-right: 8px; }
+    @keyframes ovrot { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -53,6 +68,17 @@
       <a class="btn" href="/matchmaking/manual">Match Making: Manual Check</a>
       <a class="btn" href="/matchmaking/sheets">Match Making: Sheet Bulk Check</a>
     </div>
+
+    <section class="overview" id="overview-widget" aria-live="polite">
+      <h2>Performance overview</h2>
+      <div id="overview-loading" class="muted"><span class="ov-spin" aria-hidden="true"></span> Loading metrics…</div>
+      <div id="overview-fail" class="muted" style="display:none;"></div>
+      <div id="overview-body" style="display:none;">
+        <div class="ov-meta" id="overview-ranges"></div>
+        <div class="ov-row-top" id="overview-top"></div>
+        <div class="ov-row-costs" id="overview-costs"></div>
+      </div>
+    </section>
 
     <div class="grid">
       {% for group in groups %}
@@ -94,5 +120,72 @@
       </ul>
     </div>
   </div>
+  <script>
+  (function() {
+    function money(v) {
+      if (v === null || v === undefined || v === "") return "—";
+      var n = Number(v);
+      if (isNaN(n)) return "—";
+      return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function cardHtml(title, y, m, err, placeholder) {
+      var cls = "ov-card" + (err ? " has-err" : "") + (placeholder ? " placeholder" : "");
+      var errHtml = err ? '<div class="err">Error: ' + String(err).slice(0, 160) + (String(err).length > 160 ? "…" : "") + "</div>" : "";
+      return (
+        '<div class="' + cls + '">' +
+          "<h4>" + title + "</h4>" +
+          '<div class="lbl">Yesterday (UTC)</div>' +
+          '<div class="amt">' + money(y) + "</div>" +
+          '<div class="lbl">Month-to-date</div>' +
+          '<div class="amt">' + money(m) + "</div>" +
+          errHtml +
+        "</div>"
+      );
+    }
+    var loadEl = document.getElementById("overview-loading");
+    var failEl = document.getElementById("overview-fail");
+    var bodyEl = document.getElementById("overview-body");
+    var rangesEl = document.getElementById("overview-ranges");
+    var topEl = document.getElementById("overview-top");
+    var costsEl = document.getElementById("overview-costs");
+    if (!loadEl || !bodyEl) return;
+
+    fetch("/api/overview", { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function(r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function(data) {
+        loadEl.style.display = "none";
+        bodyEl.style.display = "block";
+        var rg = data.ranges || {};
+        rangesEl.textContent =
+          "Yesterday " + (rg.yesterday || "") +
+          " · MTD " + (rg.mtd_from || "") + " → " + (rg.mtd_to || "") +
+          (data.as_of_utc ? " · fetched " + data.as_of_utc : "");
+
+        var rev = data.revenue || {};
+        topEl.innerHTML =
+          cardHtml("Revenue (Keitaro)", rev.yesterday, rev.mtd, rev.error, false) +
+          cardHtml("Net (revenue − cost)", (data.net || {}).yesterday, (data.net || {}).mtd, null, false);
+
+        var c = data.costs || {};
+        var parts = "";
+        parts += cardHtml("Cost · Zeropark", (c.zeropark || {}).yesterday, (c.zeropark || {}).mtd, (c.zeropark || {}).error, false);
+        parts += cardHtml("Cost · SourceKnowledge", (c.sourceknowledge || {}).yesterday, (c.sourceknowledge || {}).mtd, (c.sourceknowledge || {}).error, false);
+        parts += cardHtml("Cost · Ecomnia", (c.ecomnia || {}).yesterday, (c.ecomnia || {}).mtd, (c.ecomnia || {}).error, false);
+        parts += '<div class="ov-card placeholder"><h4>Cost · Thrillion</h4><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>';
+        parts += '<div class="ov-card placeholder"><h4>Cost · Yesshh</h4><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>';
+        var tc = data.total_cost || {};
+        parts += cardHtml("Total cost (ZP + SK + EC)", tc.yesterday, tc.mtd, null, false);
+        costsEl.innerHTML = parts;
+      })
+      .catch(function(e) {
+        loadEl.style.display = "none";
+        failEl.style.display = "block";
+        failEl.textContent = "Overview could not load: " + (e && e.message ? e.message : String(e));
+      });
+  })();
+  </script>
 </body>
 </html>

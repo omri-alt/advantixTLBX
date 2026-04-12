@@ -200,6 +200,31 @@ class KeitaroClient:
                         )
         return False
 
+    def build_report(self, payload: Dict[str, Any]) -> Any:
+        """
+        POST custom stats report (``report/build`` or ``reports`` depending on tracker version).
+
+        Typical payload keys: ``range`` (``from`` / ``to`` or ``interval``), ``grouping`` (list),
+        ``metrics`` (list of strings). Response shape varies; callers parse rows/totals.
+        """
+        last_body = ""
+        for path in ("report/build", "reports"):
+            url = self._api_path(path)
+            try:
+                resp = self._session.post(url, json=payload, timeout=120)
+            except requests.RequestException as e:
+                raise KeitaroClientError(str(e)) from e
+            last_body = resp.text or ""
+            if resp.status_code == 404:
+                continue
+            if not resp.ok:
+                raise KeitaroClientError(f"Keitaro API error: {resp.status_code}", resp.status_code, last_body)
+            try:
+                return resp.json()
+            except Exception as e:
+                raise KeitaroClientError(f"Keitaro report: invalid JSON: {e}", resp.status_code, last_body[:500]) from e
+        raise KeitaroClientError("Keitaro report: no working report endpoint (404)", 404, last_body[:500])
+
     def get_campaigns(self, offset: int = 0, limit: int = 100) -> list:
         url = self._campaigns_url()
         params = {"offset": offset, "limit": limit}

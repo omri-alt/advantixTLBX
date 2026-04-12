@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import FEED1_API_KEY, FEED2_API_KEY, KELKOO_SHEETS_SPREADSHEET_ID
+from config import FEED1_API_KEY, FEED2_API_KEY, FEED2_MERCHANTS_GEOS, KELKOO_SHEETS_SPREADSHEET_ID
 from workflows.kelkoo_daily import (
     build_merchant_id_to_name_from_feed,
     fetch_report_merchant_names,
@@ -203,7 +203,12 @@ def report_date_range_for_month(year: int, month: int) -> Optional[Tuple[str, st
     return start_d.isoformat(), end_d.isoformat()
 
 
-def build_kelkoo_name_lookup_for_feed(api_key: str, year: int, month: int) -> Dict[str, str]:
+def build_kelkoo_name_lookup_for_feed(
+    api_key: str,
+    year: int,
+    month: int,
+    merchants_geos: Optional[List[str]] = None,
+) -> Dict[str, str]:
     """
     Merge merchants-feed names with report ``merchantName`` for the month (report fills gaps).
     Feed wins on key collision.
@@ -220,7 +225,7 @@ def build_kelkoo_name_lookup_for_feed(api_key: str, year: int, month: int) -> Di
             print(f"  Warning: Kelkoo report names ({start_s}..{end_s}): {e}")
     feed_map: Dict[str, str] = {}
     try:
-        feed_map = build_merchant_id_to_name_from_feed(api_key)
+        feed_map = build_merchant_id_to_name_from_feed(api_key, merchants_geos)
     except Exception as e:
         print(f"  Warning: Kelkoo merchants feed (names): {e}")
     # Report first, then feed overwrites (feed is authoritative)
@@ -411,12 +416,17 @@ def main() -> None:
     print("Loading merchant names from Kelkoo (feed + report) ...")
     kelkoo_names: Dict[int, Dict[str, str]] = {}
     if FEED1_API_KEY:
-        kelkoo_names[1] = build_kelkoo_name_lookup_for_feed(FEED1_API_KEY, year, month)
+        kelkoo_names[1] = build_kelkoo_name_lookup_for_feed(FEED1_API_KEY, year, month, None)
         print(f"  Feed1: {len(kelkoo_names[1])} id -> name mappings")
     else:
         print("  Feed1: skipped (no FEED1_API_KEY)")
     if FEED2_API_KEY:
-        kelkoo_names[2] = build_kelkoo_name_lookup_for_feed(FEED2_API_KEY, year, month)
+        kelkoo_names[2] = build_kelkoo_name_lookup_for_feed(
+            FEED2_API_KEY,
+            year,
+            month,
+            list(FEED2_MERCHANTS_GEOS) if FEED2_MERCHANTS_GEOS else None,
+        )
         print(f"  Feed2: {len(kelkoo_names[2])} id -> name mappings")
     else:
         print("  Feed2: skipped (no FEED2_API_KEY)")

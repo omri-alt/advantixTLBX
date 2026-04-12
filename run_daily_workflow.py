@@ -15,6 +15,7 @@ pick merchants → generate PLA offers → combined sheet → sync Keitaro.
 7. Blend: refresh potential → populate Blend → blend_sync_from_sheet (unless --skip-blend).
 
 Requires .env: KEITARO_BASE_URL, KEITARO_API_KEY, FEED1_API_KEY, FEED2_API_KEY; credentials.json.
+Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) for step 0b/7a; feeds without an API key are skipped.
 
   python run_daily_workflow.py
   python run_daily_workflow.py --date 2026-04-03
@@ -40,7 +41,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import FEED1_API_KEY, FEED2_API_KEY, KELKOO_SHEETS_SPREADSHEET_ID
+from config import (
+    BLEND_POTENTIAL_FEEDS,
+    FEED1_API_KEY,
+    FEED2_API_KEY,
+    FEED2_MERCHANTS_GEOS,
+    KELKOO_SHEETS_SPREADSHEET_ID,
+)
 
 from workflows.kelkoo_daily import (
     apply_fixim_colors,
@@ -61,9 +68,21 @@ SPREADSHEET_ID = KELKOO_SHEETS_SPREADSHEET_ID
 
 _DAILY_SHEET_SUFFIXES = ("_fixim_1", "_fixim_2", "_offers_1", "_offers_2", "_offers_today")
 
-# Blend: which feeds to refresh in 0b and to pull from in step 7.
-BLEND_POTENTIAL_FEEDS: tuple[str, ...] = ("kelkoo1",)
 BLEND_DAILY_MAX_NEW_ROWS = 50
+
+
+def _blend_potential_feeds_for_run() -> tuple[str, ...]:
+    """Feeds from config that have a Kelkoo API key (otherwise skip with a note)."""
+    out: list[str] = []
+    for f in BLEND_POTENTIAL_FEEDS:
+        if f == "kelkoo1" and (FEED1_API_KEY or "").strip():
+            out.append(f)
+        elif f == "kelkoo2" and (FEED2_API_KEY or "").strip():
+            out.append(f)
+        elif f in ("kelkoo1", "kelkoo2"):
+            need = "FEED1_API_KEY" if f == "kelkoo1" else "FEED2_API_KEY"
+            print(f"   Note: Blend potential {f!r} skipped (missing {need}).")
+    return tuple(out)
 
 
 def run_blend_potential_sheets(
@@ -74,7 +93,7 @@ def run_blend_potential_sheets(
     """Refresh potentialKelkoo* sheets in the Blend spreadsheet."""
     script = Path(__file__).resolve().parent / "blend_potential_merchants.py"
     ok = True
-    for feed in feeds or BLEND_POTENTIAL_FEEDS:
+    for feed in feeds or _blend_potential_feeds_for_run():
         cmd = [sys.executable, str(script), "--feed", feed, "--start", start_str, "--end", end_str]
         r = subprocess.run(cmd)
         ok = ok and (r.returncode == 0)
@@ -109,7 +128,7 @@ def run_blend_daily_steps(*, skip_keitaro: bool, skip_blend: bool, skip_blend_sy
     if skip_blend:
         return
     print("7. Blend workflow (spreadsheet + Keitaro campaign) ...")
-    for feed in BLEND_POTENTIAL_FEEDS:
+    for feed in _blend_potential_feeds_for_run():
         print(f"   7a. Populate Blend from potential ({feed}, max {BLEND_DAILY_MAX_NEW_ROWS} new rows) ...")
         if not run_populate_blend_from_potential(feed=feed, max_add=BLEND_DAILY_MAX_NEW_ROWS):
             print(f"   Warning: populate_blend_from_potential ({feed}) exited non-zero.")
@@ -315,10 +334,17 @@ def main() -> None:
         print(f"   Monthly log monetization skipped: {e}")
     print()
 
-    _pot_tabs = ", ".join("potential" + f[0].upper() + f[1:] for f in BLEND_POTENTIAL_FEEDS)
+    _pot_feeds = _blend_potential_feeds_for_run()
+    _pot_tabs = (
+        ", ".join("potential" + f[0].upper() + f[1:] for f in _pot_feeds)
+        if _pot_feeds
+        else "(none — no BLEND_POTENTIAL_FEEDS with API keys)"
+    )
     print(f"0b. Updating Blend potential sheets ({_pot_tabs}) ...")
     try:
-        if run_blend_potential_sheets(start_str, end_str):
+        if not _pot_feeds:
+            print("   Skipped (no feeds to refresh).")
+        elif run_blend_potential_sheets(start_str, end_str, feeds=_pot_feeds):
             print("   Done.")
         else:
             print("   Warning: one or more potential sheets failed to update.")
@@ -345,7 +371,11 @@ def main() -> None:
     write_fixim_sheet(service, SPREADSHEET_ID, fixim_1, merchants1)
     print(f"   {fixim_1}: {len(merchants1)} merchants")
     print("   Downloading merchants feed (feed2) ...")
-    merchants2 = download_merchants_feed(FEED2_API_KEY, static_only=static_only)
+    merchants2 = download_merchants_feed(
+        FEED2_API_KEY,
+        list(FEED2_MERCHANTS_GEOS) if FEED2_MERCHANTS_GEOS else None,
+        static_only=static_only,
+    )
     write_fixim_sheet(service, SPREADSHEET_ID, fixim_2, merchants2)
     print(f"   {fixim_2}: {len(merchants2)} merchants")
     print()

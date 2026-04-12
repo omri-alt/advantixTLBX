@@ -47,6 +47,7 @@ from assistance import (
     get_full_setup,
 )
 from kelkoo_late_sales import run_late_sales_flow
+from integrations.overview import build_overview_json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -373,17 +374,37 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
     "blend": {
         "title": "Blend Workflow",
         "script": "run_blend_workflow.py",
-        "description": "Sync Blend offers/flows and potentialBlends.",
+        "description": (
+            "Full Blend: sync Keitaro from the Blend sheet, then refresh potentialKelkoo* from reports "
+            "(use feed dropdown). Column ``feed`` on the Blend sheet must be ``kelkoo1`` or ``kelkoo2``; "
+            "sync uses ``FEED1_API_KEY`` / ``FEED2_API_KEY`` for monetization checks per row."
+        ),
         "group": "daily-automations",
         "args_hint": "Optional args, e.g. --geo fr --skip-potential (feed: use dropdown)",
         "args_templates": [
             {"label": "Default (extra args empty)", "value": ""},
             {"label": "Geo only (example)", "value": "--geo fr"},
             {"label": "Geo + Skip potential (example)", "value": "--geo fr --skip-potential"},
+            {"label": "Sheet → Keitaro only (after manual caps)", "value": "--skip-potential"},
             {"label": "Only potential (no sync)", "value": "--only-potential"},
-            {"label": "Skip potential", "value": "--skip-potential"},
             {"label": "Range (example)", "value": "--start 2026-03-01 --end 2026-03-10"},
             {"label": "Only monetized merchants (example)", "value": "--only-monetized"},
+        ],
+    },
+    "blend-keitaro-sync": {
+        "title": "Blend sheet → Keitaro",
+        "script": "blend_sync_from_sheet.py",
+        "description": (
+            "Runs only ``blend_sync_from_sheet``: prune bad auto=v rows, rebuild Blend campaign offers/flows "
+            "from the Blend tab (e.g. after editing clickCap). Does not touch potentialKelkoo sheets."
+        ),
+        "group": "daily-automations",
+        "args_hint": "Optional: --geo fr",
+        "args_templates": [
+            {"label": "All geos", "value": ""},
+            {"label": "Geo fr", "value": "--geo fr"},
+            {"label": "Geo it", "value": "--geo it"},
+            {"label": "Geo uk", "value": "--geo uk"},
         ],
     },
     "monetization-check": {
@@ -1198,6 +1219,17 @@ def ui_workflow(workflow_key: str):
                 )
                 extra_args = " ".join(extra_args.split())
                 extra_args = f"--feed {bf} {extra_args}".strip()
+        if workflow_key == "blend-keitaro-sync":
+            bg = (request.form.get("blend_sync_geo") or "").strip().lower()[:2]
+            extra_args = re.sub(
+                r"--geo\s+[a-zA-Z]{2}\b",
+                "",
+                extra_args,
+                flags=re.IGNORECASE,
+            )
+            extra_args = " ".join(extra_args.split())
+            if len(bg) == 2:
+                extra_args = f"--geo {bg} {extra_args}".strip()
         if workflow_key == "daily":
             dg = (request.form.get("daily_geo") or "").strip().lower()[:2]
             # Remove a manually-typed --geo; the dedicated control wins when set.
@@ -1232,6 +1264,12 @@ def ui_workflow(workflow_key: str):
 def health():
     """Liveness/readiness for orchestrator."""
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/overview", methods=["GET"])
+def api_overview():
+    """Dashboard: Keitaro revenue + traffic costs (ZP, SK, EC) + net. Requires same UI auth as other routes."""
+    return jsonify(build_overview_json())
 
 
 @app.route("/api/v1/workflows/create-campaign", methods=["POST"])
