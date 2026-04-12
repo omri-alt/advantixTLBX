@@ -297,6 +297,12 @@ if not YADORE_PROJECT_ID:
     YADORE_PROJECT_ID = _read_env_fallback("YADORE_PROJECT_ID")
 YADORE_PROJECT_ID = (YADORE_PROJECT_ID or "").strip().lstrip("= ").strip().strip('"').strip("'")
 
+# Yadore GET /v2/report/detail — comma-separated markets (e.g. de,uk,fr). Multi-market accounts must list each market.
+_yad_rd_m = (os.getenv("YADORE_REPORT_DETAIL_MARKETS") or "").strip()
+if not _yad_rd_m:
+    _yad_rd_m = (_read_env_fallback("YADORE_REPORT_DETAIL_MARKETS") or "").strip()
+YADORE_REPORT_DETAIL_MARKETS = [x.strip().lower() for x in _yad_rd_m.split(",") if x.strip()]
+
 # Adexa (feed4) — site ID + API key (GetMerchant, feeds). Names from .env:
 #   ADEXA_SITE_ID or AdexSiteID | ADEXA_API_KEY or KeyAdex or KEY_ADEX
 ADEXA_SITE_ID = (os.getenv("ADEXA_SITE_ID") or os.getenv("AdexSiteID") or "").strip()
