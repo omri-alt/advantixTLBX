@@ -1,7 +1,8 @@
 """
 Traffic-source spend for the overview dashboard (Zeropark, SourceKnowledge, Ecomnia).
 
-Uses **account-level** APIs only (no per-campaign loops for EC/SK).
+Uses account-level APIs for Zeropark / Ecomnia; SourceKnowledge falls back to per-campaign
+``by-publisher`` only when no aggregate URL is configured — **inactive** list rows are skipped.
 
 Each public ``fetch_*`` returns::
 
@@ -10,6 +11,7 @@ Each public ``fetch_*`` returns::
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +28,7 @@ from config import (
     KEYZP,
     SK_ACCOUNT_STATS_URL,
     SK_OVERVIEW_MAX_CAMPAIGNS,
+    SK_OVERVIEW_SKIP_CAMPAIGN_IDS_FILE,
     SOURCEKNOWLEDGE_API_KEY,
 )
 
@@ -35,6 +38,37 @@ ZEROPARK_PANEL = "https://panel.zeropark.com"
 SK_API_BASE = "https://api.sourceknowledge.com/affiliate/v2"
 # Tight timeouts so a hung SK node does not block the whole dashboard for minutes.
 _SK_HTTP_TIMEOUT = 22
+
+
+def _sk_skip_ids_from_file() -> set[int]:
+    """
+    Optional JSON from ``cli/build_sk_overview_skip_campaign_ids.py`` (or hand-edited).
+
+    Shape: ``{"skip_campaign_ids": [1, 2, ...]}``. Merged with live ``active: false`` filtering.
+    """
+    from pathlib import Path
+
+    raw = (SK_OVERVIEW_SKIP_CAMPAIGN_IDS_FILE or "").strip()
+    path = Path(raw) if raw else Path(__file__).resolve().parent.parent / "runtime" / "sk_overview_skip_campaign_ids.json"
+    if not path.is_file():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("Could not read SK skip-campaign JSON at %s", path)
+        return set()
+    ids_raw = data.get("skip_campaign_ids")
+    if ids_raw is None:
+        ids_raw = data.get("inactive_campaign_ids", [])
+    if not isinstance(ids_raw, list):
+        return set()
+    out: set[int] = set()
+    for x in ids_raw:
+        try:
+            out.add(int(x))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _ec_report_authtoken(secret: str, start: str, end: str) -> str:
@@ -215,7 +249,12 @@ def _sk_get_aggregate_spend(api_key: str, d0: str, d1: str) -> Optional[float]:
 
 
 def _sk_list_campaign_ids_paginated(api_key: str) -> List[int]:
+    """
+    Active campaigns only: skip ``active: false`` (paused / inactive in list API) and any IDs
+    listed in ``runtime/sk_overview_skip_campaign_ids.json`` when present.
+    """
     headers = _sk_headers(api_key)
+    extra_skip = _sk_skip_ids_from_file()
     ids: List[int] = []
     page = 1
     while page < 5000:
@@ -243,11 +282,17 @@ def _sk_list_campaign_ids_paginated(api_key: str) -> List[int]:
         if not isinstance(items, list) or not items:
             break
         for it in items:
-            if isinstance(it, dict) and it.get("id") is not None:
-                try:
-                    ids.append(int(it["id"]))
-                except (TypeError, ValueError):
-                    pass
+            if not isinstance(it, dict) or it.get("id") is None:
+                continue
+            if it.get("active") is False:
+                continue
+            try:
+                cid = int(it["id"])
+            except (TypeError, ValueError):
+                continue
+            if cid in extra_skip:
+                continue
+            ids.append(cid)
         page += 1
         time.sleep(0.06)
     return ids
@@ -301,8 +346,8 @@ def _sk_apply_campaign_cap(cids: List[int]) -> tuple[List[int], Optional[str]]:
     if cap <= 0 or len(cids) <= cap:
         return cids, None
     msg = (
-        f"SK spend sampled from {cap} of {len(cids)} campaigns "
-        "(set SK_ACCOUNT_STATS_URL or SK_OVERVIEW_MAX_CAMPAIGNS=0 for full coverage)."
+        f"SK spend sampled from {cap} of {len(cids)} active campaigns "
+        "(inactive/archived are skipped; set SK_OVERVIEW_MAX_CAMPAIGNS=0 for no cap, or SK_ACCOUNT_STATS_URL)."
     )
     return cids[:cap], msg
 

@@ -172,12 +172,14 @@ SOURCEKNOWLEDGE_API_KEY = (SOURCEKNOWLEDGE_API_KEY or "").strip()
 
 # Optional: GET URL template for SK account-level spend in overview (``{from}`` / ``{to}`` = YYYY-MM-DD)
 SK_ACCOUNT_STATS_URL = (os.getenv("SK_ACCOUNT_STATS_URL") or "").strip()
-# Overview SK fallback (by-publisher per campaign): cap list size so ``/api/overview`` finishes under proxy timeouts. ``0`` = no cap.
-_sk_cap_raw = (os.getenv("SK_OVERVIEW_MAX_CAMPAIGNS") or "40").strip()
+# Overview SK fallback (by-publisher per campaign): optional cap after inactive filter. ``0`` = no cap (default).
+_sk_cap_raw = (os.getenv("SK_OVERVIEW_MAX_CAMPAIGNS") or "0").strip()
 try:
     SK_OVERVIEW_MAX_CAMPAIGNS = int(_sk_cap_raw)
 except ValueError:
-    SK_OVERVIEW_MAX_CAMPAIGNS = 40
+    SK_OVERVIEW_MAX_CAMPAIGNS = 0
+# Optional JSON from ``cli/build_sk_overview_skip_campaign_ids.py`` — extra campaign IDs to skip (merged with ``active: false`` from the API).
+SK_OVERVIEW_SKIP_CAMPAIGN_IDS_FILE = (os.getenv("SK_OVERVIEW_SKIP_CAMPAIGN_IDS_FILE") or "").strip()
 
 # Overview snapshot (``GET /api/overview`` reads from disk; rebuild via ``POST /api/overview/refresh`` or scheduler)
 OVERVIEW_SNAPSHOT_PATH = (os.getenv("OVERVIEW_SNAPSHOT_PATH") or "").strip()
