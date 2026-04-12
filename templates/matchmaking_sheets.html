@@ -14,6 +14,7 @@
     pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0d1426; border: 1px solid #2a3654; padding: 10px; border-radius: 10px; max-height: 460px; overflow: auto; }
     .status-success { color: #22c55e; font-weight: 700; }
     .status-failed { color: #f59e0b; font-weight: 700; }
+    .run-finished { cursor: help; border-bottom: 1px dotted rgba(154, 164, 178, 0.55); }
   </style>
 </head>
 <body>
@@ -32,7 +33,7 @@
     {% if last_run %}
     <div class="card">
       <div><strong>Status:</strong> <span class="status-{{ last_run.status }}">{{ last_run.status }}</span></div>
-      <div class="muted">Finished: {{ last_run.finished_at_utc }} | Duration: {{ last_run.duration_seconds }}s | Exit: {{ last_run.exit_code }}</div>
+      <div class="muted">Finished: {{ last_run | workflow_run_time }} · exit {{ last_run.exit_code }}</div>
       <pre>{{ last_run.log }}</pre>
     </div>
     {% endif %}

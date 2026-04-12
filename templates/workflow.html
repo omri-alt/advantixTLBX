@@ -16,6 +16,7 @@
     pre { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px; max-height: 420px; overflow: auto; white-space: pre-wrap; }
     a { color: #86efac; text-decoration: none; }
     a:hover { text-decoration: underline; }
+    .run-finished { cursor: help; border-bottom: 1px dotted rgba(154, 164, 178, 0.55); }
   </style>
 </head>
 <body>
@@ -86,8 +87,7 @@
     <div class="row">
       Status: <span class="status-{{ last_run.status }}">{{ last_run.status }}</span><br>
       Started: {{ last_run.started_at_utc }}<br>
-      Finished: {{ last_run.finished_at_utc }}<br>
-      Duration: {{ last_run.duration_seconds }}s<br>
+      Finished: {{ last_run | workflow_run_time }}<br>
       Exit code: {{ last_run.exit_code }}
     </div>
     <div class="row"><strong>Log</strong></div>
