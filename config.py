@@ -179,6 +179,17 @@ try:
 except ValueError:
     SK_OVERVIEW_MAX_CAMPAIGNS = 40
 
+# Overview snapshot (``GET /api/overview`` reads from disk; rebuild via ``POST /api/overview/refresh`` or scheduler)
+OVERVIEW_SNAPSHOT_PATH = (os.getenv("OVERVIEW_SNAPSHOT_PATH") or "").strip()
+OVERVIEW_SNAPSHOT_TZ = (os.getenv("OVERVIEW_SNAPSHOT_TZ") or "UTC").strip()
+_ov_h = (os.getenv("OVERVIEW_SNAPSHOT_HOUR") or "8").strip()
+try:
+    OVERVIEW_SNAPSHOT_HOUR = int(_ov_h)
+except ValueError:
+    OVERVIEW_SNAPSHOT_HOUR = 8
+OVERVIEW_SNAPSHOT_HOUR = max(0, min(23, OVERVIEW_SNAPSHOT_HOUR))
+OVERVIEW_SCHEDULER_ENABLED = (os.getenv("OVERVIEW_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no"))
+
 # Ecomnia (advertiser API keys)
 EC_ADVERTISER_KEY = (os.getenv("ADVERTISER_KEY") or "").strip()
 if not EC_ADVERTISER_KEY:

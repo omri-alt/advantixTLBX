@@ -30,6 +30,8 @@ from config import (
     FEED2_API_KEY,
     KELKOO_LATE_SALES_SPREADSHEET_ID,
     LATE_SALES_POSTBACK_BASE,
+    OVERVIEW_SNAPSHOT_TZ,
+    OVERVIEW_SNAPSHOT_HOUR,
 )
 from workflows.campaign_setup import run_create_campaign_workflow
 from integrations.keitaro import KeitaroClientError
@@ -47,7 +49,11 @@ from assistance import (
     get_full_setup,
 )
 from kelkoo_late_sales import run_late_sales_flow
-from integrations.overview import build_overview_json
+from integrations.overview_snapshot import (
+    read_snapshot_for_api,
+    refresh_overview_snapshot,
+    start_daily_overview_scheduler,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -787,7 +793,13 @@ def ui_home():
         "daily_automations": ["Daily data pull from Kelkoo feed"],
         "publisher_tools": ["Publisher tools dashboard (SK/EC under refinement)"],
     }
-    return render_template("index.html", groups=out_groups, coming_soon=coming_soon)
+    return render_template(
+        "index.html",
+        groups=out_groups,
+        coming_soon=coming_soon,
+        overview_snapshot_tz=OVERVIEW_SNAPSHOT_TZ,
+        overview_snapshot_hour=OVERVIEW_SNAPSHOT_HOUR,
+    )
 
 
 @app.route("/github", methods=["GET"])
@@ -1266,10 +1278,54 @@ def health():
     return jsonify({"status": "ok"})
 
 
+def _overview_missing_payload() -> Dict[str, Any]:
+    """Shape returned when no snapshot file exists yet."""
+    return {
+        "snapshot_status": "missing",
+        "snapshot_saved_utc": None,
+        "revenue": {
+            "yesterday": None,
+            "mtd": None,
+            "error": "No snapshot yet. Click \"Refresh overview\" or wait for the daily scheduled job.",
+        },
+        "costs": {
+            "zeropark": {"yesterday": None, "mtd": None, "error": None},
+            "sourceknowledge": {"yesterday": None, "mtd": None, "error": None},
+            "ecomnia": {"yesterday": None, "mtd": None, "error": None},
+            "thrillion": None,
+            "yesshh": None,
+        },
+        "total_cost": {"yesterday": None, "mtd": None},
+        "net": {"yesterday": None, "mtd": None},
+        "as_of_utc": None,
+        "ranges": {},
+    }
+
+
+@app.route("/api/overview/refresh", methods=["POST"])
+def api_overview_refresh():
+    """Rebuild the overview snapshot from live APIs (can take several minutes). Same UI auth as other routes."""
+    try:
+        data, saved = refresh_overview_snapshot()
+    except Exception as e:
+        logger.exception("POST /api/overview/refresh failed")
+        return jsonify({"error": str(e)}), 500
+    out: Dict[str, Any] = dict(data)
+    out["snapshot_status"] = "ready"
+    out["snapshot_saved_utc"] = saved
+    return jsonify(out)
+
+
 @app.route("/api/overview", methods=["GET"])
 def api_overview():
-    """Dashboard: Keitaro revenue + traffic costs (ZP, SK, EC) + net. Requires same UI auth as other routes."""
-    return jsonify(build_overview_json())
+    """Dashboard metrics from the last snapshot (fast). Rebuild via ``POST /api/overview/refresh`` or daily scheduler."""
+    payload, saved = read_snapshot_for_api()
+    if payload is None:
+        return jsonify(_overview_missing_payload())
+    out: Dict[str, Any] = dict(payload)
+    out["snapshot_status"] = "ready"
+    out["snapshot_saved_utc"] = saved
+    return jsonify(out)
 
 
 @app.route("/api/v1/workflows/create-campaign", methods=["POST"])
@@ -1468,6 +1524,12 @@ def assistance_get_streams_by_campaign():
             "status_code": e.status_code,
             "response_body": e.response_body,
         }), (e.status_code or 502)
+
+
+try:
+    start_daily_overview_scheduler()
+except Exception as e:
+    logger.warning("Overview snapshot scheduler did not start: %s", e)
 
 
 def main():

@@ -37,6 +37,9 @@
     code { color: #b9d0ff; }
     .overview { margin: 8px 0 28px; }
     .overview h2 { margin: 0 0 10px; font-size: 1.15rem; font-weight: 700; }
+    .overview .ov-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 12px; }
+    .overview .ov-actions .btn { cursor: pointer; border: 0; font: inherit; }
+    .overview .ov-actions .btn:disabled { opacity: 0.55; cursor: not-allowed; }
     .ov-meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
     .ov-row-top { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
     @media (max-width: 720px) { .ov-row-top { grid-template-columns: 1fr; } }
@@ -71,7 +74,11 @@
 
     <section class="overview" id="overview-widget" aria-live="polite">
       <h2>Performance overview</h2>
-      <div id="overview-loading" class="muted"><span class="ov-spin" aria-hidden="true"></span> Loading metrics…</div>
+      <div class="ov-actions">
+        <button type="button" class="btn" id="overview-refresh-btn">Refresh overview</button>
+        <span class="muted" id="overview-snap-hint">Loads saved snapshot; refresh pulls live APIs (slow).</span>
+      </div>
+      <div id="overview-loading" class="muted"><span class="ov-spin" aria-hidden="true"></span> Loading snapshot…</div>
       <div id="overview-fail" class="muted" style="display:none;"></div>
       <div id="overview-body" style="display:none;">
         <div class="ov-meta" id="overview-ranges"></div>
@@ -152,50 +159,99 @@
     if (!failEl || !rangesEl || !topEl || !costsEl) return;
 
     var overviewUrl = {{ url_for("api_overview") | tojson }};
-    var fetchOpts = { credentials: "same-origin", headers: { Accept: "application/json" } };
-    if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
-      fetchOpts.signal = AbortSignal.timeout(120000);
+    var refreshUrl = {{ url_for("api_overview_refresh") | tojson }};
+    var ovTz = {{ overview_snapshot_tz | tojson }};
+    var ovHr = {{ overview_snapshot_hour | int }};
+    var snapHintEl = document.getElementById("overview-snap-hint");
+    var refreshBtn = document.getElementById("overview-refresh-btn");
+
+    function renderOverview(data) {
+      bodyEl.style.display = "block";
+      failEl.style.display = "none";
+      var rg = data.ranges || {};
+      var snap = data.snapshot_saved_utc || "";
+      var st = data.snapshot_status || "";
+      rangesEl.textContent =
+        (snap ? "Saved " + snap + " · " : "") +
+        (st ? "status " + st + " · " : "") +
+        "Yesterday " + (rg.yesterday || "") +
+        " · MTD " + (rg.mtd_from || "") + " → " + (rg.mtd_to || "") +
+        (data.as_of_utc ? " · data as of " + data.as_of_utc : "");
+
+      if (snapHintEl) {
+        snapHintEl.textContent = snap
+          ? "Showing snapshot from " + snap + ". Daily rebuild at " + String(ovHr).padStart(2, "0") + ":00 (" + ovTz + ")."
+          : "No snapshot file yet — click Refresh overview or wait for the scheduler.";
+      }
+
+      var rev = data.revenue || {};
+      topEl.innerHTML =
+        cardHtml("Revenue (Keitaro)", rev.yesterday, rev.mtd, rev.error, false) +
+        cardHtml("Net (revenue − cost)", (data.net || {}).yesterday, (data.net || {}).mtd, null, false);
+
+      var c = data.costs || {};
+      var parts = "";
+      parts += cardHtml("Cost · Zeropark", (c.zeropark || {}).yesterday, (c.zeropark || {}).mtd, (c.zeropark || {}).error, false);
+      parts += cardHtml("Cost · SourceKnowledge", (c.sourceknowledge || {}).yesterday, (c.sourceknowledge || {}).mtd, (c.sourceknowledge || {}).error, false);
+      parts += cardHtml("Cost · Ecomnia", (c.ecomnia || {}).yesterday, (c.ecomnia || {}).mtd, (c.ecomnia || {}).error, false);
+      parts += '<div class="ov-card placeholder"><h4>Cost · Thrillion</h4><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>';
+      parts += '<div class="ov-card placeholder"><h4>Cost · Yesshh</h4><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>';
+      var tc = data.total_cost || {};
+      parts += cardHtml("Total cost (ZP + SK + EC)", tc.yesterday, tc.mtd, null, false);
+      costsEl.innerHTML = parts;
     }
 
-    fetch(overviewUrl, fetchOpts)
-      .then(function(r) {
-        if (r.status === 401) throw new Error("HTTP 401 (sign in again; overview API uses the same UI auth)");
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.json();
-      })
-      .then(function(data) {
-        loadEl.style.display = "none";
-        bodyEl.style.display = "block";
-        var rg = data.ranges || {};
-        rangesEl.textContent =
-          "Yesterday " + (rg.yesterday || "") +
-          " · MTD " + (rg.mtd_from || "") + " → " + (rg.mtd_to || "") +
-          (data.as_of_utc ? " · fetched " + data.as_of_utc : "");
+    function loadSnapshot() {
+      loadEl.style.display = "block";
+      bodyEl.style.display = "none";
+      failEl.style.display = "none";
+      return fetch(overviewUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function(r) {
+          if (r.status === 401) throw new Error("HTTP 401 (sign in again; overview API uses the same UI auth)");
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function(data) {
+          loadEl.style.display = "none";
+          renderOverview(data);
+        });
+    }
 
-        var rev = data.revenue || {};
-        topEl.innerHTML =
-          cardHtml("Revenue (Keitaro)", rev.yesterday, rev.mtd, rev.error, false) +
-          cardHtml("Net (revenue − cost)", (data.net || {}).yesterday, (data.net || {}).mtd, null, false);
+    loadSnapshot().catch(function(e) {
+      loadEl.style.display = "none";
+      failEl.style.display = "block";
+      failEl.textContent = "Overview snapshot could not load: " + (e && e.message ? e.message : String(e)) + " · " + overviewUrl;
+    });
 
-        var c = data.costs || {};
-        var parts = "";
-        parts += cardHtml("Cost · Zeropark", (c.zeropark || {}).yesterday, (c.zeropark || {}).mtd, (c.zeropark || {}).error, false);
-        parts += cardHtml("Cost · SourceKnowledge", (c.sourceknowledge || {}).yesterday, (c.sourceknowledge || {}).mtd, (c.sourceknowledge || {}).error, false);
-        parts += cardHtml("Cost · Ecomnia", (c.ecomnia || {}).yesterday, (c.ecomnia || {}).mtd, (c.ecomnia || {}).error, false);
-        parts += '<div class="ov-card placeholder"><h4>Cost · Thrillion</h4><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>';
-        parts += '<div class="ov-card placeholder"><h4>Cost · Yesshh</h4><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>';
-        var tc = data.total_cost || {};
-        parts += cardHtml("Total cost (ZP + SK + EC)", tc.yesterday, tc.mtd, null, false);
-        costsEl.innerHTML = parts;
-      })
-      .catch(function(e) {
-        loadEl.style.display = "none";
-        failEl.style.display = "block";
-        var nm = e && e.name;
-        var timedOut = nm === "TimeoutError" || nm === "AbortError";
-        var msg = timedOut ? "timed out after 120s (DSP overview can be slow; raise proxy timeout or set SK_ACCOUNT_STATS_URL)" : (e && e.message ? e.message : String(e));
-        failEl.textContent = "Overview could not load: " + msg + " · Request URL was " + overviewUrl;
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function() {
+        refreshBtn.disabled = true;
+        loadEl.style.display = "block";
+        bodyEl.style.display = "none";
+        var ropts = { method: "POST", credentials: "same-origin", headers: { Accept: "application/json" } };
+        if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+          ropts.signal = AbortSignal.timeout(900000);
+        }
+        fetch(refreshUrl, ropts)
+          .then(function(r) {
+            if (r.status === 401) throw new Error("HTTP 401");
+            if (!r.ok) return r.text().then(function(t) { throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200)); });
+            return r.json();
+          })
+          .then(function(data) {
+            loadEl.style.display = "none";
+            renderOverview(data);
+          })
+          .catch(function(e) {
+            loadEl.style.display = "none";
+            failEl.style.display = "block";
+            failEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
+          })
+          .finally(function() {
+            refreshBtn.disabled = false;
+          });
       });
+    }
   })();
   </script>
 </body>
