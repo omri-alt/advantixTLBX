@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Send daily Keitaro conversion postbacks from Kelkoo (per geo), Adexa StatsRaw, and Yadore conversion/detail.
+Send daily Keitaro conversion postbacks from Kelkoo (per geo), Adexa StatsRaw, and Yadore report/detail.
 
 State file (resume, no double-fire): ``DAILY_CONVERSION_POSTBACK_STATE_PATH`` (see ``config.py``).
 
