@@ -191,6 +191,8 @@ except ValueError:
     OVERVIEW_SNAPSHOT_HOUR = 8
 OVERVIEW_SNAPSHOT_HOUR = max(0, min(23, OVERVIEW_SNAPSHOT_HOUR))
 OVERVIEW_SCHEDULER_ENABLED = (os.getenv("OVERVIEW_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no"))
+# At process start: ``missing`` = build snapshot in background only if file absent; ``always`` = always rebuild once; ``off`` = never.
+OVERVIEW_SNAPSHOT_BOOTSTRAP = (os.getenv("OVERVIEW_SNAPSHOT_BOOTSTRAP") or "missing").strip().lower()
 
 # Ecomnia (advertiser API keys)
 EC_ADVERTISER_KEY = (os.getenv("ADVERTISER_KEY") or "").strip()

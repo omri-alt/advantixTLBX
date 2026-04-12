@@ -96,6 +96,41 @@ def _scheduler_loop() -> None:
             time.sleep(60)
 
 
+def start_overview_snapshot_bootstrap() -> None:
+    """
+    Optionally run one ``refresh_overview_snapshot()`` shortly after startup (background).
+
+    Controlled by ``OVERVIEW_SNAPSHOT_BOOTSTRAP`` (``missing`` | ``always`` | ``off``).
+    """
+    from config import OVERVIEW_SNAPSHOT_BOOTSTRAP
+
+    mode = (OVERVIEW_SNAPSHOT_BOOTSTRAP or "missing").strip().lower()
+    if mode in ("0", "off", "false", "no"):
+        return
+    if os.getenv("FLASK_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return
+
+    def run() -> None:
+        time.sleep(3.0)
+        path = snapshot_path()
+        if mode in ("missing", "if-missing", ""):
+            if path.exists():
+                logger.info("Overview snapshot bootstrap skipped (file exists): %s", path)
+                return
+        elif mode not in ("always", "force", "yes", "1", "true"):
+            logger.warning("Unknown OVERVIEW_SNAPSHOT_BOOTSTRAP %r; treating as missing", mode)
+            if path.exists():
+                return
+        try:
+            _, saved = refresh_overview_snapshot()
+            logger.info("Overview snapshot bootstrap completed (saved_utc=%s)", saved)
+        except Exception:
+            logger.exception("Overview snapshot bootstrap failed")
+
+    threading.Thread(target=run, name="overview-snapshot-bootstrap", daemon=True).start()
+    logger.info("Overview snapshot bootstrap thread scheduled (mode=%s)", mode)
+
+
 def start_daily_overview_scheduler() -> None:
     from config import (
         OVERVIEW_SCHEDULER_ENABLED,

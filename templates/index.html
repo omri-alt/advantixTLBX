@@ -41,6 +41,7 @@
     .overview .ov-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 12px; }
     .overview .ov-actions .btn { cursor: pointer; border: 0; font: inherit; }
     .overview .ov-actions .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .overview .ov-actions .btn-sm { font-size: 12px; padding: 6px 12px; border-radius: 8px; }
     .ov-meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
     .ov-row-top { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
     @media (max-width: 720px) { .ov-row-top { grid-template-columns: 1fr; } }
@@ -83,8 +84,8 @@
     <section class="overview" id="overview-widget" aria-live="polite">
       <h2>Performance overview</h2>
       <div class="ov-actions">
-        <button type="button" class="btn" id="overview-refresh-btn">Reload all tiles</button>
-        <span class="muted" id="overview-snap-hint">Each metric loads on its own; badges show OK vs issues. Snapshot file (8:00) is separate from this live view.</span>
+        <button type="button" class="btn btn-sm" id="overview-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh from APIs</button>
+        <span class="muted" id="overview-snap-hint"></span>
       </div>
       <div id="overview-fail" class="muted" style="display:none;"></div>
       <div id="overview-body">
@@ -186,6 +187,8 @@
     var snapHintEl = document.getElementById("overview-snap-hint");
     var ovTz = {{ overview_snapshot_tz | tojson }};
     var ovHr = {{ overview_snapshot_hour | int }};
+    var overviewUrl = {{ url_for("api_overview") | tojson }};
+    var refreshUrl = {{ url_for("api_overview_refresh") | tojson }};
 
     var TILE_KEYS = ["revenue", "zeropark", "sourceknowledge", "ecomnia"];
     var TITLES = {
@@ -194,152 +197,132 @@
       sourceknowledge: "Cost · SourceKnowledge",
       ecomnia: "Cost · Ecomnia",
     };
-    var urls = {
-      revenue: {{ url_for("api_overview_slice_revenue") | tojson }},
-      zeropark: {{ url_for("api_overview_slice_zeropark") | tojson }},
-      sourceknowledge: {{ url_for("api_overview_slice_sourceknowledge") | tojson }},
-      ecomnia: {{ url_for("api_overview_slice_ecomnia") | tojson }},
-    };
-
-    var tileState = {};
-    var rangesSet = false;
 
     if (!rangesEl || !failEl) return;
 
     if (snapHintEl) {
       snapHintEl.textContent =
-        "Each tile calls its own API. Badges: OK vs Issue. Reload all tiles retries every source in parallel. Snapshot file (scheduled " +
+        "Page reads the saved snapshot (instant). Daily rebuild at " +
         String(ovHr).padStart(2, "0") +
         ":00 " +
         ovTz +
-        ") is separate.";
+        ". Use the button only when you want fresh API numbers.";
     }
 
-    function applyRangesOnce(payload) {
-      if (rangesSet || !payload || !payload.ranges) return;
-      rangesSet = true;
-      var rg = payload.ranges;
+    function setTilesSnapshotLoading() {
+      TILE_KEYS.forEach(function(k) {
+        var el = document.getElementById("tile-" + k);
+        if (el) el.innerHTML = tileLoading(TITLES[k]);
+      });
+      var netEl = document.getElementById("tile-net");
+      var totEl = document.getElementById("tile-total");
+      if (netEl) netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Loading snapshot…", false, "wait");
+      if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", null, null, "Loading snapshot…", false, "wait");
+    }
+
+    function setTilesLoading() {
+      TILE_KEYS.forEach(function(k) {
+        var el = document.getElementById("tile-" + k);
+        if (el) el.innerHTML = tileLoading(TITLES[k]);
+      });
+      var netEl = document.getElementById("tile-net");
+      var totEl = document.getElementById("tile-total");
+      if (netEl) netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Refreshing…", false, "wait");
+      if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", null, null, "Refreshing…", false, "wait");
+    }
+
+    function renderFromSnapshot(data) {
+      failEl.style.display = "none";
+      var rg = data.ranges || {};
+      var snap = data.snapshot_saved_utc || "";
+      var st = data.snapshot_status || "";
       rangesEl.textContent =
+        (snap ? "Saved " + snap + " · " : "") +
+        (st ? "status " + st + " · " : "") +
         "Yesterday " +
         (rg.yesterday || "") +
         " · MTD " +
         (rg.mtd_from || "") +
         " → " +
         (rg.mtd_to || "") +
-        " · live per tile · snapshot job " +
-        String(ovHr).padStart(2, "0") +
-        ":00 " +
-        ovTz;
-    }
+        (data.as_of_utc ? " · data as of " + data.as_of_utc : "");
 
-    function nz(v) {
-      if (v === null || v === undefined || v === "") return 0;
-      var n = Number(v);
-      return isNaN(n) ? 0 : n;
-    }
-
-    function paintRollup() {
-      var netEl = document.getElementById("tile-net");
-      var totEl = document.getElementById("tile-total");
-      if (!netEl || !totEl) return;
-      var pend = TILE_KEYS.some(function(k) {
-        return tileState[k] === undefined;
-      });
-      if (pend) {
-        netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Waiting for other tiles…", false, "wait");
-        totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", null, null, "Waiting for other tiles…", false, "wait");
-        return;
+      var rev = data.revenue || {};
+      var revEl = document.getElementById("tile-revenue");
+      if (revEl) {
+        revEl.innerHTML = cardHtml("Revenue (Keitaro)", rev.yesterday, rev.mtd, rev.error, false, rev.error ? "err" : "ok");
       }
-      var ty = nz(tileState.zeropark.yesterday) + nz(tileState.sourceknowledge.yesterday) + nz(tileState.ecomnia.yesterday);
-      var tm = nz(tileState.zeropark.mtd) + nz(tileState.sourceknowledge.mtd) + nz(tileState.ecomnia.mtd);
-      var ry = tileState.revenue.yesterday;
-      var rm = tileState.revenue.mtd;
-      var netY = nz(ry) - ty;
-      var netM = nz(rm) - tm;
-      var errs = [];
-      TILE_KEYS.forEach(function(k) {
-        var s = tileState[k];
-        if (!s) return;
-        if (s.httpErr) errs.push(k + ": " + s.httpErr);
-        else if (s.error) errs.push(k + ": " + String(s.error).slice(0, 120));
-      });
-      var totalErr = errs.length ? errs.join(" · ") : null;
-      totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", ty, tm, totalErr, false, totalErr ? "err" : "ok");
-      var revErr = tileState.revenue.error || tileState.revenue.httpErr;
-      var netErr = [revErr, totalErr].filter(Boolean).join(" · ") || null;
-      netEl.innerHTML = cardHtml("Net (revenue − cost)", netY, netM, netErr, false, netErr ? "err" : "ok");
+      var c = data.costs || {};
+      function costTile(key, title) {
+        var x = (c[key] || {});
+        var el = document.getElementById("tile-" + key);
+        if (el) el.innerHTML = cardHtml(title, x.yesterday, x.mtd, x.error, false, x.error ? "err" : "ok");
+      }
+      costTile("zeropark", TITLES.zeropark);
+      costTile("sourceknowledge", TITLES.sourceknowledge);
+      costTile("ecomnia", TITLES.ecomnia);
+
+      var tc = data.total_cost || {};
+      var net = data.net || {};
+      var terr = [rev.error, (c.zeropark || {}).error, (c.sourceknowledge || {}).error, (c.ecomnia || {}).error]
+        .filter(Boolean)
+        .join(" · ") || null;
+      var totEl = document.getElementById("tile-total");
+      if (totEl) {
+        totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", tc.yesterday, tc.mtd, terr, false, terr ? "err" : "ok");
+      }
+      var netEl = document.getElementById("tile-net");
+      if (netEl) {
+        var netErr = [rev.error, terr].filter(Boolean).join(" · ") || null;
+        netEl.innerHTML = cardHtml("Net (revenue − cost)", net.yesterday, net.mtd, netErr, false, netErr ? "err" : "ok");
+      }
     }
 
-    function paintTileFromSlice(key, payload) {
-      applyRangesOnce(payload);
-      var d = (payload && payload.data) || {};
-      tileState[key] = {
-        yesterday: d.yesterday,
-        mtd: d.mtd,
-        error: d.error || null,
-        httpErr: null,
-      };
-      var el = document.getElementById("tile-" + key);
-      var err = d.error || null;
-      var badge = err ? "err" : "ok";
-      if (el) el.innerHTML = cardHtml(TITLES[key], d.yesterday, d.mtd, err, false, badge);
-      paintRollup();
-    }
-
-    function initTilesToLoading() {
-      TILE_KEYS.forEach(function(k) {
-        tileState[k] = undefined;
-        var el = document.getElementById("tile-" + k);
-        if (el) el.innerHTML = tileLoading(TITLES[k]);
-      });
-      paintRollup();
-    }
-
-    function reloadAllTiles() {
+    function loadSnapshotFromDisk() {
       failEl.style.display = "none";
-      rangesSet = false;
-      rangesEl.textContent = "Loading date ranges…";
-      initTilesToLoading();
-      if (refreshBtn) refreshBtn.disabled = true;
-      var remaining = TILE_KEYS.length;
-      TILE_KEYS.forEach(function(key) {
-        fetch(urls[key], { credentials: "same-origin", headers: { Accept: "application/json" } })
+      rangesEl.textContent = "Loading snapshot…";
+      setTilesSnapshotLoading();
+      return fetch(overviewUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function(r) {
+          if (r.status === 401) throw new Error("HTTP 401 — sign in again");
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(renderFromSnapshot);
+    }
+
+    loadSnapshotFromDisk().catch(function(e) {
+      failEl.style.display = "block";
+      failEl.textContent = "Overview snapshot could not load: " + (e && e.message ? e.message : String(e));
+    });
+
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function() {
+        refreshBtn.disabled = true;
+        failEl.style.display = "none";
+        setTilesLoading();
+        rangesEl.textContent = "Refreshing snapshot from APIs (may take several minutes)…";
+        var ropts = { method: "POST", credentials: "same-origin", headers: { Accept: "application/json" } };
+        if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+          ropts.signal = AbortSignal.timeout(900000);
+        }
+        fetch(refreshUrl, ropts)
           .then(function(r) {
-            if (r.status === 401) throw new Error("HTTP 401 — sign in again");
-            if (!r.ok) throw new Error("HTTP " + r.status);
+            if (r.status === 401) throw new Error("HTTP 401");
+            if (!r.ok) return r.text().then(function(t) { throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200)); });
             return r.json();
           })
-          .then(function(payload) {
-            paintTileFromSlice(key, payload);
-          })
+          .then(renderFromSnapshot)
           .catch(function(e) {
-            var msg = e && e.message ? e.message : String(e);
-            tileState[key] = { yesterday: null, mtd: null, error: null, httpErr: msg };
-            var el = document.getElementById("tile-" + key);
-            if (el) el.innerHTML = cardHtml(TITLES[key], null, null, msg, false, "err");
-            paintRollup();
+            failEl.style.display = "block";
+            failEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
+            return loadSnapshotFromDisk();
           })
           .finally(function() {
-            remaining--;
-            if (remaining <= 0) {
-              if (refreshBtn) refreshBtn.disabled = false;
-              if (!rangesSet) {
-                rangesEl.textContent =
-                  "Could not read date window from any slice (check auth / network). Snapshot job " +
-                  String(ovHr).padStart(2, "0") +
-                  ":00 " +
-                  ovTz +
-                  ".";
-              }
-            }
+            refreshBtn.disabled = false;
           });
       });
     }
-
-    if (refreshBtn) {
-      refreshBtn.addEventListener("click", reloadAllTiles);
-    }
-    reloadAllTiles();
   })();
   </script>
 </body>

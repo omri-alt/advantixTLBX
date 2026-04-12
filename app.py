@@ -59,6 +59,7 @@ from integrations.overview_snapshot import (
     read_snapshot_for_api,
     refresh_overview_snapshot,
     start_daily_overview_scheduler,
+    start_overview_snapshot_bootstrap,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -1371,7 +1372,7 @@ def _overview_missing_payload() -> Dict[str, Any]:
         "revenue": {
             "yesterday": None,
             "mtd": None,
-            "error": "No snapshot yet. Click \"Refresh overview\" or wait for the daily scheduled job.",
+            "error": "No snapshot yet. Use \"Refresh from APIs\" or wait for the daily scheduled job.",
         },
         "costs": {
             "zeropark": {"yesterday": None, "mtd": None, "error": None},
@@ -1636,6 +1637,11 @@ try:
     start_daily_overview_scheduler()
 except Exception as e:
     logger.warning("Overview snapshot scheduler did not start: %s", e)
+
+try:
+    start_overview_snapshot_bootstrap()
+except Exception as e:
+    logger.warning("Overview snapshot bootstrap did not start: %s", e)
 
 
 def main():
