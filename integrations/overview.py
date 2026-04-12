@@ -3,6 +3,7 @@ Assemble ``/api/overview`` JSON: Keitaro revenue + traffic-source costs + totals
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
@@ -36,20 +37,28 @@ def build_overview_json() -> Dict[str, Any]:
         except Exception as e:
             return {"yesterday": None, "mtd": None, "error": str(e)}
 
-    try:
-        revenue = fetch_keitaro_revenue_overview(
-            yesterday=yesterday,
-            mtd_start=mtd_start,
-            mtd_end=mtd_end,
-            base_url=KEITARO_BASE_URL,
-            api_key=KEITARO_API_KEY,
-        )
-    except Exception as e:
-        revenue = {"yesterday": None, "mtd": None, "error": str(e)}
+    def safe_revenue():
+        try:
+            return fetch_keitaro_revenue_overview(
+                yesterday=yesterday,
+                mtd_start=mtd_start,
+                mtd_end=mtd_end,
+                base_url=KEITARO_BASE_URL,
+                api_key=KEITARO_API_KEY,
+            )
+        except Exception as e:
+            return {"yesterday": None, "mtd": None, "error": str(e)}
 
-    zp = safe_cost(fetch_zeropark_cost)
-    sk = safe_cost(fetch_sk_cost)
-    ec = safe_cost(fetch_ecomnia_cost)
+    # Run sources in parallel so the slowest single source bounds wall time (helps UI/proxy timeouts).
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        f_rev = pool.submit(safe_revenue)
+        f_zp = pool.submit(safe_cost, fetch_zeropark_cost)
+        f_sk = pool.submit(safe_cost, fetch_sk_cost)
+        f_ec = pool.submit(safe_cost, fetch_ecomnia_cost)
+        revenue = f_rev.result()
+        zp = f_zp.result()
+        sk = f_sk.result()
+        ec = f_ec.result()
 
     ty = _nz(zp.get("yesterday")) + _nz(sk.get("yesterday")) + _nz(ec.get("yesterday"))
     tm = _nz(zp.get("mtd")) + _nz(sk.get("mtd")) + _nz(ec.get("mtd"))
