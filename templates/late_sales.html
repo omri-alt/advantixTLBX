@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kelkoo — Late sales postbacks</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
+    .muted { color: #9ca3af; }
+    .card { border: 1px solid #374151; border-radius: 8px; padding: 14px; background: #111827; margin-bottom: 16px; max-width: 1200px; }
+    input[type="text"], select { padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; box-sizing: border-box; }
+    button { padding: 8px 12px; background: #22c55e; border: 1px solid #16a34a; border-radius: 6px; color: #052e16; font-weight: 700; cursor: pointer; margin-top: 10px; }
+    button:hover { background: #16a34a; }
+    a { color: #86efac; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #374151; text-align: left; padding: 8px; vertical-align: top; }
+    th { color: #93c5fd; }
+    td.url { word-break: break-all; font-family: ui-monospace, monospace; font-size: 11px; color: #cbd5e1; }
+    .ok { color: #4ade80; }
+    .bad { color: #f87171; }
+    .warn { color: #fbbf24; }
+  </style>
+</head>
+<body>
+  <div><a href="/">Home</a> &middot; <a href="/">Dashboard</a></div>
+  <h1>Kelkoo — late sales postbacks</h1>
+  <div class="muted">
+    Compares the two latest <code>SalesReport_7days-generated-*</code> tabs (KLtools). Sale dates must fall in the late-sale window (excludes &ldquo;yesterday&rdquo; on-time sales relative to each tab&rsquo;s generation date).
+    Skips a row if its <code>click_id</code> appears in any <code>SalesReport_*_generated-*</code> daily tab (on-time postback already fired) or if a <code>{month}_late_sales_log</code> row already recorded a LateSale postback for that click.
+    <strong>Dry run</strong> shows the LateSale GET you would send for each non-skipped row. <strong>Apply</strong> sends those GETs only, then appends successful sends to the monthly log (e.g. <code>april_late_sales_log</code>).
+  </div>
+
+  <div class="card">
+    <form method="post">
+      <div style="margin:8px 0;">
+        <label>As-of generation date (optional)</label><br>
+        <input type="text" name="as_of" value="" placeholder="YYYY-MM-DD — blank = latest tab" style="width:100%;max-width:420px;">
+      </div>
+      <div style="margin:8px 0;">
+        <label>Mode</label><br>
+        <select name="mode">
+          <option value="dry-run">Dry run (show postback URLs only)</option>
+          <option value="apply">Apply (send GET postbacks)</option>
+        </select>
+      </div>
+      <button type="submit">Run</button>
+    </form>
+
+    {% if late_sales_result %}
+    <hr style="border-color:#374151;">
+    {% if late_sales_result.error %}
+      <p class="bad"><strong>Error:</strong> {{ late_sales_result.error }}</p>
+      <p class="muted">mode={{ late_sales_result.mode }}</p>
+    {% else %}
+      <p>
+        Status:
+        {% if late_sales_result.ok %}
+          <strong class="ok">success</strong>
+        {% else %}
+          <strong class="bad">failed</strong>
+        {% endif %}
+        &nbsp; mode=<strong>{{ late_sales_result.mode }}</strong>
+        {% if late_sales_result.mode == "apply" and late_sales_result.postbacks_ok is not none %}
+          &nbsp; sent OK={{ late_sales_result.postbacks_ok }}, failed={{ late_sales_result.postbacks_fail }}
+        {% endif %}
+      </p>
+      <p class="muted">
+        {{ late_sales_result.spreadsheet_title }} &mdash; <code>{{ late_sales_result.spreadsheet_id }}</code><br>
+        Newer: <code>{{ late_sales_result.tab_new }}</code> (gen {{ late_sales_result.d_new }}) sale-date window {{ late_sales_result.window_new }}<br>
+        Older: <code>{{ late_sales_result.tab_old }}</code> (gen {{ late_sales_result.d_old }}) sale-date window {{ late_sales_result.window_old }}<br>
+        Rows dropped by date filter: newer={{ late_sales_result.drop_new }}, older={{ late_sales_result.drop_old }}; dup click_id in newer={{ late_sales_result.dup_new }}<br>
+        <strong>Diff rows (7d vs 7d): {{ late_sales_result.diff_count | default(late_sales_result.new_count) }}</strong>
+        &mdash; skipped daily={{ late_sales_result.skipped_daily | default(0) }}, already logged={{ late_sales_result.skipped_logged | default(0) }},
+        <strong>eligible to send={{ late_sales_result.eligible_count | default(late_sales_result.new_count) }}</strong><br>
+        Monthly log tab (append target): <code>{{ late_sales_result.log_sheet }}</code>
+        {% if late_sales_result.log_rows_appended is not none %}
+          &mdash; rows appended this run: {{ late_sales_result.log_rows_appended }}
+        {% endif %}
+      </p>
+
+      {% if late_sales_result.rows %}
+      <table>
+        <thead>
+          <tr>
+            <th>Skip reason</th>
+            <th>click_id</th>
+            <th>date</th>
+            <th>merchant</th>
+            <th>sale_value_usd</th>
+            <th>country</th>
+            <th>LateSale GET</th>
+            {% if late_sales_result.mode == "apply" %}
+            <th>HTTP</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in late_sales_result.rows %}
+          <tr>
+            <td class="muted">{% if r.skip_reason %}{{ r.skip_reason }}{% else %}—{% endif %}</td>
+            <td>{{ r.click_id }}</td>
+            <td>{{ r.date }}</td>
+            <td>{{ r.merchant }}</td>
+            <td>{{ r.sale_value_usd }}</td>
+            <td>{{ r.country }}</td>
+            <td class="url">{% if r.skip_reason %}<span class="muted">(not sent)</span><br>{% endif %}{{ r.postback_url }}</td>
+            {% if late_sales_result.mode == "apply" %}
+            <td>
+              {% if r.skip_reason %}
+                —
+              {% elif r.http_status is not none %}
+                <span class="{{ 'ok' if r.http_status >= 200 and r.http_status < 400 and not r.http_error else 'bad' }}">{{ r.http_status }}</span>
+                {% if r.http_error %}<div class="muted" style="font-size:11px;">{{ r.http_error[:200] }}</div>{% endif %}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted">No new late-sale rows for this diff.</p>
+      {% endif %}
+    {% endif %}
+    {% endif %}
+  </div>
+</body>
+</html>

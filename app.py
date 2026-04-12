@@ -28,6 +28,8 @@ from config import (
     EC_SECRET_KEY,
     FEED1_API_KEY,
     FEED2_API_KEY,
+    KELKOO_LATE_SALES_SPREADSHEET_ID,
+    LATE_SALES_POSTBACK_BASE,
 )
 from workflows.campaign_setup import run_create_campaign_workflow
 from integrations.keitaro import KeitaroClientError
@@ -44,6 +46,7 @@ from assistance import (
     get_offers_data,
     get_full_setup,
 )
+from kelkoo_late_sales import run_late_sales_flow
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -917,6 +920,32 @@ def ui_sk():
             _cache_clear("sk:")
 
     return render_template("sk.html", bulk_open_result=bulk_open_result)
+
+
+@app.route("/kelkoo/late-sales", methods=["GET", "POST"])
+def ui_kelkoo_late_sales():
+    late_sales_result: dict[str, Any] | None = None
+    if request.method == "POST":
+        mode = (request.form.get("mode") or "dry-run").strip().lower()
+        apply = mode == "apply"
+        as_of = (request.form.get("as_of") or "").strip()
+        creds = ROOT_DIR / "credentials.json"
+        try:
+            late_sales_result = run_late_sales_flow(
+                credentials_path=creds,
+                spreadsheet_id=KELKOO_LATE_SALES_SPREADSHEET_ID,
+                postback_base=LATE_SALES_POSTBACK_BASE,
+                as_of_str=as_of,
+                apply=apply,
+            )
+        except Exception as e:
+            logger.exception("Kelkoo late-sales flow")
+            late_sales_result = {
+                "ok": False,
+                "error": str(e),
+                "mode": "apply" if apply else "dry-run",
+            }
+    return render_template("late_sales.html", late_sales_result=late_sales_result)
 
 
 @app.route("/sk/brands/<path:brand_name>", methods=["GET"])

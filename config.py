@@ -85,6 +85,20 @@ KELKOO_SHEETS_SPREADSHEET_ID = (
     os.getenv("KELKOO_SHEETS_SPREADSHEET_ID") or "1XUkQoWqnNRqaSEnFVRAV36-oi9ENrNWtH5Ct8M4vNuU"
 ).strip()
 
+# Google Sheets — Kelkoo late-sales / click sales report ("KLtools").
+# One workbook for both feeds (feed1 + feed2). Tabs look like
+# ``SalesReport_7days-generated-YYYY-MM-DD`` and ``SalesReport_YYYY-MM-DD_generated-YYYY-MM-DD``.
+# Automation (planned): drop stale dated tabs and keep a monthly log, same pattern as Nipuhim
+# ``{month}_log_1`` / ``_log_2`` beside the daily notebook.
+KELKOO_LATE_SALES_SPREADSHEET_ID = (
+    os.getenv("KELKOO_LATE_SALES_SPREADSHEET_ID") or "1hVhQ_BfrKOh8OCojTFkuTLKeU1KLbK_kWgm1BmJFteU"
+).strip()
+
+# Late-sale postbacks (GET): ``subid`` = Kelkoo ``click_id``, ``payout`` = ``sale_value_usd``, ``status`` = LateSale
+LATE_SALES_POSTBACK_BASE = (
+    os.getenv("LATE_SALES_POSTBACK_BASE") or "http://207.154.244.157/2ea006b/postback"
+).strip()
+
 # Google Sheets — Blend workflow spreadsheet (Blend tab + potential sheets)
 BLEND_SHEETS_SPREADSHEET_ID = (
     os.getenv("BLEND_SHEETS_SPREADSHEET_ID") or "1h9lBPTREEJO9VVvj6wctCgCOn3YcwJBGIk_MBwXw-xY"
