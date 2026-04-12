@@ -287,6 +287,9 @@ EC_SHEETS_SPREADSHEET_ID = (
     os.getenv("EC_SHEETS_SPREADSHEET_ID") or "1-kclsSvR7LUtpi-Ymrd9wRYbbmkraP2tGLTrvSnih9c"
 ).strip()
 
+# Ecomnia console: tab with columns geo / blacklist / whitelist (legacy ``globaList``).
+ECOMNIA_GLOBA_LIST_TAB = (os.getenv("ECOMNIA_GLOBA_LIST_TAB") or "globaList").strip()
+
 # Yadore (feed3)
 YADORE_API_KEY = (os.getenv("YADORE_API_KEY") or "").strip().lstrip("= ").strip()
 if not YADORE_API_KEY:

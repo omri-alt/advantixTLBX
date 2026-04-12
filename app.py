@@ -26,6 +26,8 @@ from config import (
     EC_ADVERTISER_KEY,
     EC_AUTH_KEY,
     EC_SECRET_KEY,
+    EC_SHEETS_SPREADSHEET_ID,
+    ECOMNIA_GLOBA_LIST_TAB,
     FEED1_API_KEY,
     FEED2_API_KEY,
     KELKOO_LATE_SALES_SPREADSHEET_ID,
@@ -67,6 +69,15 @@ from integrations.daily_conversion_postbacks import (
     run_daily_conversion_postbacks_batch,
 )
 from integrations.daily_postbacks_dashboard import build_dashboard_cards, feed_detail_context
+from integrations.ecomnia_console import (
+    all_copy_paste_text,
+    exploration_action_items,
+    geo_map_from_sheet_values,
+    sync_geo_blacklists,
+    utc_yesterday_iso,
+    whitelist_check_flat_rows,
+)
+from integrations.ecomnia_run_history import load_state, record_run, update_cache
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1219,6 +1230,141 @@ def ui_ec():
             _cache_clear("ec:")
 
     return render_template("ec.html", bulk_open_result=bulk_open_result)
+
+
+@app.route("/ec/console", methods=["GET", "POST"])
+def ui_ec_console():
+    """
+    Ecomnia: geo WL/BL from sheet (copy-paste), sync blacklists, whitelist traffic audit,
+    exploration action items (under-budget yesterday + zero-click sources). CPC changes stay manual (sheet v/x).
+    """
+    flash_msg: str | None = None
+    flash_err: str | None = None
+    ec_ok = bool(EC_ADVERTISER_KEY and EC_AUTH_KEY and EC_SECRET_KEY)
+    sheet_ok = bool(EC_SHEETS_SPREADSHEET_ID)
+    action = ""
+
+    if request.method == "POST" and ec_ok:
+        action = (request.form.get("action") or "").strip().lower()
+        try:
+            if action == "refresh_lists" and sheet_ok:
+                vals = _sheet_values(EC_SHEETS_SPREADSHEET_ID, ECOMNIA_GLOBA_LIST_TAB, limit_rows=200)
+                geo_map_new = geo_map_from_sheet_values(vals)
+                update_cache(geo_map=geo_map_new)
+                _cache_clear(f"sheets:values:{EC_SHEETS_SPREADSHEET_ID}:{ECOMNIA_GLOBA_LIST_TAB}")
+                record_run("refresh_lists", True, {"geos": len(geo_map_new)})
+                flash_msg = f"Loaded {len(geo_map_new)} geo rows from sheet tab {ECOMNIA_GLOBA_LIST_TAB!r}."
+
+            elif action == "sync_blacklists_dry":
+                out = sync_geo_blacklists(
+                    EC_ADVERTISER_KEY,
+                    EC_AUTH_KEY,
+                    EC_SECRET_KEY,
+                    dry_run=True,
+                    skip_wl_campaigns=True,
+                )
+                record_run("sync_blacklists_dry", True, {**out, "dry_run": True})
+                _cache_clear("ec:")
+                flash_msg = (
+                    f"Dry-run: would touch {out.get('campaign_updates', 0)} campaigns; "
+                    f"global candidates {out.get('global_candidates_count', 0)}."
+                )
+
+            elif action == "sync_blacklists_apply":
+                out = sync_geo_blacklists(
+                    EC_ADVERTISER_KEY,
+                    EC_AUTH_KEY,
+                    EC_SECRET_KEY,
+                    dry_run=False,
+                    skip_wl_campaigns=True,
+                )
+                record_run("sync_blacklists_apply", bool(out.get("ok")), out)
+                _cache_clear("ec:")
+                flash_msg = f"Sync blacklists: {out.get('campaign_updates', 0)} campaign updates."
+                if out.get("errors"):
+                    flash_err = "; ".join(str(e) for e in out["errors"][:5])
+
+            elif action == "whitelist_check":
+                try:
+                    days = int((request.form.get("whitelist_days") or "30").strip() or "30")
+                except ValueError:
+                    days = 30
+                days = max(1, min(days, 90))
+                try:
+                    lim = int((request.form.get("campaign_limit") or "0").strip() or "0")
+                except ValueError:
+                    lim = 0
+                gm = dict(load_state().get("geo_map") or {})
+                flat, summaries = whitelist_check_flat_rows(
+                    EC_ADVERTISER_KEY,
+                    EC_AUTH_KEY,
+                    EC_SECRET_KEY,
+                    gm,
+                    days=days,
+                    skip_wl_campaigns=True,
+                    limit_campaigns=max(0, lim),
+                )
+                update_cache(whitelist_rows=flat)
+                record_run(
+                    "whitelist_check",
+                    True,
+                    {"rows": len(flat), "summaries": len(summaries), "days": days},
+                )
+                flash_msg = f"Whitelist check: {len(flat)} campaign×source rows ({days}d)."
+
+            elif action == "action_items":
+                y = (request.form.get("yesterday") or "").strip() or utc_yesterday_iso()
+                try:
+                    lb = int((request.form.get("source_lookback_days") or "7").strip() or "7")
+                except ValueError:
+                    lb = 7
+                lb = max(1, min(lb, 30))
+                block = exploration_action_items(
+                    EC_ADVERTISER_KEY,
+                    EC_AUTH_KEY,
+                    EC_SECRET_KEY,
+                    yesterday_ymd=y[:10],
+                    source_lookback_days=lb,
+                    skip_wl_campaigns=True,
+                )
+                update_cache(action_items_block=block)
+                record_run(
+                    "action_items",
+                    True,
+                    {"items": len(block.get("items") or []), "yesterday": y[:10]},
+                )
+                flash_msg = f"Action items: {len(block.get('items') or [])} campaigns (yesterday {y[:10]})."
+
+        except Exception as e:
+            logger.exception("Ecomnia console %s", action)
+            flash_err = str(e)
+            record_run(action or "unknown", False, {"error": str(e)})
+
+    state = load_state()
+    geo_map = dict(state.get("geo_map") or {})
+    wl_rows = list(state.get("whitelist_campaign_source_rows") or [])
+    action_block = state.get("action_items_block") or {}
+    if not isinstance(action_block, dict):
+        action_block = {}
+    runs = dict(state.get("runs") or {})
+    copy_all = all_copy_paste_text(geo_map) if geo_map else ""
+
+    return render_template(
+        "ecomnia_console.html",
+        ec_ok=ec_ok,
+        sheet_ok=sheet_ok,
+        spreadsheet_id=EC_SHEETS_SPREADSHEET_ID,
+        globa_tab=ECOMNIA_GLOBA_LIST_TAB,
+        geo_map=geo_map,
+        copy_all=copy_all,
+        wl_rows=wl_rows,
+        action_items=list(action_block.get("items") or []),
+        action_errors=list(action_block.get("errors") or []),
+        runs=runs,
+        flash_msg=flash_msg,
+        flash_err=flash_err,
+        default_yesterday=utc_yesterday_iso(),
+    )
 
 
 @app.route("/ec/brands/<path:brand_name>", methods=["GET"])
