@@ -594,7 +594,7 @@ def run_yadore_postbacks(
     )
 
 
-def run_daily_conversion_postbacks_main(
+def run_daily_conversion_postbacks_batch(
     *,
     report_date: str,
     only: str,
@@ -602,10 +602,18 @@ def run_daily_conversion_postbacks_main(
     dry_run: bool,
     no_resume: bool,
     reset_sources: Optional[Sequence[str]],
-) -> int:
+) -> Dict[str, Any]:
+    """
+    Run Kelkoo / Adexa / Yadore postbacks; returns structured output for CLI and Flask UI.
+    """
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", report_date):
-        logger.error("Invalid report_date %r (use YYYY-MM-DD)", report_date)
-        return 2
+        return {
+            "ok": False,
+            "exit_code": 2,
+            "error": f"Invalid report_date {report_date!r} (use YYYY-MM-DD)",
+            "results": [],
+            "report_date": report_date,
+        }
 
     state_path = Path(DAILY_CONVERSION_POSTBACK_STATE_PATH)
     if reset_sources:
@@ -622,6 +630,7 @@ def run_daily_conversion_postbacks_main(
         targets = [only_l]
 
     rc = 0
+    results: List[Dict[str, Any]] = []
     geos = list(KELKOO_RAW_REPORT_GEOS) if KELKOO_RAW_REPORT_GEOS else list(
         (
             "ae",
@@ -678,7 +687,7 @@ def run_daily_conversion_postbacks_main(
                 no_resume=no_resume,
                 session=session,
             )
-            print(out)
+            results.append({"target": t, "summary": out})
             if not out.get("ok"):
                 rc = 1
         elif t == "adexa":
@@ -689,7 +698,7 @@ def run_daily_conversion_postbacks_main(
                 no_resume=no_resume,
                 session=session,
             )
-            print(out)
+            results.append({"target": t, "summary": out})
             if not out.get("ok"):
                 rc = 1
         elif t == "yadore":
@@ -700,11 +709,43 @@ def run_daily_conversion_postbacks_main(
                 no_resume=no_resume,
                 session=session,
             )
-            print(out)
+            results.append({"target": t, "summary": out})
             if not out.get("ok"):
                 rc = 1
         else:
             logger.error("Unknown --only %r", t)
             rc = 2
+            results.append({"target": t, "summary": {"ok": False, "error": f"unknown target {t!r}"}})
 
-    return rc
+    return {
+        "ok": rc == 0,
+        "exit_code": rc,
+        "results": results,
+        "report_date": report_date,
+        "state_path": str(state_path),
+    }
+
+
+def run_daily_conversion_postbacks_main(
+    *,
+    report_date: str,
+    only: str,
+    only_geo: Optional[str],
+    dry_run: bool,
+    no_resume: bool,
+    reset_sources: Optional[Sequence[str]],
+) -> int:
+    batch = run_daily_conversion_postbacks_batch(
+        report_date=report_date,
+        only=only,
+        only_geo=only_geo,
+        dry_run=dry_run,
+        no_resume=no_resume,
+        reset_sources=reset_sources,
+    )
+    if batch.get("error"):
+        logger.error("%s", batch["error"])
+        print(batch["error"])
+    for row in batch.get("results") or []:
+        print(row.get("summary"))
+    return int(batch.get("exit_code") or 1)

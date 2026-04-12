@@ -61,6 +61,10 @@ from integrations.overview_snapshot import (
     start_daily_overview_scheduler,
     start_overview_snapshot_bootstrap,
 )
+from integrations.daily_conversion_postbacks import (
+    default_report_date_str,
+    run_daily_conversion_postbacks_batch,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1065,6 +1069,48 @@ def ui_kelkoo_late_sales():
                 "mode": "apply" if apply else "dry-run",
             }
     return render_template("late_sales.html", late_sales_result=late_sales_result)
+
+
+@app.route("/kelkoo/daily-postbacks", methods=["GET", "POST"])
+def ui_kelkoo_daily_postbacks():
+    """
+    Kelkoo (per-geo) + Adexa + Yadore → Keitaro conversion postbacks (same logic as ``run_daily_conversion_postbacks.py``).
+    Full Kelkoo all-geos runs can take many minutes; your HTTP proxy / worker timeout must allow it.
+    """
+    daily_postbacks_result: dict[str, Any] | None = None
+    if request.method == "POST":
+        report_date = (request.form.get("report_date") or "").strip() or default_report_date_str()
+        only = (request.form.get("only") or "all").strip().lower()
+        only_geo_raw = (request.form.get("only_geo") or "").strip().lower()
+        only_geo = only_geo_raw[:2] if len(only_geo_raw) >= 2 else None
+        mode = (request.form.get("mode") or "dry-run").strip().lower()
+        dry_run = mode != "apply"
+        no_resume = (request.form.get("no_resume") or "").strip().lower() in ("1", "on", "yes", "true")
+        reset_raw = (request.form.get("reset_sources") or "").strip()
+        reset_sources = [x.strip().lower() for x in reset_raw.split(",") if x.strip()] if reset_raw else None
+        try:
+            daily_postbacks_result = run_daily_conversion_postbacks_batch(
+                report_date=report_date,
+                only=only,
+                only_geo=only_geo,
+                dry_run=dry_run,
+                no_resume=no_resume,
+                reset_sources=reset_sources,
+            )
+        except Exception as e:
+            logger.exception("Kelkoo daily conversion postbacks (UI)")
+            daily_postbacks_result = {
+                "ok": False,
+                "exit_code": 1,
+                "error": str(e),
+                "results": [],
+                "report_date": report_date,
+            }
+    return render_template(
+        "daily_postbacks.html",
+        daily_postbacks_result=daily_postbacks_result,
+        default_report_date=default_report_date_str(),
+    )
 
 
 @app.route("/sk/brands/<path:brand_name>", methods=["GET"])
