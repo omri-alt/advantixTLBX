@@ -172,6 +172,12 @@ SOURCEKNOWLEDGE_API_KEY = (SOURCEKNOWLEDGE_API_KEY or "").strip()
 
 # Optional: GET URL template for SK account-level spend in overview (``{from}`` / ``{to}`` = YYYY-MM-DD)
 SK_ACCOUNT_STATS_URL = (os.getenv("SK_ACCOUNT_STATS_URL") or "").strip()
+# Overview SK fallback (by-publisher per campaign): cap list size so ``/api/overview`` finishes under proxy timeouts. ``0`` = no cap.
+_sk_cap_raw = (os.getenv("SK_OVERVIEW_MAX_CAMPAIGNS") or "40").strip()
+try:
+    SK_OVERVIEW_MAX_CAMPAIGNS = int(_sk_cap_raw)
+except ValueError:
+    SK_OVERVIEW_MAX_CAMPAIGNS = 40
 
 # Ecomnia (advertiser API keys)
 EC_ADVERTISER_KEY = (os.getenv("ADVERTISER_KEY") or "").strip()
