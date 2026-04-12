@@ -13,9 +13,9 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import unquote
 
 from flask import Flask, request, jsonify, render_template, abort, redirect, url_for
@@ -64,6 +64,70 @@ ROOT_DIR = Path(__file__).resolve().parent
 RUNS_DIR = ROOT_DIR / "runtime" / "workflow_runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _parse_utc_iso(iso: str) -> Optional[datetime]:
+    if not iso or not isinstance(iso, str):
+        return None
+    s = iso.strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s).astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _format_duration_human(seconds: Any) -> str:
+    try:
+        sec = float(seconds)
+    except (TypeError, ValueError):
+        return "—"
+    if sec < 0:
+        sec = 0.0
+    whole = int(round(sec))
+    if whole < 60:
+        if abs(sec - whole) < 0.05:
+            return f"{whole}s"
+        return f"{sec:.1f}s"
+    if whole < 3600:
+        m, s = divmod(whole, 60)
+        return f"{m}m {s}s" if s else f"{m}m"
+    h, r = divmod(whole, 3600)
+    m, s = divmod(r, 60)
+    parts: list[str] = [f"{h}h"]
+    if m:
+        parts.append(f"{m}m")
+    if s:
+        parts.append(f"{s}s")
+    return " ".join(parts) if len(parts) > 1 else f"{h}h"
+
+
+def _last_run_time_ui(last_run: Dict[str, Any]) -> Tuple[str, str]:
+    """Return (visible label, tooltip title) for workflow last-run finished time + duration."""
+    iso = str(last_run.get("finished_at_utc") or "").strip()
+    dur_h = _format_duration_human(last_run.get("duration_seconds"))
+    dt = _parse_utc_iso(iso)
+    if not dt:
+        line = f"{iso} · {dur_h}" if iso else dur_h
+        return (line or "—", line or "—")
+    now = datetime.now(timezone.utc)
+    d = dt.date()
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+    if d == today:
+        day = "Today"
+    elif d == yesterday:
+        day = "Yesterday"
+    else:
+        day = f"{dt.strftime('%b')} {dt.day}, {dt.year}"
+    clock = dt.strftime("%H:%M")
+    label = f"{day} · {clock} · {dur_h}"
+    title = f"Finished {iso} (UTC) · duration {dur_h}"
+    return (label, title)
+
+
 _WORKFLOW_THREADS_LOCK = threading.Lock()
 _WORKFLOW_THREADS: dict[str, threading.Thread] = {}
 PUBLISHERS_DB_PATH = ROOT_DIR / "runtime" / "publishers.db"
@@ -95,6 +159,21 @@ def _cache_clear(prefix: str | None = None) -> None:
     for k in list(_CACHE.keys()):
         if k.startswith(prefix):
             _CACHE.pop(k, None)
+
+
+@app.template_filter("workflow_run_time")
+def _workflow_run_time_filter(run: Any) -> Any:
+    """Pretty last-run time + duration for dashboard cards (native ``title`` tooltip)."""
+    from markupsafe import Markup, escape
+
+    if not isinstance(run, dict) or not run:
+        return Markup("")
+    if not str(run.get("finished_at_utc") or "").strip() and run.get("duration_seconds") is None:
+        return Markup("")
+    lbl, ttl = _last_run_time_ui(run)
+    return Markup(
+        f'<span class="run-finished muted" title="{escape(ttl)}">{escape(lbl)}</span>'
+    )
 
 
 def _get_google_sheets_service():
