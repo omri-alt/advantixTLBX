@@ -890,4 +890,5 @@ def run_daily_conversion_postbacks_main(
         print(batch["error"])
     for row in batch.get("results") or []:
         print(row.get("summary"))
-    return int(batch.get("exit_code") or 1)
+    ec = batch.get("exit_code")
+    return int(ec) if ec is not None else 1
