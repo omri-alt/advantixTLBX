@@ -19,6 +19,7 @@ import json
 import logging
 import re
 from datetime import date, datetime, timedelta, timezone
+from collections import Counter
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import requests
@@ -242,6 +243,81 @@ def normalize_geo_key(geo: str) -> str:
     if g == "gb":
         return "uk"
     return g
+
+
+def campaign_whitelist_sources(campaign: Mapping[str, Any]) -> List[str]:
+    """
+    Traffic sources whitelisted on this campaign (Ecomnia ``whitelistsources``).
+    Tries common API key spellings.
+    """
+    for key in ("whitelistsources", "whitelistSources", "whitelist_sources"):
+        wl = campaign.get(key)
+        if isinstance(wl, list):
+            return sorted({str(x).strip() for x in wl if str(x).strip()})
+    return []
+
+
+def aggregate_whitelist_source_campaign_counts(
+    campaigns: Sequence[Mapping[str, Any]],
+) -> Dict[str, int]:
+    """For each source id, how many distinct campaigns include it in ``whitelistsources``."""
+    ctr: Counter[str] = Counter()
+    for c in campaigns:
+        if not isinstance(c, Mapping):
+            continue
+        for s in campaign_whitelist_sources(c):
+            ctr[s] += 1
+    return dict(ctr)
+
+
+def global_whitelist_sources(
+    campaigns: Sequence[Mapping[str, Any]],
+    *,
+    min_campaigns: int = 2,
+) -> List[Tuple[str, int]]:
+    """
+    **Global WL:** sources that appear on the whitelist of at least ``min_campaigns`` campaigns.
+    Returns ``(source, campaign_count)`` sorted by count desc, then source name.
+    """
+    counts = aggregate_whitelist_source_campaign_counts(campaigns)
+    pairs = [(s, n) for s, n in counts.items() if n >= min_campaigns]
+    pairs.sort(key=lambda x: (-x[1], x[0]))
+    return pairs
+
+
+def whitelist_union_by_geo_from_campaigns(
+    campaigns: Sequence[Mapping[str, Any]],
+) -> Dict[str, List[str]]:
+    """Union of each campaign's ``whitelistsources``, grouped by that campaign's geo."""
+    by_geo: Dict[str, set[str]] = {}
+    for c in campaigns:
+        if not isinstance(c, Mapping):
+            continue
+        geo = normalize_geo_key(str(c.get("geo") or ""))
+        if not geo:
+            continue
+        for s in campaign_whitelist_sources(c):
+            by_geo.setdefault(geo, set()).add(s)
+    return {g: sorted(v) for g, v in sorted(by_geo.items(), key=lambda x: x[0])}
+
+
+def merged_whitelist_for_campaign(
+    campaign: Mapping[str, Any],
+    geo_map: Mapping[str, Mapping[str, Any]],
+) -> Tuple[List[str], List[str], List[str]]:
+    """
+    Returns ``(merged, from_campaign, from_sheet)`` — union of API campaign WL and sheet geo WL.
+    """
+    geo = normalize_geo_key(str(campaign.get("geo") or ""))
+    from_c = campaign_whitelist_sources(campaign)
+    from_sheet: List[str] = []
+    gentry = geo_map.get(geo) or {}
+    if isinstance(gentry, dict):
+        raw = gentry.get("whitelist")
+        if isinstance(raw, list):
+            from_sheet = [str(x).strip() for x in raw if str(x).strip()]
+    merged = sorted(set(from_c) | set(from_sheet))
+    return merged, from_c, from_sheet
 
 
 def aggregate_source_blacklist_counts_by_geo(

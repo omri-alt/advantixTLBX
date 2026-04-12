@@ -44,6 +44,8 @@ from integrations.ecomnia_geo_lists import (  # noqa: E402
     fetch_campaign_by_id,
     fetch_campaigns,
     geo_bw_map_from_rows,
+    global_whitelist_sources,
+    merged_whitelist_for_campaign,
     normalize_geo_key,
     post_update_advertiser_campaign,
     recommended_geo_blacklists,
@@ -172,7 +174,7 @@ def run(
     audits: List[Dict[str, Any]] = []
     for c in filtered:
         geo = normalize_geo_key(str(c.get("geo") or ""))
-        wl = geo_map.get(geo, {}).get("whitelist", [])
+        wl, _wc, _ws = merged_whitelist_for_campaign(c, geo_map)
         try:
             stats = fetch_adv_stats_by_source(
                 str(c.get("id") or ""),
@@ -197,6 +199,8 @@ def run(
         row["stats_window_start"] = start
         row["stats_window_end"] = end
         audits.append(row)
+
+    global_wl_pairs = global_whitelist_sources(campaigns, min_campaigns=2)
 
     apply_log: List[Dict[str, Any]] = []
     if apply_geo_blacklist:
@@ -242,6 +246,7 @@ def run(
         "stats_range": {"start": start, "end": end},
         "recommended_geo_blacklist": by_geo_rec,
         "global_blacklist_candidates": global_candidates,
+        "global_whitelist_sources_2plus_campaigns": [{"source": s, "campaign_count": n} for s, n in global_wl_pairs],
         "geo_sheet_rows_parsed": len(geo_map),
         "whitelist_traffic_audits": audits,
         "apply_geo_blacklist_log": apply_log if apply_geo_blacklist else [],
@@ -259,6 +264,7 @@ def run(
     for g, srcs in sorted(by_geo_rec.items()):
         print(f"  {g}: {len(srcs)} sources")
     print(f"\nGlobal blacklist candidates (sum counts > {min_total_global}): {len(global_candidates)}")
+    print(f"Global whitelist (source on ≥2 campaigns): {len(global_wl_pairs)}")
     no_wl_click = [a for a in audits if not a.get("error") and not a.get("any_whitelist_click") and a.get("whitelist_size", 0) > 0]
     print(f"\nCampaigns with geo WL defined but no WL-source clicks in window: {len(no_wl_click)}")
     for a in no_wl_click[:50]:

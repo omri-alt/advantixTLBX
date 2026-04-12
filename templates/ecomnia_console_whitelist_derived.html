@@ -1,0 +1,62 @@
+{% extends "ecomnia_console_base.html" %}
+{% from "ecomnia_console_macros.html" import last_run_block %}
+{% block title %}Ecomnia · Campaign whitelist{% endblock %}
+{% block tool_body %}
+<h1>Campaign whitelist (API)</h1>
+<p class="muted">
+  Each campaign exposes <strong>whitelistsources</strong> in the API. <strong>Global whitelist</strong> here means a source on <strong>at least two</strong> campaigns.
+  Whitelist checks elsewhere <strong>merge</strong> this with sheet geo whitelist.
+</p>
+
+{% if not ec_ok %}
+<div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>
+{% endif %}
+
+<section class="tool-section">
+  <h2>Refresh from Ecomnia</h2>
+  <form method="post" action="{{ url_for('ui_ec_console_do') }}" class="btn-row">
+    <input type="hidden" name="page" value="whitelist-derived">
+    <input type="hidden" name="action" value="refresh_whitelist_derived">
+    <button type="submit" {% if not ec_ok %}disabled{% endif %}>Refresh WL from Ecomnia</button>
+  </form>
+  {% if derived_wl.get('campaigns_fetched') %}
+  <p class="muted">Last snapshot: <strong>{{ derived_wl.campaigns_fetched }}</strong> campaigns.</p>
+  {% endif %}
+  {% if derived_wl.get('global_whitelist') %}
+  <h3 style="font-size:14px;margin-top:14px;">Global whitelist (≥2 campaigns)</h3>
+  <table class="data">
+    <thead><tr><th>Source</th><th>Campaign count</th></tr></thead>
+    <tbody>
+      {% for item in derived_wl.global_whitelist %}
+      <tr><td><code>{{ item.source }}</code></td><td>{{ item.campaign_count }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No global WL cached — run refresh above.</p>
+  {% endif %}
+  {% if derived_wl.get('per_campaign') %}
+  <h3 style="font-size:14px;margin-top:18px;">Per-campaign whitelist</h3>
+  <table class="data">
+    <thead><tr><th>Campaign</th><th>Geo</th><th>Count</th><th>Sources</th></tr></thead>
+    <tbody>
+      {% for pc in derived_wl.per_campaign %}
+      <tr>
+        <td>{{ pc.campaign_name }}</td>
+        <td>{{ pc.geo }}</td>
+        <td>{{ pc.whitelist_size }}</td>
+        <td style="max-width:480px;font-size:12px;">{{ pc.sources | join(', ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <label style="display:block;margin-top:16px;">Global + per-geo WL (copy)</label>
+  <textarea class="copybox all" readonly>{{ copy_derived_wl or "(Refresh WL from Ecomnia first.)" }}</textarea>
+</section>
+
+<section class="output-panel">
+  <h2>Last run · output</h2>
+  {{ last_run_block('refresh_whitelist_derived', 'Refresh WL from API') }}
+</section>
+{% endblock %}

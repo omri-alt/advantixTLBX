@@ -1,0 +1,16 @@
+{% macro last_run_block(run_key, heading) %}
+{% set r = runs.get(run_key) %}
+<div class="run-subblock">
+  <h3>{{ heading }}</h3>
+  {% if r %}
+  <p class="run-line"><span class="ts">{{ r.at_utc }} UTC</span> · <span class="{{ 'ok' if r.ok else 'bad' }}">{{ 'success' if r.ok else 'failed' }}</span></p>
+  {% if r.detail %}
+  <pre class="log-pre">{{ r.detail | tojson(indent=2) }}</pre>
+  {% else %}
+  <p class="muted">No detail payload.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">No run recorded yet.</p>
+  {% endif %}
+</div>
+{% endmacro %}

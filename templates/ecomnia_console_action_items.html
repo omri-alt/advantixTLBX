@@ -1,0 +1,65 @@
+{% extends "ecomnia_console_base.html" %}
+{% from "ecomnia_console_macros.html" import last_run_block %}
+{% block title %}Ecomnia · Action items{% endblock %}
+{% block tool_body %}
+<h1>Exploration action items</h1>
+<p class="muted">
+  Active campaigns (not <code>-wl</code>) where <strong>yesterday spend &lt; daily budget</strong> and there are <strong>zero-click sources</strong> in the by-source report (not blacklisted).
+  Approve CPC level-up in Google Sheet <strong>trackExploration</strong> column <code>CpcLvlUp</code> with <strong>v</strong> or <strong>x</strong>; this UI does not change bids.
+</p>
+
+{% if not ec_ok %}
+<div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>
+{% endif %}
+
+<section class="tool-section">
+  <h2>Refresh</h2>
+  <form method="post" action="{{ url_for('ui_ec_console_do') }}" class="btn-row">
+    <input type="hidden" name="page" value="action-items">
+    <input type="hidden" name="action" value="action_items">
+    <label>Yesterday (UTC) <input type="text" name="yesterday" value="{{ default_yesterday }}" placeholder="YYYY-MM-DD"></label>
+    <label>Source lookback days <input type="number" name="source_lookback_days" value="7" min="1" max="30"></label>
+    <button type="submit" {% if not ec_ok %}disabled{% endif %}>Refresh action items</button>
+  </form>
+  {% if action_items %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Campaign</th><th>Geo</th><th>Yesterday</th><th>Spend</th><th>Budget</th><th>Gap</th><th>Zero-click sources (sample)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in action_items %}
+      <tr>
+        <td>{{ it.campaign_name }}</td>
+        <td>{{ it.geo }}</td>
+        <td>{{ it.yesterday_date }}</td>
+        <td>{{ it.yesterday_spend }}</td>
+        <td>{{ it.daily_budget }}</td>
+        <td>{{ it.budget_gap }}</td>
+        <td style="max-width:420px;font-size:12px;">{{ it.unbought_zero_click_sources | join(', ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No cached action items — run refresh above.</p>
+  {% endif %}
+  {% if action_errors %}
+  <h3 style="font-size:13px;color:var(--warn);margin-top:14px;">API errors (partial)</h3>
+  <table class="data">
+    <thead><tr><th>Campaign</th><th>Error</th></tr></thead>
+    <tbody>
+      {% for e in action_errors %}
+      <tr><td>{{ e.campaign_name or e.campaign_id }}</td><td>{{ e.error }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section class="output-panel">
+  <h2>Last run · output</h2>
+  {{ last_run_block('action_items', 'Action items') }}
+</section>
+{% endblock %}

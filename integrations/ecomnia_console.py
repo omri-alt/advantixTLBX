@@ -1,8 +1,10 @@
 """
-Ecomnia console: sheet-backed geo WL/BL, sync blacklists, whitelist audit rows, exploration action items.
+Ecomnia console: sheet geo BL/WL, **campaign** ``whitelistsources`` from API, global WL (≥2 campaigns),
+sync blacklists, whitelist audit rows, exploration action items.
 
-Sheet tab default ``globaList`` columns: ``geo``, ``blacklist``, ``whitelist`` (same as legacy ``ec_local_copy``).
-CPC level-up decisions stay in **trackExploration** (``CpcLvlUp`` v/x); this module only surfaces candidates.
+Sheet tab default ``globaList`` columns: ``geo``, ``blacklist``, ``whitelist`` (legacy ``ec_local_copy``).
+Whitelist checks use **merged** lists: campaign API whitelist ∪ sheet whitelist for that geo.
+CPC level-up stays in **trackExploration** (``CpcLvlUp`` v/x); this module only surfaces candidates.
 """
 from __future__ import annotations
 
@@ -15,16 +17,20 @@ import requests
 from integrations.ecomnia_geo_lists import (
     audit_whitelist_traffic,
     campaign_daily_budget_value,
+    campaign_whitelist_sources,
     date_range_last_days,
     fetch_adv_stats_by_date,
     fetch_adv_stats_by_source,
     fetch_campaign_by_id,
     fetch_campaigns,
     geo_bw_map_from_rows,
+    global_whitelist_sources,
+    merged_whitelist_for_campaign,
     normalize_geo_key,
     post_update_advertiser_campaign,
     recommended_geo_blacklists,
     spend_on_date_from_daily_stats,
+    whitelist_union_by_geo_from_campaigns,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,6 +73,32 @@ def all_copy_paste_text(geo_map: Mapping[str, Mapping[str, Any]]) -> str:
         wl = g.get("whitelist") if isinstance(g.get("whitelist"), list) else []
         parts.append(copy_paste_block_for_geo(geo, bl, wl))
     return "\n".join(parts).strip()
+
+
+def derived_whitelist_copy_paste(derived: Mapping[str, Any]) -> str:
+    """Global WL + per-geo union from campaigns (for UI paste)."""
+    lines: List[str] = []
+    gw = derived.get("global_whitelist") or []
+    if isinstance(gw, list) and gw:
+        lines.append("=== GLOBAL WHITELIST (source on ≥2 campaigns) ===")
+        for item in gw:
+            if isinstance(item, dict):
+                s = str(item.get("source") or "")
+                n = item.get("campaign_count", "")
+                lines.append(f"{s}\t({n} campaigns)" if n != "" else s)
+            else:
+                lines.append(str(item))
+        lines.append("")
+    byg = derived.get("whitelist_by_geo") or {}
+    if isinstance(byg, dict):
+        for geo in sorted(byg.keys()):
+            wl = byg[geo]
+            if not isinstance(wl, list):
+                continue
+            lines.append(f"=== {str(geo).upper()} — WHITELIST (union from campaigns) ===")
+            lines.extend(wl if wl else ["(empty)"])
+            lines.append("")
+    return "\n".strip()
 
 
 def _campaign_suffix_wl(name: str) -> bool:
@@ -141,6 +173,56 @@ def sync_geo_blacklists(
     }
 
 
+def build_derived_whitelist_views(
+    campaigns: Sequence[Mapping[str, Any]],
+    *,
+    global_min_campaigns: int = 2,
+) -> Dict[str, Any]:
+    """
+    Per-campaign WL from API, global WL (source on ≥2 campaigns), union WL by geo.
+    """
+    per_c: List[Dict[str, Any]] = []
+    for c in campaigns:
+        if not isinstance(c, dict):
+            continue
+        wl = campaign_whitelist_sources(c)
+        per_c.append(
+            {
+                "campaign_id": str(c.get("id") or ""),
+                "campaign_name": str(c.get("name") or ""),
+                "geo": normalize_geo_key(str(c.get("geo") or "")),
+                "sources": wl,
+                "whitelist_size": len(wl),
+            }
+        )
+    per_c.sort(key=lambda x: (x.get("geo") or "", x.get("campaign_name") or ""))
+    pairs = global_whitelist_sources(campaigns, min_campaigns=global_min_campaigns)
+    global_list = [{"source": s, "campaign_count": n} for s, n in pairs]
+    by_geo = whitelist_union_by_geo_from_campaigns(campaigns)
+    return {
+        "global_whitelist": global_list,
+        "whitelist_by_geo": by_geo,
+        "per_campaign": per_c,
+        "global_min_campaigns": global_min_campaigns,
+    }
+
+
+def pull_derived_whitelist_from_api(
+    advertiser_key: str,
+    auth_key: str,
+    secret_key: str,
+    *,
+    global_min_campaigns: int = 2,
+    session: Optional[requests.Session] = None,
+) -> Dict[str, Any]:
+    """Fetch campaigns and build global / per-geo / per-campaign whitelist views."""
+    sess = session or requests.Session()
+    campaigns = fetch_campaigns(advertiser_key, auth_key, secret_key, session=sess)
+    out = build_derived_whitelist_views(campaigns, global_min_campaigns=global_min_campaigns)
+    out["campaigns_fetched"] = len([c for c in campaigns if isinstance(c, dict)])
+    return out
+
+
 def whitelist_check_flat_rows(
     advertiser_key: str,
     auth_key: str,
@@ -173,18 +255,17 @@ def whitelist_check_flat_rows(
             break
         n += 1
         geo = normalize_geo_key(str(c.get("geo") or ""))
-        wl = []
-        gentry = geo_map.get(geo) or {}
-        if isinstance(gentry, dict):
-            wl = gentry.get("whitelist") if isinstance(gentry.get("whitelist"), list) else []
+        wl, wl_camp, wl_sheet = merged_whitelist_for_campaign(c, geo_map)
         if not wl:
             summaries.append(
                 {
                     "campaign_id": str(c.get("id") or ""),
                     "campaign_name": nm,
                     "geo": geo,
-                    "note": "no_geo_whitelist_in_sheet",
+                    "note": "no_whitelist_campaign_or_sheet",
                     "whitelist_size": 0,
+                    "whitelist_from_campaign": [],
+                    "whitelist_from_sheet": wl_sheet,
                 }
             )
             continue
@@ -211,6 +292,8 @@ def whitelist_check_flat_rows(
         aud = audit_whitelist_traffic(c, wl, stats)
         aud["stats_window_start"] = start
         aud["stats_window_end"] = end
+        aud["whitelist_from_campaign"] = wl_camp
+        aud["whitelist_from_sheet"] = wl_sheet
         summaries.append(aud)
         clicks_map = {str(s.get("source") or ""): int(s.get("clicks") or 0) for s in stats if s.get("source")}
         for w in wl:
@@ -228,6 +311,8 @@ def whitelist_check_flat_rows(
                     "had_traffic": cl > 0,
                     "stats_window_start": start,
                     "stats_window_end": end,
+                    "source_on_campaign_wl": w in set(wl_camp),
+                    "source_on_sheet_wl": w in set(wl_sheet),
                 }
             )
     return flat, summaries

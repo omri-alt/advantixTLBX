@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Ecomnia console{% endblock %}</title>
+  <style>
+    :root { --bg:#0b1220; --panel:#111827; --line:#374151; --text:#e5e7eb; --muted:#9ca3af; --ok:#22c55e; --accent:#4f8cff; --warn:#f59e0b; --tile-hover:#1e293b; }
+    body { font-family: Segoe UI, system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; }
+    a { color: #86efac; }
+    .ec-shell { max-width: 1280px; margin: 0 auto; padding: 20px 24px 48px; }
+    .ec-nav {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+      padding: 12px 16px; margin: -20px -24px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .ec-nav a { text-decoration: none; color: var(--muted); }
+    .ec-nav a:hover { color: var(--text); }
+    .ec-nav a.active { color: var(--accent); font-weight: 600; }
+    .ec-nav .sep { color: var(--line); user-select: none; }
+    .ec-nav-inner { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+    .ec-nav-tools { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+    h1 { margin: 8px 0 6px; font-size: 1.5rem; }
+    .muted { color: var(--muted); font-size: 14px; max-width: 900px; line-height: 1.55; }
+    .banner { padding: 12px 14px; border-radius: 10px; margin: 12px 0; border: 1px solid var(--line); }
+    .banner.ok { border-color: #166534; background: rgba(34,197,94,0.08); }
+    .banner.err { border-color: #92400e; background: rgba(245,158,11,0.1); }
+    .banner.warn { border-color: #6b4f1d; background: rgba(245,158,11,0.06); }
+    section.tool-section { margin: 24px 0; }
+    section.tool-section > h2 { font-size: 1.05rem; margin-bottom: 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+    .tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 16px; margin-top: 20px; }
+    .tile {
+      display: block; text-decoration: none; color: inherit;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px;
+      transition: border-color .15s ease, box-shadow .15s ease, transform .1s ease;
+    }
+    .tile:hover { border-color: var(--accent); box-shadow: 0 8px 24px rgba(0,0,0,.25); transform: translateY(-2px); }
+    .tile h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
+    .tile p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+    .tile-meta { display: block; margin-top: 14px; font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; line-height: 1.4; }
+    .tile-meta .ok { color: #86efac; }
+    .tile-meta .bad { color: var(--warn); }
+    .run-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+    .run-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+    .run-card .k { font-size: 10px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.04em; }
+    .run-card .ts { font-weight: 600; margin-top: 4px; }
+    .run-card .bad { color: var(--warn); }
+    textarea.copybox { width: 100%; min-height: 140px; font-family: ui-monospace, monospace; font-size: 12px; background: #0f172a; color: #e2e8f0; border: 1px solid var(--line); border-radius: 8px; padding: 10px; box-sizing: border-box; }
+    textarea.copybox.all { min-height: 220px; }
+    table.data { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+    table.data th, table.data td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+    table.data th { background: var(--panel); color: var(--muted); font-weight: 600; }
+    tr.zero { color: var(--warn); }
+    tr.hit { color: #86efac; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 0; }
+    button, .btn-link {
+      background: #1e293b; color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+      padding: 8px 14px; font-size: 13px; cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button.danger { border-color: #991b1b; color: #fecaca; }
+    input[type="text"], input[type="number"] { background: #0f172a; border: 1px solid var(--line); color: var(--text); padding: 6px 10px; border-radius: 6px; width: 120px; }
+    label { font-size: 13px; color: var(--muted); margin-right: 6px; }
+    code { color: #93c5fd; }
+    .output-panel {
+      margin-top: 28px; padding: 16px; background: rgba(15,23,42,0.6); border: 1px solid var(--line); border-radius: 12px;
+    }
+    .output-panel h2 { font-size: 0.95rem; margin: 0 0 12px; color: var(--muted); font-weight: 600; }
+    .run-line { font-size: 13px; margin: 0 0 10px; }
+    .run-line .ts { font-family: ui-monospace, monospace; color: var(--muted); }
+    .run-line .ok { color: #86efac; }
+    .run-line .bad { color: var(--warn); }
+    pre.log-pre {
+      margin: 0; padding: 12px; background: #0f172a; border: 1px solid var(--line); border-radius: 8px;
+      font-size: 11px; line-height: 1.45; overflow-x: auto; max-height: 420px; overflow-y: auto;
+    }
+    .run-subblock { margin-top: 16px; }
+    .run-subblock h3 { font-size: 12px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <div class="ec-shell">
+    <nav class="ec-nav">
+      <div class="ec-nav-inner">
+        <a href="/">Home</a>
+        <span class="sep">·</span>
+        <a href="/ec">Ecomnia bulk</a>
+        <span class="sep">|</span>
+        <a href="{{ url_for('ui_ec_console_hub') }}" class="{{ 'active' if active_page == 'hub' else '' }}">Hub</a>
+      </div>
+      <div class="ec-nav-tools">
+        <a href="{{ url_for('ui_ec_console_tool', page_slug='lists') }}" class="{{ 'active' if active_page == 'lists' else '' }}">Sheet lists</a>
+        <a href="{{ url_for('ui_ec_console_tool', page_slug='whitelist-derived') }}" class="{{ 'active' if active_page == 'whitelist-derived' else '' }}">Campaign WL</a>
+        <a href="{{ url_for('ui_ec_console_tool', page_slug='sync-blacklists') }}" class="{{ 'active' if active_page == 'sync-blacklists' else '' }}">Sync BL</a>
+        <a href="{{ url_for('ui_ec_console_tool', page_slug='whitelist-check') }}" class="{{ 'active' if active_page == 'whitelist-check' else '' }}">WL check</a>
+        <a href="{{ url_for('ui_ec_console_tool', page_slug='action-items') }}" class="{{ 'active' if active_page == 'action-items' else '' }}">Action items</a>
+      </div>
+    </nav>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for cat, msg in messages %}
+          <div class="banner {% if cat == 'error' %}err{% else %}ok{% endif %}">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% block tool_body %}{% endblock %}
+  </div>
+</body>
+</html>

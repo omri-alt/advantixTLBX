@@ -1,0 +1,33 @@
+{% extends "ecomnia_console_base.html" %}
+{% from "ecomnia_console_macros.html" import last_run_block %}
+{% block title %}Ecomnia · Sync blacklists{% endblock %}
+{% block tool_body %}
+<h1>Sync blacklists</h1>
+<p class="muted">Same idea as legacy <code>explorations_blacklist_synch</code>: sources blacklisted in 4+ campaigns in a geo get added to other campaigns in that geo. Skips <code>-wl</code> campaigns.</p>
+
+{% if not ec_ok %}
+<div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>
+{% endif %}
+
+<section class="tool-section">
+  <h2>Run</h2>
+  <div class="btn-row">
+    <form method="post" action="{{ url_for('ui_ec_console_do') }}">
+      <input type="hidden" name="page" value="sync-blacklists">
+      <input type="hidden" name="action" value="sync_blacklists_dry">
+      <button type="submit" {% if not ec_ok %}disabled{% endif %}>Dry-run</button>
+    </form>
+    <form method="post" action="{{ url_for('ui_ec_console_do') }}" onsubmit="return confirm('Apply recommended blacklists to campaigns on Ecomnia?');">
+      <input type="hidden" name="page" value="sync-blacklists">
+      <input type="hidden" name="action" value="sync_blacklists_apply">
+      <button type="submit" class="danger" {% if not ec_ok %}disabled{% endif %}>Apply on Ecomnia</button>
+    </form>
+  </div>
+</section>
+
+<section class="output-panel">
+  <h2>Last run · output</h2>
+  {{ last_run_block('sync_blacklists_dry', 'Dry-run') }}
+  {{ last_run_block('sync_blacklists_apply', 'Apply') }}
+</section>
+{% endblock %}

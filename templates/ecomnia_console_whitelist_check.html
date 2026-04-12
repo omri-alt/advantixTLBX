@@ -1,0 +1,46 @@
+{% extends "ecomnia_console_base.html" %}
+{% from "ecomnia_console_macros.html" import last_run_block %}
+{% block title %}Ecomnia · Whitelist check{% endblock %}
+{% block tool_body %}
+<h1>Whitelist traffic check</h1>
+<p class="muted">Each row: <strong>campaign × source</strong> where the source is on the <strong>merged</strong> whitelist (campaign <code>whitelistsources</code> ∪ sheet geo whitelist). Clicks from EC in the window (0 = no buy).</p>
+
+{% if not ec_ok %}
+<div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>
+{% endif %}
+
+<section class="tool-section">
+  <h2>Run check</h2>
+  <form method="post" action="{{ url_for('ui_ec_console_do') }}" class="btn-row">
+    <input type="hidden" name="page" value="whitelist-check">
+    <input type="hidden" name="action" value="whitelist_check">
+    <label>Days <input type="number" name="whitelist_days" value="30" min="1" max="90"></label>
+    <label>Campaign limit (0=all) <input type="number" name="campaign_limit" value="0" min="0"></label>
+    <button type="submit" {% if not ec_ok %}disabled{% endif %}>Run check</button>
+  </form>
+  {% if wl_rows %}
+  <table class="data">
+    <thead><tr><th>Campaign</th><th>Geo</th><th>Source</th><th>Clicks</th><th>On camp WL</th><th>On sheet WL</th></tr></thead>
+    <tbody>
+      {% for row in wl_rows %}
+      <tr class="{{ 'hit' if row.had_traffic else 'zero' }}">
+        <td>{{ row.campaign_name }}</td>
+        <td>{{ row.geo }}</td>
+        <td><code>{{ row.source }}</code></td>
+        <td>{{ row.clicks }}</td>
+        <td>{{ 'yes' if row.get('source_on_campaign_wl') else '—' }}</td>
+        <td>{{ 'yes' if row.get('source_on_sheet_wl') else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No cached rows — run the check above.</p>
+  {% endif %}
+</section>
+
+<section class="output-panel">
+  <h2>Last run · output</h2>
+  {{ last_run_block('whitelist_check', 'Whitelist check') }}
+</section>
+{% endblock %}
