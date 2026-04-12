@@ -99,6 +99,17 @@ LATE_SALES_POSTBACK_BASE = (
     os.getenv("LATE_SALES_POSTBACK_BASE") or "http://207.154.244.157/2ea006b/postback"
 ).strip()
 
+# Daily on-time click / sale postbacks (Keitaro GET). Defaults share the same base URL as late sales; only query differs.
+DAILY_CONVERSION_POSTBACK_BASE = (
+    (os.getenv("DAILY_CONVERSION_POSTBACK_BASE") or "").strip() or LATE_SALES_POSTBACK_BASE
+).strip()
+DAILY_CONVERSION_POSTBACK_CLICK_STATUS = (os.getenv("DAILY_CONVERSION_POSTBACK_CLICK_STATUS") or "click").strip()
+DAILY_CONVERSION_POSTBACK_SALE_STATUS = (os.getenv("DAILY_CONVERSION_POSTBACK_SALE_STATUS") or "SaleOur").strip()
+_dcp_state = (os.getenv("DAILY_CONVERSION_POSTBACK_STATE_PATH") or "").strip()
+DAILY_CONVERSION_POSTBACK_STATE_PATH = _dcp_state or str(
+    Path(__file__).resolve().parent / "runtime" / "daily_conversion_postbacks_state.json"
+)
+
 # Google Sheets — Blend workflow spreadsheet (Blend tab + potential sheets)
 BLEND_SHEETS_SPREADSHEET_ID = (
     os.getenv("BLEND_SHEETS_SPREADSHEET_ID") or "1h9lBPTREEJO9VVvj6wctCgCOn3YcwJBGIk_MBwXw-xY"
@@ -156,6 +167,67 @@ def _parse_feed2_merchants_geos() -> tuple[str, ...] | None:
 
 
 FEED2_MERCHANTS_GEOS: tuple[str, ...] | None = _parse_feed2_merchants_geos()
+
+
+def _parse_kelkoo_raw_report_geos() -> tuple[str, ...]:
+    """
+    Lowercase Kelkoo ``country=`` codes for raw report postbacks (``/publisher/reports/v1/raw``).
+    Override with comma-separated ``KELKOO_RAW_REPORT_GEOS``.
+    """
+    raw = (os.getenv("KELKOO_RAW_REPORT_GEOS") or "").strip().lower()
+    if raw:
+        out: list[str] = []
+        for part in raw.split(","):
+            p = part.strip().lower()
+            if not p:
+                continue
+            out.append(p[:2] if len(p) >= 2 and p[:2].isalpha() else p)
+        if out:
+            return tuple(out)
+    return (
+        "ae",
+        "at",
+        "au",
+        "be",
+        "br",
+        "ca",
+        "ch",
+        "cz",
+        "de",
+        "es",
+        "fi",
+        "fr",
+        "gr",
+        "hk",
+        "hu",
+        "id",
+        "ie",
+        "in",
+        "it",
+        "jp",
+        "kr",
+        "mx",
+        "my",
+        "nb",
+        "nl",
+        "no",
+        "nz",
+        "ph",
+        "pl",
+        "pt",
+        "ro",
+        "se",
+        "sg",
+        "sk",
+        "tr",
+        "uk",
+        "us",
+        "vn",
+        "dk",
+    )
+
+
+KELKOO_RAW_REPORT_GEOS: tuple[str, ...] = _parse_kelkoo_raw_report_geos()
 
 # Zeropark
 KEYZP = (os.getenv("KEYZP") or "").strip()

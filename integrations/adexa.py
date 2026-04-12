@@ -274,6 +274,65 @@ def get_merchants(
     raise AdexaClientError("Unexpected GetMerchant response shape", response_body=str(data)[:500])
 
 
+ADEXA_STATS_RAW_BASE = "https://api.adexad.com/v1/StatsRaw"
+
+
+def fetch_stats_raw(
+    start: str,
+    end: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    nb_page: int = 100,
+    timeout: int = 120,
+) -> List[Dict[str, Any]]:
+    """
+    GET ``StatsRaw`` for ``start`` / ``end`` (YYYY-MM-DD), all pages.
+
+    Response JSON is expected to include ``stats`` (list) and ``page`` (last page index, 0-based).
+    """
+    sid = (site_id or ADEXA_SITE_ID or "").strip()
+    key = (api_key or ADEXA_API_KEY or "").strip()
+    if not sid:
+        raise AdexaClientError("ADEXA_SITE_ID / AdexSiteID is not set")
+    if not key:
+        raise AdexaClientError("ADEXA_API_KEY / KeyAdex is not set")
+
+    stats: List[Dict[str, Any]] = []
+
+    def fetch_page(page_idx: int) -> tuple[int, List[Dict[str, Any]]]:
+        endpoint = (
+            f"{ADEXA_STATS_RAW_BASE}/siteID={sid}&apiKey={key}&start={start}&end={end}"
+            f"&nb_page={nb_page}&page={page_idx}&format=json"
+        )
+        r = requests.get(endpoint, timeout=timeout, headers={"Accept": "application/json"})
+        if r.status_code != 200:
+            raise AdexaClientError(
+                f"StatsRaw HTTP {r.status_code}",
+                status_code=r.status_code,
+                response_body=(r.text[:800] if r.text else None),
+            )
+        try:
+            payload = r.json()
+        except Exception as e:
+            raise AdexaClientError(f"StatsRaw JSON error: {e}", response_body=r.text[:500]) from e
+        if not isinstance(payload, dict):
+            raise AdexaClientError("StatsRaw: expected JSON object", response_body=str(payload)[:300])
+        rows = payload.get("stats")
+        if not isinstance(rows, list):
+            rows = []
+        last_page = int(payload.get("page", 0) or 0)
+        return last_page, rows
+
+    last_page, first_rows = fetch_page(0)
+    stats.extend(first_rows)
+    for page_idx in range(1, last_page + 1):
+        _, page_rows = fetch_page(page_idx)
+        stats.extend(page_rows)
+
+    return stats
+
+
 def filter_static_cpc_with_links(merchants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """``cpcmodel == 'Static cpc'`` and ``supportsLinks == 1`` (fixim links)."""
     out: List[Dict[str, Any]] = []

@@ -14,6 +14,10 @@ pick merchants → generate PLA offers → combined sheet → sync Keitaro.
 6. Sync both feeds to Keitaro (unless --skip-keitaro or no offers).
 7. Blend: refresh potential → populate Blend → blend_sync_from_sheet (unless --skip-blend).
 
+Optional: ``--run-daily-conversion-postbacks`` runs ``run_daily_conversion_postbacks.py`` after a successful
+workflow (Kelkoo per-geo + Adexa + Yadore → Keitaro GET postbacks). Use ``--postback-report-date YYYY-MM-DD`` to
+override the stats date (default: yesterday UTC).
+
 Requires .env: KEITARO_BASE_URL, KEITARO_API_KEY, FEED1_API_KEY, FEED2_API_KEY; credentials.json.
 Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) for step 0b/7a; feeds without an API key are skipped.
 
@@ -26,6 +30,8 @@ Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) fo
   python run_daily_workflow.py --skip-blend-sync
   python run_daily_workflow.py --geo uk
   python run_daily_workflow.py --include-flex
+  python run_daily_workflow.py --run-daily-conversion-postbacks
+  python run_daily_workflow.py --run-daily-conversion-postbacks --postback-report-date 2026-04-08
 """
 from __future__ import annotations
 
@@ -114,6 +120,17 @@ def run_populate_blend_from_potential(
         str(max_add),
     ]
     return subprocess.run(cmd).returncode == 0
+
+
+def run_optional_daily_conversion_postbacks(report_date: str) -> None:
+    """Subprocess: Kelkoo (per geo) + Adexa + Yadore postbacks; has its own resume state on disk."""
+    script = Path(__file__).resolve().parent / "run_daily_conversion_postbacks.py"
+    cmd = [sys.executable, str(script), "--report-date", report_date]
+    print()
+    print("Daily conversion postbacks (Kelkoo + Adexa + Yadore) ...")
+    r = subprocess.run(cmd)
+    if r.returncode != 0:
+        print(f"   Warning: run_daily_conversion_postbacks.py exited with code {r.returncode}.")
 
 
 def run_blend_sync_from_sheet(extra_args: list[str] | None = None) -> bool:
@@ -277,11 +294,17 @@ def main() -> None:
     include_flex_merchants = "--include-flex" in argv
     static_only = not include_flex_merchants
     only_geo: str | None = None
+    run_daily_conversion_postbacks = "--run-daily-conversion-postbacks" in argv
+    postback_report_date = (datetime.now(timezone.utc).date() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     i = 0
     while i < len(argv):
         if argv[i] == "--date" and i + 1 < len(argv):
             date_str = argv[i + 1].strip()
+            i += 2
+            continue
+        if argv[i] == "--postback-report-date" and i + 1 < len(argv):
+            postback_report_date = argv[i + 1].strip()
             i += 2
             continue
         if argv[i] == "--geo" and i + 1 < len(argv):
@@ -469,6 +492,8 @@ def main() -> None:
     if skip_keitaro:
         print("Skipping Keitaro sync (--skip-keitaro).")
         run_blend_daily_steps(skip_keitaro=True, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
+        if run_daily_conversion_postbacks:
+            run_optional_daily_conversion_postbacks(postback_report_date)
         return
 
     if not rows1 and not rows2:
@@ -477,6 +502,8 @@ def main() -> None:
         print()
         run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
         print("Done. No offers to sync.")
+        if run_daily_conversion_postbacks:
+            run_optional_daily_conversion_postbacks(postback_report_date)
         return
 
     print("6. Syncing feed1 to Keitaro ...")
@@ -493,6 +520,8 @@ def main() -> None:
         print()
         run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
         print("Done. Feed1 traffic only synced to Keitaro.")
+        if run_daily_conversion_postbacks:
+            run_optional_daily_conversion_postbacks(postback_report_date)
         return
 
     print("   Syncing feed2 to Keitaro ...")
@@ -504,6 +533,8 @@ def main() -> None:
     print()
     run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
     print("Done. Both feeds synced to Keitaro.")
+    if run_daily_conversion_postbacks:
+        run_optional_daily_conversion_postbacks(postback_report_date)
 
 
 if __name__ == "__main__":

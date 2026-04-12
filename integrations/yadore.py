@@ -119,3 +119,49 @@ def direct_redirect_probe(
         "used_projectId": bool(pid),
     }
 
+
+def fetch_conversion_detail(
+    date: str,
+    *,
+    api_key: Optional[str] = None,
+    base_url: str = YADORE_BASE_URL,
+    timeout: int = 120,
+) -> list[dict[str, Any]]:
+    """
+    GET ``/v2/conversion/detail?date=YYYY-MM-DD&format=json``.
+
+    Returns the ``clicks`` list (empty if missing). Same ``API-Key`` header as deeplink.
+    """
+    token = (api_key or YADORE_API_KEY or "").strip()
+    if not token:
+        raise YadoreClientError("YADORE_API_KEY is not set")
+
+    endpoint = f"{base_url.rstrip('/')}/v2/conversion/detail"
+    headers = {
+        "Accept": "application/json",
+        "API-Key": token,
+    }
+    try:
+        r = requests.get(endpoint, headers=headers, params={"date": date, "format": "json"}, timeout=timeout)
+    except requests.RequestException as e:
+        raise YadoreClientError(str(e)) from e
+
+    if r.status_code != 200:
+        raise YadoreClientError(
+            f"conversion/detail HTTP {r.status_code}",
+            status_code=r.status_code,
+            response_body=(r.text[:800] if r.text else None),
+        )
+
+    try:
+        data = r.json() if r.text else {}
+    except Exception as e:
+        raise YadoreClientError(f"conversion/detail JSON error: {e}", response_body=r.text[:500]) from e
+
+    if not isinstance(data, dict):
+        return []
+    clicks = data.get("clicks")
+    if isinstance(clicks, list):
+        return [c for c in clicks if isinstance(c, dict)]
+    return []
+
