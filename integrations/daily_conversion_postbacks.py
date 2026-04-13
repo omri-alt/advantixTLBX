@@ -146,8 +146,22 @@ def fetch_kelkoo_raw_tsv(
     return int(r.status_code), r.text or ""
 
 
-def _parse_kelkoo_row(row: Dict[str, str]) -> Optional[Tuple[str, bool, bool, str, str]]:
-    click_id = str(row.get("publisherClickId") or "").strip()
+def _kelkoo_row_click_id(row: Dict[str, str], feed: str) -> str:
+    """Kelkoo2 raw reports carry Keitaro subid in ``custom1``; kelkoo1 uses ``publisherClickId``."""
+    if feed == "kelkoo2":
+        for key in ("custom1", "Custom1"):
+            v = row.get(key)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+    for key in ("publisherClickId", "PublisherClickId"):
+        v = row.get(key)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def _parse_kelkoo_row(row: Dict[str, str], feed: str) -> Optional[Tuple[str, bool, bool, str, str]]:
+    click_id = _kelkoo_row_click_id(row, feed)
     lead_valid = (row.get("leadValid") or "").lower() == "true"
     sale = (row.get("sale") or "").lower() == "true"
     sale_value_usd = (row.get("saleValueInUsd") or "0").strip() or "0"
@@ -262,7 +276,7 @@ def run_kelkoo_feed_postbacks(
             if idx < next_idx:
                 continue
 
-            parsed = _parse_kelkoo_row(row)
+            parsed = _parse_kelkoo_row(row, feed)
             if parsed is None:
 
                 def _skip_invalid(d: Dict[str, Any]) -> None:
