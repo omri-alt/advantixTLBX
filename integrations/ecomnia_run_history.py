@@ -31,6 +31,7 @@ def _empty_console_state() -> Dict[str, Any]:
         "geo_map": {},
         "action_items_block": {},
         "derived_whitelist": {},
+        "whitelist_focus_audit": {},
     }
 
 
@@ -47,6 +48,7 @@ def load_state() -> Dict[str, Any]:
         data.setdefault("geo_map", {})
         data.setdefault("action_items_block", {})
         data.setdefault("derived_whitelist", {})
+        data.setdefault("whitelist_focus_audit", {})
         return data
     except Exception as e:
         logger.warning("ecomnia console state read failed %s: %s", p, e)
@@ -76,6 +78,7 @@ def update_cache(
     *,
     geo_map: Optional[Dict[str, Any]] = None,
     whitelist_rows: Optional[List[Dict[str, Any]]] = None,
+    whitelist_focus_audit: Optional[Dict[str, Any]] = None,
     action_items_block: Optional[Dict[str, Any]] = None,
     derived_whitelist: Optional[Dict[str, Any]] = None,
 ) -> None:
@@ -84,6 +87,8 @@ def update_cache(
         data["geo_map"] = geo_map
     if whitelist_rows is not None:
         data["whitelist_campaign_source_rows"] = whitelist_rows
+    if whitelist_focus_audit is not None:
+        data["whitelist_focus_audit"] = whitelist_focus_audit
     if action_items_block is not None:
         data["action_items_block"] = action_items_block
     if derived_whitelist is not None:

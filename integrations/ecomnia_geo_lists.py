@@ -391,6 +391,75 @@ def clicks_by_source_from_stats(stats: Sequence[Mapping[str, Any]]) -> Dict[str,
     return out
 
 
+def find_adv_stats_row_for_source(
+    stats: Sequence[Mapping[str, Any]], target: str
+) -> Optional[Dict[str, Any]]:
+    """Return the ``adv-stats-by-source`` row for ``target`` (exact ``source``, then case-insensitive)."""
+    t = (target or "").strip()
+    if not t:
+        return None
+    for row in stats:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("source") or "").strip()
+        if name == t:
+            return dict(row)
+    tl = t.lower()
+    for row in stats:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("source") or "").strip()
+        if name.lower() == tl:
+            return dict(row)
+    return None
+
+
+def conversions_from_source_stat(row: Mapping[str, Any]) -> int:
+    """
+    Best-effort conversions / sales count from one ``adv-stats-by-source`` row.
+    If the API omits these fields, returns ``0`` (callers should treat as “no signal”).
+    """
+    lk = {str(k).lower(): v for k, v in row.items()}
+    for key in (
+        "conversions",
+        "conversion",
+        "sales",
+        "salecount",
+        "orders",
+        "purchases",
+        "convertedclicks",
+        "conv",
+    ):
+        if key not in lk:
+            continue
+        v = lk[key]
+        if isinstance(v, bool):
+            continue
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def conversions_field_present_in_stat(row: Mapping[str, Any]) -> bool:
+    lk = {str(k).lower() for k in row}
+    return bool(
+        lk.intersection(
+            {
+                "conversions",
+                "conversion",
+                "sales",
+                "salecount",
+                "orders",
+                "purchases",
+                "convertedclicks",
+                "conv",
+            }
+        )
+    )
+
+
 def audit_whitelist_traffic(
     campaign: Mapping[str, Any],
     geo_whitelist: Sequence[str],

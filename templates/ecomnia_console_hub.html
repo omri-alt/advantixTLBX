@@ -64,7 +64,7 @@
 <section class="tool-section">
   <h2>Recent activity (all tools)</h2>
   <div class="run-grid">
-    {% for key in ['refresh_lists', 'refresh_whitelist_derived', 'sync_blacklists_dry', 'sync_blacklists_apply', 'whitelist_check', 'action_items'] %}
+    {% for key in ['refresh_lists', 'refresh_whitelist_derived', 'sync_blacklists_dry', 'sync_blacklists_apply', 'whitelist_check', 'whitelist_focus_source', 'action_items'] %}
     {% set r = runs.get(key) %}
     <div class="run-card">
       <div class="k">{{ key|replace('_', ' ') }}</div>

@@ -18,9 +18,12 @@ from integrations.ecomnia_geo_lists import (
     audit_whitelist_traffic,
     campaign_daily_budget_value,
     campaign_whitelist_sources,
+    conversions_field_present_in_stat,
+    conversions_from_source_stat,
     date_range_last_days,
     fetch_adv_stats_by_date,
     fetch_adv_stats_by_source,
+    find_adv_stats_row_for_source,
     fetch_campaign_by_id,
     fetch_campaigns,
     geo_bw_map_from_rows,
@@ -316,6 +319,150 @@ def whitelist_check_flat_rows(
                 }
             )
     return flat, summaries
+
+
+def whitelist_focus_source_traffic_no_buy(
+    advertiser_key: str,
+    auth_key: str,
+    secret_key: str,
+    geo_map: Mapping[str, Mapping[str, Any]],
+    focus_source: str,
+    *,
+    days: int = 30,
+    skip_wl_campaigns: bool = True,
+    limit_campaigns: int = 0,
+    min_campaign_matches: int = 2,
+    session: Optional[requests.Session] = None,
+) -> Dict[str, Any]:
+    """
+    For one source: campaigns where it is on the **merged** whitelist, had **clicks > 0**
+    in ``adv-stats-by-source`` for the window, and **conversions/sales** from that row are 0
+    (see ``conversions_from_source_stat`` — omitted API fields count as 0).
+
+    ``min_campaign_matches``: if the number of matching campaigns is below this, ``rows`` is
+    empty (useful to only surface cross-campaign patterns, e.g. 2+).
+    """
+    src = (focus_source or "").strip()
+    try:
+        d_days = max(1, min(int(days), 90))
+    except (TypeError, ValueError):
+        d_days = 30
+    try:
+        min_m_cfg = max(1, int(min_campaign_matches))
+    except (TypeError, ValueError):
+        min_m_cfg = 2
+    out: Dict[str, Any] = {
+        "source": src,
+        "days": d_days,
+        "stats_window_start": "",
+        "stats_window_end": "",
+        "rows": [],
+        "errors": [],
+        "min_campaign_matches": min_m_cfg,
+        "campaigns_on_whitelist": 0,
+    }
+    if not src:
+        out["error"] = "empty_source"
+        return out
+
+    sess = session or requests.Session()
+    campaigns = fetch_campaigns(advertiser_key, auth_key, secret_key, session=sess)
+    utc_today = datetime.now(timezone.utc).date()
+    start, end = date_range_last_days(utc_today, d_days)
+    out["stats_window_start"] = start
+    out["stats_window_end"] = end
+
+    rows_acc: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    on_wl = 0
+    n = 0
+    src_l = src.lower()
+
+    def _focus_in_sources(seq: Sequence[str]) -> bool:
+        for w in seq:
+            t = str(w).strip()
+            if not t:
+                continue
+            if t == src or t.lower() == src_l:
+                return True
+        return False
+
+    for c in campaigns:
+        if not isinstance(c, dict):
+            continue
+        nm = str(c.get("name") or "")
+        if skip_wl_campaigns and _campaign_suffix_wl(nm):
+            continue
+        if limit_campaigns and n >= limit_campaigns:
+            break
+        n += 1
+        geo = normalize_geo_key(str(c.get("geo") or ""))
+        wl, wl_camp, wl_sheet = merged_whitelist_for_campaign(c, geo_map)
+        wl_norm = {str(x).strip() for x in wl if str(x).strip()}
+        if src not in wl_norm and not any(w.lower() == src_l for w in wl_norm):
+            continue
+        on_wl += 1
+
+        cid = str(c.get("id") or "")
+        try:
+            stats = fetch_adv_stats_by_source(
+                cid,
+                start,
+                end,
+                advertiser_key,
+                auth_key,
+                secret_key,
+                session=sess,
+            )
+        except Exception as e:
+            errors.append(
+                {
+                    "campaign_id": cid,
+                    "campaign_name": nm,
+                    "geo": geo,
+                    "error": str(e),
+                }
+            )
+            continue
+
+        st_row = find_adv_stats_row_for_source(stats, src)
+        if not st_row:
+            continue
+        try:
+            clicks = int(st_row.get("clicks") or 0)
+        except (TypeError, ValueError):
+            clicks = 0
+        conv = conversions_from_source_stat(st_row)
+        conv_known = conversions_field_present_in_stat(st_row)
+        if clicks <= 0:
+            continue
+        if conv > 0:
+            continue
+        rows_acc.append(
+            {
+                "campaign_id": cid,
+                "campaign_name": nm,
+                "geo": geo,
+                "source": str(st_row.get("source") or src).strip() or src,
+                "clicks": clicks,
+                "conversions": conv,
+                "conversions_field_present": conv_known,
+                "source_on_campaign_wl": _focus_in_sources([str(x) for x in wl_camp]),
+                "source_on_sheet_wl": _focus_in_sources([str(x) for x in wl_sheet]),
+            }
+        )
+
+    out["campaigns_on_whitelist"] = on_wl
+    out["raw_match_count"] = len(rows_acc)
+    out["errors"] = errors
+    min_m = min_m_cfg
+    if len(rows_acc) >= min_m:
+        out["rows"] = rows_acc
+    else:
+        out["rows"] = []
+        out["below_min_matches"] = len(rows_acc)
+    out["shown_match_count"] = len(out["rows"])
+    return out
 
 
 def exploration_action_items(

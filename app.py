@@ -78,6 +78,7 @@ from integrations.ecomnia_console import (
     sync_geo_blacklists,
     utc_yesterday_iso,
     whitelist_check_flat_rows,
+    whitelist_focus_source_traffic_no_buy,
 )
 from integrations.ecomnia_run_history import load_state, record_run, update_cache
 
@@ -1251,6 +1252,7 @@ EC_CONSOLE_ACTION_TO_PAGE = {
     "sync_blacklists_dry": "sync-blacklists",
     "sync_blacklists_apply": "sync-blacklists",
     "whitelist_check": "whitelist-check",
+    "whitelist_focus_source": "whitelist-check",
     "action_items": "action-items",
 }
 
@@ -1267,6 +1269,9 @@ def _ecomnia_console_view_context() -> Dict[str, Any]:
     state = load_state()
     geo_map = dict(state.get("geo_map") or {})
     wl_rows = list(state.get("whitelist_campaign_source_rows") or [])
+    wl_focus = state.get("whitelist_focus_audit") or {}
+    if not isinstance(wl_focus, dict):
+        wl_focus = {}
     action_block = state.get("action_items_block") or {}
     if not isinstance(action_block, dict):
         action_block = {}
@@ -1288,6 +1293,7 @@ def _ecomnia_console_view_context() -> Dict[str, Any]:
         "copy_derived_wl": copy_derived_wl,
         "derived_wl": derived_wl,
         "wl_rows": wl_rows,
+        "wl_focus_audit": wl_focus,
         "action_items": list(action_block.get("items") or []),
         "action_errors": list(action_block.get("errors") or []),
         "runs": runs,
@@ -1396,6 +1402,71 @@ def _process_ecomnia_console_post(form) -> Tuple[Optional[str], Optional[str]]:
                 {"rows": len(flat), "summaries": len(summaries), "days": days},
             )
             flash_msg = f"Whitelist check: {len(flat)} campaign×source rows ({days}d)."
+
+        elif action == "whitelist_focus_source":
+            focus = (form.get("focus_source") or "").strip()
+            if not focus:
+                return None, "Enter a source id for the focus audit."
+            try:
+                f_days = int((form.get("focus_days") or "30").strip() or "30")
+            except ValueError:
+                f_days = 30
+            f_days = max(1, min(f_days, 90))
+            try:
+                min_m = int((form.get("focus_min_campaigns") or "2").strip() or "2")
+            except ValueError:
+                min_m = 2
+            min_m = max(1, min_m)
+            try:
+                lim = int((form.get("focus_campaign_limit") or "0").strip() or "0")
+            except ValueError:
+                lim = 0
+            gm = dict(load_state().get("geo_map") or {})
+            block = whitelist_focus_source_traffic_no_buy(
+                EC_ADVERTISER_KEY,
+                EC_AUTH_KEY,
+                EC_SECRET_KEY,
+                gm,
+                focus,
+                days=f_days,
+                skip_wl_campaigns=True,
+                limit_campaigns=max(0, lim),
+                min_campaign_matches=min_m,
+            )
+            update_cache(whitelist_focus_audit=block)
+            raw_n = int(block.get("raw_match_count") or 0)
+            shown_n = int(block.get("shown_match_count") or 0)
+            on_wl = int(block.get("campaigns_on_whitelist") or 0)
+            record_run(
+                "whitelist_focus_source",
+                True,
+                {
+                    "source": focus,
+                    "days": f_days,
+                    "min_campaign_matches": min_m,
+                    "raw_matches": raw_n,
+                    "shown_matches": shown_n,
+                    "on_whitelist_campaigns": on_wl,
+                    "errors": len(block.get("errors") or []),
+                },
+            )
+            if block.get("error") == "empty_source":
+                return None, "Enter a source id for the focus audit."
+            if shown_n:
+                flash_msg = (
+                    f"Source {focus!r}: {shown_n} campaign(s) with clicks & no conversions "
+                    f"({f_days}d, min {min_m} campaigns). On merged WL in {on_wl} campaign(s)."
+                )
+            elif raw_n and raw_n < min_m:
+                flash_msg = (
+                    f"Source {focus!r}: only {raw_n} campaign(s) match (clicks, 0 conversions) — "
+                    f"below minimum {min_m}; table left empty."
+                )
+            else:
+                flash_msg = (
+                    f"Source {focus!r}: no campaigns with merged WL + clicks + zero conversions "
+                    f"({f_days}d, min {min_m}). Seen on WL in {on_wl} campaign(s)."
+                )
 
         elif action == "action_items":
             y = (form.get("yesterday") or "").strip() or utc_yesterday_iso()

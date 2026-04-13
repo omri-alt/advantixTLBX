@@ -3,7 +3,7 @@
 {% block title %}Ecomnia · Whitelist check{% endblock %}
 {% block tool_body %}
 <h1>Whitelist traffic check</h1>
-<p class="muted">Each row: <strong>campaign × source</strong> where the source is on the <strong>merged</strong> whitelist (campaign <code>whitelistsources</code> ∪ sheet geo whitelist). Clicks from EC in the window (0 = no buy).</p>
+<p class="muted">Each row: <strong>campaign × source</strong> where the source is on the <strong>merged</strong> whitelist (campaign <code>whitelistsources</code> ∪ sheet geo whitelist). Clicks from EC in the window (0 = no traffic). Below, <strong>Admin source audit</strong> finds one source on merged WL with <strong>clicks &gt; 0</strong> and <strong>no conversions</strong> in the report (see conversions/sales fields when present).</p>
 
 {% if not ec_ok %}
 <div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>
@@ -39,8 +39,75 @@
   {% endif %}
 </section>
 
+<section class="tool-section">
+  <h2>Admin — single source (traffic, no conversions)</h2>
+  <p class="muted">Lists campaigns where the source is on the <strong>merged whitelist</strong>, has <strong>clicks</strong> in <code>adv-stats-by-source</code> for the window, and reported <strong>conversions/sales</strong> are 0. Default <strong>minimum 2 campaigns</strong> filters to cross-campaign patterns; set to <strong>1</strong> to see every match. If the API omits conversion columns, 0 conversions is assumed.</p>
+  <form method="post" action="{{ url_for('ui_ec_console_do') }}" class="btn-row" style="flex-direction:column;align-items:stretch;gap:12px;">
+    <input type="hidden" name="page" value="whitelist-check">
+    <input type="hidden" name="action" value="whitelist_focus_source">
+    <div>
+      <label>Source id <input type="text" name="focus_source" value="{{ request.form.get('focus_source', '') }}" placeholder="exact Ecomnia source" style="width:min(100%,320px);"></label>
+    </div>
+    <div class="btn-row" style="margin:0;">
+      <label>Days <input type="number" name="focus_days" value="{{ request.form.get('focus_days', '30') }}" min="1" max="90"></label>
+      <label>Min. campaigns <input type="number" name="focus_min_campaigns" value="{{ request.form.get('focus_min_campaigns', '2') }}" min="1" max="500" title="Show table only if at least this many campaigns match"></label>
+      <label>Campaign limit (0=all) <input type="number" name="focus_campaign_limit" value="{{ request.form.get('focus_campaign_limit', '0') }}" min="0"></label>
+    </div>
+    <button type="submit" {% if not ec_ok %}disabled{% endif %}>Run source audit</button>
+  </form>
+  {% if wl_focus_audit.get('source') %}
+  <p class="muted" style="margin-top:12px;">
+    Last audit: <code>{{ wl_focus_audit.source }}</code> · {{ wl_focus_audit.get('days', '—') }}d ·
+    window <code>{{ wl_focus_audit.get('stats_window_start', '—') }}</code>–<code>{{ wl_focus_audit.get('stats_window_end', '—') }}</code> ·
+    on merged WL in <strong>{{ wl_focus_audit.get('campaigns_on_whitelist', 0) }}</strong> campaign(s) ·
+    raw matches <strong>{{ wl_focus_audit.get('raw_match_count', 0) }}</strong>
+    (min {{ wl_focus_audit.get('min_campaign_matches', 1) }} → shown <strong>{{ wl_focus_audit.get('shown_match_count', 0) }}</strong>)
+  </p>
+  {% if ('below_min_matches' in wl_focus_audit) and (wl_focus_audit.get('rows')|length == 0) and (wl_focus_audit.get('raw_match_count', 0) > 0) %}
+  <p class="muted">Matches below minimum: {{ wl_focus_audit.below_min_matches }} campaign(s) — increase minimum or lower “Min. campaigns” to 1.</p>
+  {% endif %}
+  {% if wl_focus_audit.get('rows') %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Campaign</th><th>Geo</th><th>Source</th><th>Clicks</th><th>Conv.</th><th>Conv. in API</th><th>On camp WL</th><th>On sheet WL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in wl_focus_audit.rows %}
+      <tr class="hit">
+        <td>{{ row.campaign_name }}</td>
+        <td>{{ row.geo }}</td>
+        <td><code>{{ row.source }}</code></td>
+        <td>{{ row.clicks }}</td>
+        <td>{{ row.conversions }}</td>
+        <td>{{ 'yes' if row.get('conversions_field_present') else '—' }}</td>
+        <td>{{ 'yes' if row.get('source_on_campaign_wl') else '—' }}</td>
+        <td>{{ 'yes' if row.get('source_on_sheet_wl') else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif wl_focus_audit.get('source') and not wl_focus_audit.get('error') %}
+  <p class="muted">No rows in table (threshold or no qualifying campaigns).</p>
+  {% endif %}
+  {% if wl_focus_audit.get('errors') %}
+  <h3 style="font-size:13px;color:var(--warn);margin-top:14px;">API errors (partial)</h3>
+  <table class="data">
+    <thead><tr><th>Campaign</th><th>Error</th></tr></thead>
+    <tbody>
+      {% for e in wl_focus_audit.errors %}
+      <tr><td>{{ e.campaign_name or e.campaign_id }}</td><td>{{ e.error }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endif %}
+</section>
+
 <section class="output-panel">
   <h2>Last run · output</h2>
-  {{ last_run_block('whitelist_check', 'Whitelist check') }}
+  {{ last_run_block('whitelist_check', 'Full whitelist check') }}
+  {{ last_run_block('whitelist_focus_source', 'Admin source audit') }}
 </section>
 {% endblock %}
