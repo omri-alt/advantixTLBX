@@ -68,13 +68,14 @@ def _send_click_postback_with_retries(
     url: str,
     *,
     dry_run: bool,
+    dry_run_log: bool = False,
     label: str,
     subid_prefix: str,
 ) -> int:
     """Fire click postback; retry a few times on HTTP errors (flat feeds)."""
     last = 0
     for attempt in range(3):
-        last = send_postback_get(session, url, dry_run=dry_run)
+        last = send_postback_get(session, url, dry_run=dry_run, dry_run_log=dry_run_log)
         if dry_run or last < 400:
             return last
         time.sleep(0.2 * (attempt + 1))
@@ -112,10 +113,14 @@ def send_postback_get(
     url: str,
     *,
     dry_run: bool,
+    dry_run_log: bool = False,
     timeout: float = 45.0,
 ) -> int:
     if dry_run:
-        logger.debug("DRY-RUN GET %s", url[:220])
+        if dry_run_log:
+            logger.info("DRY-RUN postback GET %s", url)
+        else:
+            logger.debug("DRY-RUN GET %s", url[:220])
         return 200
     r = session.get(url, timeout=timeout)
     return int(r.status_code)
@@ -207,7 +212,25 @@ def run_kelkoo_feed_postbacks(
 
     commit(_ensure_geos)
     if dry_run:
-        logger.info("Kelkoo %s dry-run: postback URLs at DEBUG; resume state is not written to disk.", feed)
+        logger.info("Kelkoo %s dry-run: resume state is not written to disk.", feed)
+        logger.info(
+            "Kelkoo %s dry-run: click postback shape → %s",
+            feed,
+            build_daily_postback_url(
+                subid="<subid>",
+                payout="<cpc>",
+                status=DAILY_CONVERSION_POSTBACK_CLICK_STATUS,
+            ),
+        )
+        logger.info(
+            "Kelkoo %s dry-run: sale postback shape → %s",
+            feed,
+            build_daily_postback_url(
+                subid="<subid>",
+                payout="<saleUsd>",
+                status=DAILY_CONVERSION_POSTBACK_SALE_STATUS,
+            ),
+        )
 
     geo_list = [g.strip().lower() for g in geos if g.strip()]
     if only_geo:
@@ -412,6 +435,7 @@ def _adexa_stat_actions(stat: Dict[str, Any]) -> Optional[Tuple[str, str, bool, 
         sale_count = int(stat.get("saleCount") or stat.get("sales") or stat.get("orderCount") or 0)
     except (TypeError, ValueError):
         sale_count = 0
+    # Order/sale amounts only — not click commission fields (revenue/payout often mean CPC on StatsRaw rows).
     sale_val = _money_scalar(
         stat,
         (
@@ -423,9 +447,8 @@ def _adexa_stat_actions(stat: Dict[str, Any]) -> Optional[Tuple[str, str, bool, 
             "order_value",
             "publisherSaleValue",
             "totalSaleValue",
-            "revenue",
-            "publisherRevenue",
-            "payout",
+            "orderRevenue",
+            "saleRevenue",
         ),
     )
     sale_flag = stat.get("sale")
@@ -442,9 +465,12 @@ def _adexa_stat_actions(stat: Dict[str, Any]) -> Optional[Tuple[str, str, bool, 
 
 
 def _yadore_click_actions(click: Dict[str, Any]) -> Optional[Tuple[str, str, bool, str]]:
+    """
+    Yadore ``/v2/report/detail`` rows use ``revenue`` for **click** earnings (CPC-style).
+    Do not treat that as sale value or every row becomes a false \"sale\" postback.
+    """
     cid = None
     for k in (
-        "placementId",
         "publisherClickId",
         "publisherClickID",
         "placementClickId",
@@ -454,6 +480,7 @@ def _yadore_click_actions(click: Dict[str, Any]) -> Optional[Tuple[str, str, boo
         "tracking_id",
         "subId",
         "subid",
+        "placementId",
         "id",
     ):
         v = click.get(k)
@@ -484,14 +511,14 @@ def _yadore_click_actions(click: Dict[str, Any]) -> Optional[Tuple[str, str, boo
             "orderValue",
             "conversionRevenue",
             "saleRevenue",
-            "revenue",
         ),
     )
     for sub in (click.get("sale"), click.get("conversion"), click.get("order")):
         if isinstance(sub, dict) and (not sale_val or sale_val == "0"):
+            # ``revenue`` here is inside a sale/conversion object, not top-level click revenue.
             sale_val = _money_scalar(
                 sub,
-                ("value", "amount", "saleValue", "orderValue", "revenue", "total"),
+                ("saleValue", "orderValue", "value", "amount", "total", "revenue"),
             )
             if sale_val and sale_val != "0":
                 break
@@ -501,10 +528,16 @@ def _yadore_click_actions(click: Dict[str, Any]) -> Optional[Tuple[str, str, boo
         sc = int(click.get("saleCount") or click.get("conversions") or 0)
     except (TypeError, ValueError):
         sc = 0
+    conv_flag = click.get("converted")
+    if isinstance(conv_flag, str):
+        has_conv_flag = conv_flag.lower() in ("true", "1", "yes")
+    else:
+        has_conv_flag = bool(conv_flag)
     try:
-        is_sale = sc > 0 or float(sale_val) > 0
+        sale_positive = float(str(sale_val).replace(",", ".")) > 0
     except ValueError:
-        is_sale = sc > 0
+        sale_positive = False
+    is_sale = sc > 0 or has_conv_flag or sale_positive
     return (cid, cpc, is_sale, sale_val)
 
 
@@ -540,7 +573,16 @@ def run_flat_report_postbacks(
         return b.setdefault("flat", default_flat_run_state())
 
     if dry_run:
-        logger.info("%s dry-run: postback URLs at DEBUG; resume state is not written to disk.", source_key)
+        logger.info(
+            "%s dry-run: each postback URL is logged below at INFO; resume state is not written to disk.",
+            source_key,
+        )
+        logger.info(
+            "%s dry-run: click status=%r sale status=%r",
+            source_key,
+            DAILY_CONVERSION_POSTBACK_CLICK_STATUS,
+            DAILY_CONVERSION_POSTBACK_SALE_STATUS,
+        )
 
     f0 = read_flat()
     if not no_resume and f0.get("status") == "done":
@@ -609,7 +651,7 @@ def run_flat_report_postbacks(
                 payout=str(sale_val),
                 status=DAILY_CONVERSION_POSTBACK_SALE_STATUS,
             )
-            send_postback_get(session, url_sale, dry_run=dry_run)
+            send_postback_get(session, url_sale, dry_run=dry_run, dry_run_log=dry_run)
             pb = int(read_flat().get("postbacks_sent") or 0) + 1
             write_flat(
                 next_index=idx + 1,
@@ -630,6 +672,7 @@ def run_flat_report_postbacks(
                 session,
                 url_click,
                 dry_run=dry_run,
+                dry_run_log=dry_run,
                 label=source_key,
                 subid_prefix=click_id,
             )
@@ -643,7 +686,7 @@ def run_flat_report_postbacks(
                 payout=str(sale_val),
                 status=DAILY_CONVERSION_POSTBACK_SALE_STATUS,
             )
-            send_postback_get(session, url_sale, dry_run=dry_run)
+            send_postback_get(session, url_sale, dry_run=dry_run, dry_run_log=dry_run)
             pb2 = int(read_flat().get("postbacks_sent") or 0) + 1
             write_flat(
                 next_index=idx + 1,
@@ -662,6 +705,7 @@ def run_flat_report_postbacks(
                 session,
                 url_click,
                 dry_run=dry_run,
+                dry_run_log=dry_run,
                 label=source_key,
                 subid_prefix=click_id,
             )

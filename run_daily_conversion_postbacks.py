@@ -49,7 +49,7 @@ def main() -> None:
     ap.add_argument(
         "--dry-run",
         action="store_true",
-        help="Do not call postback endpoints or write resume state. Kelkoo/flat URL preview: set logging to DEBUG.",
+        help="Do not call postback endpoints or write resume state. Logs example URL shapes for Kelkoo; Adexa/Yadore log each postback URL at INFO.",
     )
     ap.add_argument(
         "--no-resume",
