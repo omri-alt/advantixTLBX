@@ -35,15 +35,18 @@
     </select>
     {% if workflow_key == 'blend' %}
     <div style="height: 12px;"></div>
-    <label for="blend_feed">Kelkoo feed (potentialBlends)</label><br>
+    <label for="blend_feed">Potential sheet source</label><br>
     <select id="blend_feed" name="blend_feed" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
-      <option value="both" selected>Both (kelkoo1 + kelkoo2)</option>
-      <option value="kelkoo1">Feed 1 (kelkoo1)</option>
-      <option value="kelkoo2">Feed 2 (kelkoo2)</option>
+      <option value="both" selected>Both Kelkoo (kelkoo1 + kelkoo2)</option>
+      <option value="all">All (kelkoo1 + kelkoo2 + adexa + yadore)</option>
+      <option value="kelkoo1">Kelkoo feed 1</option>
+      <option value="kelkoo2">Kelkoo feed 2</option>
+      <option value="adexa">Adexa (potentialAdexa)</option>
+      <option value="yadore">Yadore (potentialYadore)</option>
     </select>
     <div class="muted" style="margin-top:6px;">
-      Used for the <strong>potentialKelkoo*</strong> step only. The Blend sheet → Keitaro step reads every row
-      (column <code>feed</code> = <code>kelkoo1</code> or <code>kelkoo2</code> per merchant).
+      Refreshes <strong>potential*</strong> tabs in the Blend spreadsheet. Populate step uses column <code>feed</code>
+      (<code>kelkoo1</code>, <code>kelkoo2</code>, <code>adexa</code>, <code>yadore</code>) per row.
     </div>
     {% endif %}
     {% if workflow_key == 'blend-keitaro-sync' %}

@@ -2,7 +2,8 @@
 Adexa API helpers (feed4) — Link Monetizer + merchant list.
 
 **Link Monetizer** — GET https://api.adexad.com/LinksMerchant.php
-  ?siteID=…&country=…&merchantUrl=…&format=json  (optional merchant_id)
+  ?siteID=…&country=…&merchantUrl=…&format=json  (optional merchant_id).
+  ``country`` is sent lowercase (``fr``, ``uk``, …), same as GetMerchant and Kelkoo-style geos.
 
 **GetMerchant** — list merchants for a country (uses apiKey + siteID).
   Your working URL shape::
@@ -19,6 +20,7 @@ from urllib.parse import quote
 import requests
 
 from config import ADEXA_API_KEY, ADEXA_SITE_ID
+from integrations.monetization_geo import two_letter_lower
 
 ADEXA_LINKS_MERCHANT_URL = "https://api.adexad.com/LinksMerchant.php"
 ADEXA_GET_MERCHANT_BASE = "https://api.adexad.com/v1/GetMerchant"
@@ -129,9 +131,12 @@ def links_merchant_check(
     if not sid:
         raise AdexaClientError("ADEXA_SITE_ID is not set")
 
-    country = (country_iso2 or "").strip().upper()
-    if len(country) != 2:
+    g = two_letter_lower(country_iso2 or "")
+    if len(g) != 2:
         raise AdexaClientError(f"Invalid Adexa country: {country_iso2!r}")
+    if g == "gb":
+        g = "uk"
+    country = g
 
     url = (merchant_url or "").strip()
     if not url:
@@ -275,6 +280,72 @@ def get_merchants(
 
 
 ADEXA_STATS_RAW_BASE = "https://api.adexad.com/v1/StatsRaw"
+ADEXA_SHOPPING_SEARCH_STATS_BASE = "https://api.adexad.com/v1/GetShoppingSearchStats"
+
+
+def fetch_shopping_search_stats(
+    start: str,
+    end: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    nb_page: int = 100,
+    timeout: int = 120,
+) -> List[Dict[str, Any]]:
+    """
+    GET ``GetShoppingSearchStats`` for ``start`` / ``end`` (YYYY-MM-DD), all pages.
+
+    Paged like ``StatsRaw``: ``stats`` list + ``page`` (last page index, 0-based).
+    Row shapes vary; callers should use tolerant field accessors.
+    """
+    sid = (site_id or ADEXA_SITE_ID or "").strip()
+    key = (api_key or ADEXA_API_KEY or "").strip()
+    if not sid:
+        raise AdexaClientError("ADEXA_SITE_ID / AdexSiteID is not set")
+    if not key:
+        raise AdexaClientError("ADEXA_API_KEY / KeyAdex is not set")
+
+    stats: List[Dict[str, Any]] = []
+
+    def fetch_page(page_idx: int) -> tuple[int, List[Dict[str, Any]]]:
+        endpoint = (
+            f"{ADEXA_SHOPPING_SEARCH_STATS_BASE}/siteID={sid}&apiKey={key}&start={start}&end={end}"
+            f"&nb_page={nb_page}&page={page_idx}&format=json"
+        )
+        r = requests.get(endpoint, timeout=timeout, headers={"Accept": "application/json"})
+        if r.status_code != 200:
+            raise AdexaClientError(
+                f"GetShoppingSearchStats HTTP {r.status_code}",
+                status_code=r.status_code,
+                response_body=(r.text[:800] if r.text else None),
+            )
+        try:
+            payload = r.json()
+        except Exception as e:
+            raise AdexaClientError(f"GetShoppingSearchStats JSON error: {e}", response_body=r.text[:500]) from e
+        if not isinstance(payload, dict):
+            raise AdexaClientError(
+                "GetShoppingSearchStats: expected JSON object", response_body=str(payload)[:300]
+            )
+        rows = payload.get("stats")
+        if not isinstance(rows, list):
+            for alt in ("data", "results", "items", "merchants"):
+                inner = payload.get(alt)
+                if isinstance(inner, list):
+                    rows = inner
+                    break
+            else:
+                rows = []
+        last_page = int(payload.get("page", 0) or 0)
+        return last_page, [x for x in rows if isinstance(x, dict)]
+
+    last_page, first_rows = fetch_page(0)
+    stats.extend(first_rows)
+    for page_idx in range(1, last_page + 1):
+        _, page_rows = fetch_page(page_idx)
+        stats.extend(page_rows)
+
+    return stats
 
 
 def fetch_stats_raw(

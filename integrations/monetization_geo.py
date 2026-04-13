@@ -3,7 +3,7 @@ Shared geo normalization for monetization checks (Kelkoo, Yadore, Adexa).
 
 Kelkoo uses lowercase 2-letter country codes (often ``uk`` for United Kingdom).
 Yadore ``market`` expects lowercase; map ``gb`` -> ``uk`` when users paste GB.
-Adexa docs use ISO2 like ``UK``, ``FR`` — map ``gb`` -> ``UK``.
+Adexa ``country`` in our clients (GetMerchant, LinksMerchant, Blend URLs) uses the same lowercase style; map ``gb`` -> ``uk``.
 """
 from __future__ import annotations
 
@@ -19,14 +19,6 @@ def geo_for_yadore(geo: str) -> str:
     if g == "gb":
         return "uk"
     return g
-
-
-def geo_for_adexa(geo: str) -> str:
-    """Uppercase ISO2 for Adexa ``country`` (e.g. UK, FR)."""
-    g = two_letter_lower(geo)
-    if g == "gb":
-        return "UK"
-    return g.upper() if g else ""
 
 
 def yadore_feed_class(non_coupon_found: bool, coupon_found: bool) -> str:

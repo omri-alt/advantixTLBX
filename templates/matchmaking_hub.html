@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Matchmaking — Control Center</title>
+  <style>
+    :root { --bg:#0b1020; --panel:#121a2b; --line:#27324a; --text:#eaf1fb; --muted:#9aa4b2; --accent:#4f8cff; }
+    body { margin:0; font-family: Inter, Segoe UI, Arial, sans-serif; background: linear-gradient(180deg, #0b1020, #0d1426 40%, #0b1020); color: var(--text); min-height: 100vh; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 28px 24px 48px; }
+    a { color: #86efac; }
+    .back { margin-bottom: 18px; font-size: 14px; }
+    h1 { margin: 0 0 8px; font-size: 1.65rem; }
+    .muted { color: var(--muted); font-size: 14px; line-height: 1.5; margin-bottom: 22px; max-width: 720px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .card {
+      display: block; text-decoration: none; color: inherit;
+      border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 20px;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .card:hover { border-color: var(--accent); box-shadow: 0 8px 28px rgba(0,0,0,.28); }
+    .card h2 { margin: 0 0 8px; font-size: 1.1rem; color: #cbd5e1; }
+    .card p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+    .card .go { margin-top: 14px; font-size: 13px; font-weight: 600; color: #93c5fd; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="back"><a href="/">← Control Center home</a></div>
+    <h1>Matchmaking</h1>
+    <p class="muted">Kelkoo, Yadore, and Adexa monetization checks — one place for ad-hoc domains and sheet-driven bulk runs.</p>
+    <div class="grid">
+      <a class="card" href="{{ url_for('ui_matchmaking_manual') }}">
+        <h2>Manual check</h2>
+        <p>Enter a domain or URL and optional geo. Compare feed2 / feed1, Yadore (standard + couponing), and Adexa Link Monetizer per country.</p>
+        <div class="go">Open manual →</div>
+      </a>
+      <a class="card" href="{{ url_for('ui_matchmaking_sheets') }}">
+        <h2>Sheet bulk check</h2>
+        <p>Run the monetization-check workflow against your configured Google Sheet (same engine as the CLI).</p>
+        <div class="go">Open sheet bulk →</div>
+      </a>
+    </div>
+  </div>
+</body>
+</html>

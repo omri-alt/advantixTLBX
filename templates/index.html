@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KLblend MVP</title>
+  <title>KLblend Control Center</title>
   <style>
     :root {
       --bg: #0b1020;
@@ -21,7 +21,6 @@
     .hero { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 18px; }
     .title { font-size: 30px; font-weight: 700; margin: 0; }
     .muted { color: var(--muted); }
-    .nav { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 22px; }
     .btn { display: inline-block; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); color: var(--text); text-decoration: none; background: #17223a; }
     .btn:hover { border-color: #3a4e78; background: #1d2b47; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; }
@@ -33,10 +32,22 @@
     .run-finished { cursor: help; border-bottom: 1px dotted rgba(154, 164, 178, 0.55); }
     .status-success { color: var(--ok); font-weight: 700; }
     .status-failed { color: var(--bad); font-weight: 700; }
-    .coming { margin-top: 18px; border: 1px dashed #38507d; border-radius: 14px; padding: 14px; background: #101a2f; }
-    ul { margin: 8px 0 0 18px; }
     code { color: #b9d0ff; }
-    .overview { margin: 8px 0 28px; }
+    .section-title { margin: 0 0 8px; font-size: 1.2rem; font-weight: 700; }
+    .section-lead { margin: 0 0 14px; font-size: 14px; color: var(--muted); line-height: 1.45; max-width: 820px; }
+    .tools-section { margin: 0 0 32px; }
+    .ql-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+    .ql-card {
+      display: block; text-decoration: none; color: inherit;
+      border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 16px 16px 14px;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .ql-card:hover { border-color: var(--accent); box-shadow: 0 8px 28px rgba(0,0,0,.28); }
+    .ql-card h3 { margin: 0 0 6px; font-size: 1rem; color: #e2e8f0; }
+    .ql-card p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+    .ql-card .go { margin-top: 12px; font-size: 12px; font-weight: 600; color: #93c5fd; }
+    .automations-section { margin-top: 8px; }
+    .overview { margin: 0 0 32px; }
     .overview h2 { margin: 0 0 10px; font-size: 1.15rem; font-weight: 700; }
     .overview .ov-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 12px; }
     .overview .ov-actions .btn { cursor: pointer; border: 0; font: inherit; }
@@ -68,23 +79,13 @@
   <div class="wrap">
     <div class="hero">
       <div>
-        <h1 class="title">KLblend MVP Control Center</h1>
-        <div class="muted">Minimal working features for launch, with clean sections and run visibility.</div>
+        <h1 class="title">KLblend Control Center</h1>
+        <div class="muted">Performance, publisher consoles, and daily automations across Kelkoo, Blend, Ecomnia, SourceKnowledge, and related feeds.</div>
       </div>
     </div>
 
-    <div class="nav">
-      <a class="btn" href="/sk">SourceKnowledge bulk</a>
-      <a class="btn" href="/ec">Ecomnia bulk</a>
-      <a class="btn" href="/ec/console">Ecomnia console</a>
-      <a class="btn" href="/kelkoo/late-sales">Kelkoo late sales</a>
-      <a class="btn" href="/kelkoo/daily-postbacks">Kelkoo daily postbacks</a>
-      <a class="btn" href="/matchmaking/manual">Match Making: Manual Check</a>
-      <a class="btn" href="/matchmaking/sheets">Match Making: Sheet Bulk Check</a>
-    </div>
-
     <section class="overview" id="overview-widget" aria-live="polite">
-      <h2>Performance overview</h2>
+      <h2 class="section-title">Performance overview</h2>
       <p class="muted" style="margin:0 0 10px;font-size:13px;">Tiles load from the on-disk snapshot (fast). Use <strong>Refresh from APIs</strong> only when you want a full live rebuild (slow).</p>
       <div class="ov-actions">
         <button type="button" class="btn btn-sm" id="overview-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh from APIs</button>
@@ -106,6 +107,43 @@
           <div id="tile-total"></div>
         </div>
       </div>
+    </section>
+
+    <section class="tools-section" aria-label="Tools">
+      <h2 class="section-title">Tools</h2>
+      <p class="section-lead">Quick links to consoles and operational pages. Consoles group bulk and focused utilities in one place (Ecomnia and SourceKnowledge follow that pattern).</p>
+      <div class="ql-grid">
+        <a class="ql-card" href="{{ url_for('ui_ec_console_hub') }}">
+          <h3>Ecomnia console</h3>
+          <p>Geo lists, whitelist audit, sheet-driven bulk opens, and related Ecomnia tooling.</p>
+          <div class="go">Open console →</div>
+        </a>
+        <a class="ql-card" href="{{ url_for('ui_sk') }}">
+          <h3>SourceKnowledge console</h3>
+          <p>Sheet bulk opens and SK workflows; more features will land here over time.</p>
+          <div class="go">Open console →</div>
+        </a>
+        <a class="ql-card" href="{{ url_for('ui_kelkoo_late_sales') }}">
+          <h3>Late sales</h3>
+          <p>Today’s Kelkoo KLtools late-sales flow; additional feeds can be wired in later.</p>
+          <div class="go">Open late sales →</div>
+        </a>
+        <a class="ql-card" href="{{ url_for('ui_kelkoo_daily_postbacks_hub') }}">
+          <h3>Postbacks</h3>
+          <p>Daily conversion postbacks: Kelkoo feeds, Adexa, and Yadore.</p>
+          <div class="go">Open postbacks →</div>
+        </a>
+        <a class="ql-card" href="{{ url_for('ui_matchmaking_hub') }}">
+          <h3>Matchmaking</h3>
+          <p>Manual domain checks and sheet bulk monetization — same console, two entry points.</p>
+          <div class="go">Open matchmaking →</div>
+        </a>
+      </div>
+    </section>
+
+    <section class="automations-section" aria-label="Daily automations">
+      <h2 class="section-title">Daily automations</h2>
+      <p class="section-lead">Scheduled-style workflows with last-run status and links to run or inspect each flow.</p>
     </section>
 
     <div class="grid">
@@ -130,22 +168,6 @@
         {% endfor %}
       </div>
       {% endfor %}
-    </div>
-
-    <div class="coming">
-      <h3 style="margin-top:0;">Coming Soon</h3>
-      <div><strong>Daily Automations</strong></div>
-      <ul>
-        {% for item in coming_soon.daily_automations %}
-        <li>{{ item }}</li>
-        {% endfor %}
-      </ul>
-      <div style="margin-top:8px;"><strong>Publisher Tools</strong></div>
-      <ul>
-        {% for item in coming_soon.publisher_tools %}
-        <li>{{ item }}</li>
-        {% endfor %}
-      </ul>
     </div>
   </div>
   <script>

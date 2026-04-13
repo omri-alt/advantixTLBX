@@ -118,15 +118,15 @@ BLEND_SHEETS_SPREADSHEET_ID = (
 
 def _parse_blend_potential_feeds() -> tuple[str, ...]:
     """
-    Comma-separated Kelkoo feeds used for Blend ``potentialKelkoo*`` refresh and
-    ``populate_blend_from_potential`` in the daily workflow. Each run still requires
-    the matching ``FEED*_API_KEY`` or that feed is skipped with a log line.
+    Comma-separated feeds used for Blend potential sheets (``potentialKelkoo*``,
+    ``potentialAdexa``, ``potentialYadore``) and ``populate_blend_from_potential``.
+    Default includes all four feeds; missing API keys for a feed are skipped in the daily workflow.
     """
-    raw = (os.getenv("BLEND_POTENTIAL_FEEDS") or "kelkoo1,kelkoo2").strip().lower()
+    raw = (os.getenv("BLEND_POTENTIAL_FEEDS") or "kelkoo1,kelkoo2,adexa,yadore").strip().lower()
     parts = [p.strip() for p in raw.split(",") if p.strip()]
-    allowed = {"kelkoo1", "kelkoo2"}
+    allowed = {"kelkoo1", "kelkoo2", "adexa", "yadore"}
     out = tuple(p for p in parts if p in allowed)
-    return out if out else ("kelkoo1", "kelkoo2")
+    return out if out else ("kelkoo1", "kelkoo2", "adexa", "yadore")
 
 
 BLEND_POTENTIAL_FEEDS: tuple[str, ...] = _parse_blend_potential_feeds()

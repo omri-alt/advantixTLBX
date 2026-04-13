@@ -357,3 +357,101 @@ def fetch_conversion_detail(
         )
     return clicks
 
+
+def fetch_conversion_detail_merchant(
+    date_from: str,
+    date_to: str,
+    *,
+    market: Optional[str] = None,
+    api_key: Optional[str] = None,
+    project_id: Optional[str] = None,
+    base_url: str = YADORE_BASE_URL,
+    timeout: int = 120,
+) -> Dict[str, Any]:
+    """
+    GET ``/v2/conversion/detail/merchant`` — conversion report grouped by merchant.
+
+    Query: ``from``, ``to`` (yyyy-mm-dd), ``format=json``, optional ``market`` (ISO2),
+    optional ``projectId``.
+    """
+    token = (api_key or YADORE_API_KEY or "").strip()
+    if not token:
+        raise YadoreClientError("YADORE_API_KEY is not set")
+
+    endpoint = f"{base_url.rstrip('/')}/v2/conversion/detail/merchant"
+    headers = {"Accept": "application/json", "API-Key": token}
+    params: Dict[str, Any] = {
+        "from": (date_from or "").strip()[:10],
+        "to": (date_to or "").strip()[:10],
+        "format": "json",
+    }
+    if market and str(market).strip():
+        params["market"] = geo_for_yadore(str(market))
+    pid = (project_id or YADORE_PROJECT_ID or "").strip()
+    if pid:
+        params["projectId"] = pid
+
+    try:
+        r = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
+    except requests.RequestException as e:
+        raise YadoreClientError(str(e)) from e
+
+    if r.status_code != 200:
+        raise YadoreClientError(
+            f"conversion/detail/merchant HTTP {r.status_code}",
+            status_code=r.status_code,
+            response_body=(r.text[:800] if r.text else None),
+        )
+
+    try:
+        data = r.json() if r.text else {}
+    except Exception as e:
+        raise YadoreClientError(f"conversion/detail/merchant JSON error: {e}", response_body=r.text[:500]) from e
+
+    return data if isinstance(data, dict) else {}
+
+
+def parse_conversion_detail_merchant_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Normalize ``salesByMerchant`` (or nested ``result``) to a flat list of dicts with keys:
+    ``market``, ``merchant_id``, ``merchant_name``, ``clicks``, ``sales``, ``merchant_url`` (optional).
+    """
+    root = payload
+    if isinstance(payload.get("result"), dict):
+        inner = payload["result"]
+        if isinstance(inner.get("salesByMerchant"), list):
+            root = inner
+
+    arr = root.get("salesByMerchant")
+    if not isinstance(arr, list):
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for item in arr:
+        if not isinstance(item, dict):
+            continue
+        mkt = str(item.get("market") or "").strip().lower()[:2]
+        merch = item.get("merchant") if isinstance(item.get("merchant"), dict) else {}
+        mid = str((merch or {}).get("id") or item.get("merchantId") or "").strip()
+        mname = str((merch or {}).get("name") or item.get("merchantName") or "").strip()
+        try:
+            clicks = int(item.get("clicks") or 0)
+        except (TypeError, ValueError):
+            clicks = 0
+        try:
+            sales = int(item.get("sales") or item.get("saleCount") or 0)
+        except (TypeError, ValueError):
+            sales = 0
+        murl = str((merch or {}).get("url") or (merch or {}).get("website") or item.get("url") or "").strip()
+        out.append(
+            {
+                "market": mkt,
+                "merchant_id": mid,
+                "merchant_name": mname,
+                "clicks": clicks,
+                "sales": sales,
+                "merchant_url": murl,
+            }
+        )
+    return out
+

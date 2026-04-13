@@ -48,11 +48,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import (
+    ADEXA_API_KEY,
+    ADEXA_SITE_ID,
     BLEND_POTENTIAL_FEEDS,
     FEED1_API_KEY,
     FEED2_API_KEY,
     FEED2_MERCHANTS_GEOS,
     KELKOO_SHEETS_SPREADSHEET_ID,
+    YADORE_API_KEY,
 )
 
 from workflows.kelkoo_daily import (
@@ -78,16 +81,25 @@ BLEND_DAILY_MAX_NEW_ROWS = 50
 
 
 def _blend_potential_feeds_for_run() -> tuple[str, ...]:
-    """Feeds from config that have a Kelkoo API key (otherwise skip with a note)."""
+    """Feeds from config that have the required credentials (otherwise skip with a note)."""
     out: list[str] = []
     for f in BLEND_POTENTIAL_FEEDS:
         if f == "kelkoo1" and (FEED1_API_KEY or "").strip():
             out.append(f)
         elif f == "kelkoo2" and (FEED2_API_KEY or "").strip():
             out.append(f)
-        elif f in ("kelkoo1", "kelkoo2"):
-            need = "FEED1_API_KEY" if f == "kelkoo1" else "FEED2_API_KEY"
-            print(f"   Note: Blend potential {f!r} skipped (missing {need}).")
+        elif f == "adexa" and (ADEXA_SITE_ID or "").strip() and (ADEXA_API_KEY or "").strip():
+            out.append(f)
+        elif f == "yadore" and (YADORE_API_KEY or "").strip():
+            out.append(f)
+        elif f == "kelkoo1":
+            print("   Note: Blend potential 'kelkoo1' skipped (missing FEED1_API_KEY).")
+        elif f == "kelkoo2":
+            print("   Note: Blend potential 'kelkoo2' skipped (missing FEED2_API_KEY).")
+        elif f == "adexa":
+            print("   Note: Blend potential 'adexa' skipped (missing ADEXA_SITE_ID / ADEXA_API_KEY).")
+        elif f == "yadore":
+            print("   Note: Blend potential 'yadore' skipped (missing YADORE_API_KEY).")
     return tuple(out)
 
 

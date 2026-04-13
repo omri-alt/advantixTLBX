@@ -15,8 +15,8 @@ Expected columns (header row):
 Behavior:
   1) Ensure a country flow exists for each geo present in the sheet (name = geo).
   2) Create/update offers per (geo, brandName) using name `blend_{geo}_{feed}_{slug(brandName)}`.
-     For feed kelkoo1/kelkoo2, offerUrl is passed as merchantUrl inside the same Kelkoo/sidehustle
-     wrapper as Nipuhim (not sent as a bare brand URL).
+     Kelkoo: offerUrl wrapped like Nipuhim. Adexa: shopli ``raino`` → LinksMerchant (country + encoded URL).
+     Yadore: shopli ``rainotest`` → ``/v2/d`` (market + encoded URL, projectId from env).
   3) Attach offers to the geo flow with weighted shares proportional to clickCap.
 
 Usage:
@@ -29,12 +29,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dotenv import load_dotenv
 load_dotenv()
 
 from config import (
+    ADEXA_SITE_ID,
     BLEND_SHEETS_SPREADSHEET_ID,
     FEED1_API_KEY,
     FEED2_API_KEY,
@@ -42,6 +44,7 @@ from config import (
     FEED2_KELKOO_ACCOUNT_ID,
     KELKOO_ACCOUNT_ID,
     KELKOO_ACCOUNT_ID_2,
+    YADORE_PROJECT_ID,
 )
 from assistance import (
     build_offer_action_payload,
@@ -54,11 +57,17 @@ from assistance import (
 )
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
+from integrations.monetization_geo import geo_for_yadore
 from workflows.kelkoo_daily import fetch_reports
 
 SPREADSHEET_ID = BLEND_SHEETS_SPREADSHEET_ID
 BLEND_SHEET_NAME = "Blend"
 BLEND_CAMPAIGN_ALIAS = "9Xq9dSMh"
+
+# Keitaro offer shells: inner URLs are percent-encoded as the ``rain`` query value.
+BLEND_ADEXA_RAIN_SHELL = "https://shopli.city/raino?rain="
+BLEND_YADORE_RAIN_SHELL = "https://shopli.city/rainotest?rain="
+BLEND_YADORE_DEEPLINK_PROJECT_FALLBACK = "WAF4IibbRqGG"
 
 
 def get_credentials_path() -> str:
@@ -202,10 +211,61 @@ def _kelkoo_api_key_for_feed_tag(feed_tag: str) -> Optional[str]:
     return None
 
 
+def _blend_merchant_url_https(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        return "https://example.invalid/"
+    if not re.match(r"^https?://", u, flags=re.IGNORECASE):
+        u = "https://" + u.lstrip("/")
+    return u
+
+
+def _blend_adexa_action_payload(geo: str, merchant_url: str) -> str:
+    """
+    shopli ``raino`` → Adexa ``LinksMerchant.php`` with country (sheet geo → Adexa ISO2)
+    and URL-encoded merchant URL; ``clickid={subid}`` for Keitaro.
+    """
+    site_id = (ADEXA_SITE_ID or "").strip()
+    if not site_id:
+        raise ValueError("Blend feed=adexa requires ADEXA_SITE_ID in .env for Keitaro offer URLs")
+    g = _normalize_geo(geo)
+    if len(g) != 2:
+        raise ValueError(f"Invalid geo for Adexa offer: {geo!r}")
+    # Lowercase country like Kelkoo Blend (e.g. uk, fr) — same as GetMerchant / bulk tooling.
+    country = g
+    m_enc = quote(_blend_merchant_url_https(merchant_url), safe="")
+    inner = (
+        "https://api.adexad.com/LinksMerchant.php"
+        f"?siteID={quote(str(site_id), safe='')}&country={quote(str(country), safe='')}"
+        f"&merchantUrl={m_enc}&clickid={{subid}}"
+    )
+    return BLEND_ADEXA_RAIN_SHELL + quote(inner, safe="")
+
+
+def _blend_yadore_action_payload(geo: str, merchant_url: str) -> str:
+    """
+    shopli ``rainotest`` → Yadore ``/v2/d`` with URL-encoded merchant URL, Yadore market,
+    ``placementId={{subid}}``, project id; values for url/market are baked from the sheet row.
+    """
+    g = _normalize_geo(geo)
+    if len(g) != 2:
+        raise ValueError(f"Invalid geo for Yadore offer: {geo!r}")
+    # Lowercase market; maps gb → uk like other Yadore calls.
+    market = geo_for_yadore(g)
+    m_enc = quote(_blend_merchant_url_https(merchant_url), safe="")
+    pid = (YADORE_PROJECT_ID or "").strip() or BLEND_YADORE_DEEPLINK_PROJECT_FALLBACK
+    inner = (
+        "https://api.yadore.com/v2/d"
+        f"?url={m_enc}&market={quote(str(market), safe='')}"
+        f"&placementId={{subid}}&projectId={quote(str(pid), safe='')}&isCouponing=false"
+    )
+    return BLEND_YADORE_RAIN_SHELL + quote(inner, safe="")
+
+
 def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> str:
     """
     Kelkoo Blend rows: wrap offerUrl like Nipuhim (merchantUrl in permanentLinkGo / klk-merchant).
-    Other feed values: keep direct URL (e.g. future non-Kelkoo sources).
+    Adexa/Yadore: shopli rain shells with sheet geo + offerUrl as merchant target; ``{subid}`` for click id.
     """
     ft = (feed_tag or "").strip().lower()
     if ft == "kelkoo1":
@@ -214,6 +274,10 @@ def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> st
     if ft == "kelkoo2":
         acc = (FEED2_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID_2
         return build_offer_action_payload(geo, offer_url, account_id=acc, feed=2)
+    if ft == "adexa":
+        return _blend_adexa_action_payload(geo, offer_url)
+    if ft == "yadore":
+        return _blend_yadore_action_payload(geo, offer_url)
     return offer_url
 
 

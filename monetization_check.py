@@ -30,7 +30,7 @@ from config import FEED1_API_KEY, FEED2_API_KEY
 from integrations.kelkoo_search import kelkoo_merchant_link_check as kelkoo_check
 from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
 from integrations.adexa import links_merchant_check as adexa_links_check, AdexaClientError
-from integrations.monetization_geo import geo_for_adexa, yadore_feed_class
+from integrations.monetization_geo import yadore_feed_class
 
 SPREADSHEET_ID = "1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0"
 INPUT_SHEET = "sourceToCheck"
@@ -122,7 +122,7 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
 
     def _ax() -> Dict[str, Any]:
         try:
-            return adexa_links_check(url, geo_for_adexa(geo))
+            return adexa_links_check(url, geo)
         except AdexaClientError as e:
             return {"found": False, "note": str(e)[:200]}
 

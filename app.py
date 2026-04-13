@@ -41,7 +41,7 @@ from integrations.keitaro import KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
 from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
 from integrations.adexa import links_merchant_check as adexa_links_check, AdexaClientError
-from integrations.monetization_geo import geo_for_adexa, yadore_feed_class
+from integrations.monetization_geo import yadore_feed_class
 from assistance import (
     get_campaigns_data,
     clone_campaign_copy,
@@ -488,9 +488,9 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "title": "Blend Workflow",
         "script": "run_blend_workflow.py",
         "description": (
-            "Full Blend: sync Keitaro from the Blend sheet, then refresh potentialKelkoo* from reports "
-            "(use feed dropdown). Column ``feed`` on the Blend sheet must be ``kelkoo1`` or ``kelkoo2``; "
-            "sync uses ``FEED1_API_KEY`` / ``FEED2_API_KEY`` for monetization checks per row."
+            "Full Blend: sync Keitaro from the Blend sheet, then refresh potential sheets (Kelkoo, Adexa, Yadore; "
+            "use feed dropdown). Column ``feed`` on the Blend sheet should match the source (``kelkoo1``/``kelkoo2``/"
+            "``adexa``/``yadore``). Kelkoo rows use feed API keys for prune checks; other feeds use direct offer URLs."
         ),
         "group": "daily-automations",
         "args_hint": "Optional args, e.g. --geo fr --skip-potential (feed: use dropdown)",
@@ -896,14 +896,9 @@ def ui_home():
         if gk not in ordered_group_keys:
             out_groups.append(v)
 
-    coming_soon = {
-        "daily_automations": ["Daily data pull from Kelkoo feed"],
-        "publisher_tools": ["Publisher tools dashboard (SK/EC under refinement)"],
-    }
     return render_template(
         "index.html",
         groups=out_groups,
-        coming_soon=coming_soon,
         overview_snapshot_tz=OVERVIEW_SNAPSHOT_TZ,
         overview_snapshot_hour=OVERVIEW_SNAPSHOT_HOUR,
     )
@@ -951,6 +946,12 @@ def _normalize_geo_list_for_check(geo_raw: str) -> list[str]:
     return [geo_raw[:2]]
 
 
+@app.route("/matchmaking", methods=["GET"])
+def ui_matchmaking_hub():
+    """Entry point: manual domain check + sheet bulk monetization from one console."""
+    return render_template("matchmaking_hub.html")
+
+
 @app.route("/matchmaking/manual", methods=["GET", "POST"])
 def ui_matchmaking_manual():
     result_rows: list[dict[str, Any]] = []
@@ -982,7 +983,7 @@ def ui_matchmaking_manual():
                 except YadoreClientError:
                     y_c_found = False
                 try:
-                    ax = adexa_links_check(domain, geo_for_adexa(g))
+                    ax = adexa_links_check(domain, g)
                     adexa_found = bool(ax.get("found"))
                     adexa_note = str(ax.get("note") or "")
                 except AdexaClientError as e:
@@ -1711,10 +1712,10 @@ def ui_workflow(workflow_key: str):
         extra_args = (request.form.get("extra_args") or "").strip()
         if workflow_key == "blend":
             bf = (request.form.get("blend_feed") or "both").strip().lower()
-            if bf in ("kelkoo1", "kelkoo2", "both"):
+            if bf in ("kelkoo1", "kelkoo2", "adexa", "yadore", "both", "all"):
                 # Avoid duplicate --feed if user pasted one in the text box; dropdown wins.
                 extra_args = re.sub(
-                    r"--feed\s+(kelkoo1|kelkoo2|both)\b",
+                    r"--feed\s+(kelkoo1|kelkoo2|adexa|yadore|both|all)\b",
                     "",
                     extra_args,
                     flags=re.IGNORECASE,

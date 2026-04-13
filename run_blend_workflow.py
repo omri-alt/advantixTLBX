@@ -2,13 +2,13 @@
 """
 Run the Blend workflow:
   - Sync Keitaro campaign 'Blend' (alias 9Xq9dSMh) from the 'Blend' sheet.
-  - Generate `potentialKelkoo1` / `potentialKelkoo2` from Kelkoo reports (requires --feed per run).
+  - Generate potential sheets: Kelkoo (potentialKelkoo*), Adexa (potentialAdexa), Yadore (potentialYadore).
 
 Usage:
   python run_blend_workflow.py
   python run_blend_workflow.py --feed kelkoo1
-  python run_blend_workflow.py --feed kelkoo2
   python run_blend_workflow.py --feed both
+  python run_blend_workflow.py --feed all
   python run_blend_workflow.py --geo fr
   python run_blend_workflow.py --skip-potential
   python run_blend_workflow.py --only-potential
@@ -23,12 +23,12 @@ from pathlib import Path
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Blend: Keitaro sync + potentialKelkoo sheets")
+    p = argparse.ArgumentParser(description="Blend: Keitaro sync + potential merchant sheets")
     p.add_argument(
         "--feed",
         default="both",
-        choices=["kelkoo1", "kelkoo2", "both"],
-        help="Kelkoo feed for potentialBlends generation (default: both = kelkoo1 then kelkoo2).",
+        choices=["kelkoo1", "kelkoo2", "adexa", "yadore", "both", "all"],
+        help="Potential sheet source: kelkoo1/kelkoo2/adexa/yadore, both=Kelkoo only, all=kelkoo1+kelkoo2+adexa+yadore.",
     )
     p.add_argument("--geo", default=None, help="Passed to blend_sync_from_sheet.")
     p.add_argument("--skip-potential", action="store_true", help="Skip blend_potential_merchants.")
@@ -42,7 +42,12 @@ def main() -> None:
     )
     args = p.parse_args()
 
-    feeds = ["kelkoo1", "kelkoo2"] if args.feed == "both" else [args.feed]
+    if args.feed == "both":
+        feeds = ["kelkoo1", "kelkoo2"]
+    elif args.feed == "all":
+        feeds = ["kelkoo1", "kelkoo2", "adexa", "yadore"]
+    else:
+        feeds = [args.feed]
 
     root = Path(__file__).resolve().parent
     sync_script = root / "blend_sync_from_sheet.py"
@@ -69,7 +74,7 @@ def main() -> None:
             cmd += ["--end", args.end]
         if args.only_monetized:
             cmd += ["--only-monetized"]
-        print(f"2) Generating potentialBlends from Kelkoo reports ({feed}) ...")
+        print(f"2) Generating potential sheet ({feed}) ...")
         if subprocess.run(cmd).returncode != 0:
             sys.exit(1)
 

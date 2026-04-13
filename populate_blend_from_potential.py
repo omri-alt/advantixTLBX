@@ -3,7 +3,7 @@
 Populate the `Blend` sheet from a feed-specific potential sheet in the Blend spreadsheet.
 
 Reads:
-  - potentialKelkoo1 or potentialKelkoo2
+  - potentialKelkoo1, potentialKelkoo2, potentialAdexa, or potentialYadore
 
 Writes (upserts) into:
   - Blend tab
@@ -13,12 +13,12 @@ Rules:
   - inserted rows get:
       clickCap = 50
       auto = v
-      feed = kelkoo1/kelkoo2 (based on --feed)
+      feed = kelkoo1 / kelkoo2 / adexa / yadore (based on --feed)
   - avoids duplicates by (geo, merchantId, feed)
 
 Usage:
   python populate_blend_from_potential.py --feed kelkoo1
-  python populate_blend_from_potential.py --feed kelkoo2
+  python populate_blend_from_potential.py --feed adexa
   python populate_blend_from_potential.py --feed kelkoo1 --max-add 50
 """
 from __future__ import annotations
@@ -92,11 +92,16 @@ def ensure_blend_headers(service) -> List[str]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Upsert monetized potential merchants into Blend sheet.")
-    p.add_argument("--feed", required=True, choices=["kelkoo1", "kelkoo2"])
+    p.add_argument("--feed", required=True, choices=["kelkoo1", "kelkoo2", "adexa", "yadore"])
     p.add_argument("--max-add", type=int, default=200, help="Max new rows to add this run")
     args = p.parse_args()
 
-    potential_sheet = "potentialKelkoo1" if args.feed == "kelkoo1" else "potentialKelkoo2"
+    potential_sheet = {
+        "kelkoo1": "potentialKelkoo1",
+        "kelkoo2": "potentialKelkoo2",
+        "adexa": "potentialAdexa",
+        "yadore": "potentialYadore",
+    }[args.feed]
 
     service = get_sheets_service()
     header_blend = ensure_blend_headers(service)
