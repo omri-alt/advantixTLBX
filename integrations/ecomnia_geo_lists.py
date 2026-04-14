@@ -155,6 +155,38 @@ def fetch_adv_stats_by_date(
     return [s for s in stats if isinstance(s, dict)] if isinstance(stats, list) else []
 
 
+def campaign_default_bid_value(campaign: Mapping[str, Any]) -> Optional[float]:
+    """Campaign-level CPC from ``bid`` (API returns string like ``0.25``)."""
+    v = campaign.get("bid")
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def cpc_for_source_from_campaign(campaign: Mapping[str, Any], source: str) -> Optional[float]:
+    """
+    Source-specific CPC from ``cpcbysource`` if set; keys matched case-insensitive.
+    """
+    raw = campaign.get("cpcbysource")
+    if not isinstance(raw, dict):
+        return None
+    t = (source or "").strip()
+    if not t:
+        return None
+    tl = t.lower()
+    for k, v in raw.items():
+        if str(k).strip().lower() != tl:
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def campaign_daily_budget_value(campaign: Mapping[str, Any]) -> Optional[float]:
     """Best-effort daily budget from campaign object (API field names vary)."""
     for k in ("dailybudget", "daily_budget", "dailyBudget"):
@@ -301,6 +333,17 @@ def whitelist_union_by_geo_from_campaigns(
     return {g: sorted(v) for g, v in sorted(by_geo.items(), key=lambda x: x[0])}
 
 
+def merged_contains_source(merged: Sequence[str], source: str) -> bool:
+    """True if ``merged`` lists a source equal to ``source`` (case-insensitive, trimmed)."""
+    tl = (source or "").strip().lower()
+    if not tl:
+        return False
+    for m in merged:
+        if str(m).strip().lower() == tl:
+            return True
+    return False
+
+
 def merged_whitelist_for_campaign(
     campaign: Mapping[str, Any],
     geo_map: Mapping[str, Mapping[str, Any]],
@@ -389,6 +432,17 @@ def clicks_by_source_from_stats(stats: Sequence[Mapping[str, Any]]) -> Dict[str,
             clicks = 0
         out[name] = clicks
     return out
+
+
+def clicks_for_source_from_stats(stats: Sequence[Mapping[str, Any]], target: str) -> int:
+    """Clicks for ``target`` in ``adv-stats-by-source`` rows (exact then case-insensitive ``source``)."""
+    row = find_adv_stats_row_for_source(stats, target)
+    if not row:
+        return 0
+    try:
+        return int(row.get("clicks") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def find_adv_stats_row_for_source(

@@ -6,6 +6,7 @@
 <p class="muted">
   Each campaign exposes <strong>whitelistsources</strong> in the API. <strong>Global whitelist</strong> here means a source on <strong>at least two</strong> campaigns.
   Whitelist checks elsewhere <strong>merge</strong> this with sheet geo whitelist.
+  <strong>Potential (0-click)</strong> counts campaigns where that source is on the merged WL but had <strong>no clicks</strong> in the stats window — open the row to set <code>cpcbysource</code> bids.
 </p>
 
 {% if not ec_ok %}
@@ -14,9 +15,10 @@
 
 <section class="tool-section">
   <h2>Refresh from Ecomnia</h2>
-  <form method="post" action="{{ url_for('ui_ec_console_do') }}" class="btn-row">
+  <form method="post" action="{{ url_for('ui_ec_console_do') }}" class="btn-row" style="flex-wrap:wrap;align-items:flex-end;gap:12px;">
     <input type="hidden" name="page" value="whitelist-derived">
     <input type="hidden" name="action" value="refresh_whitelist_derived">
+    <label>Stats window (days) <input type="number" name="wl_potential_days" value="30" min="1" max="90" style="width:64px;" title="For 0-click potential column"></label>
     <button type="submit" {% if not ec_ok %}disabled{% endif %}>Refresh WL from Ecomnia</button>
   </form>
   {% if derived_wl.get('campaigns_fetched') %}
@@ -24,11 +26,26 @@
   {% endif %}
   {% if derived_wl.get('global_whitelist') %}
   <h3 style="font-size:14px;margin-top:14px;">Global whitelist (≥2 campaigns)</h3>
+  {% if derived_wl.get('wl_potential') %}
+  <p class="muted" style="margin-top:6px;">
+    0-click window: <code>{{ derived_wl.wl_potential.stats_window_start }}</code> → <code>{{ derived_wl.wl_potential.stats_window_end }}</code>
+    ({{ derived_wl.wl_potential.days }} days).
+  </p>
+  {% endif %}
   <table class="data">
-    <thead><tr><th>Source</th><th>Campaign count</th></tr></thead>
+    <thead><tr><th>Source</th><th>Campaign count</th><th>Potential (0-click)</th></tr></thead>
     <tbody>
       {% for item in derived_wl.global_whitelist %}
-      <tr><td><code>{{ item.source }}</code></td><td>{{ item.campaign_count }}</td></tr>
+      <tr>
+        <td><code>{{ item.source }}</code></td>
+        <td>{{ item.campaign_count }}</td>
+        <td>
+          {% set pc = item.get('potential_count') %}
+          {% if pc is none %}—{% elif pc == 0 %}0{% else %}
+          <a href="{{ url_for('ui_ec_console_whitelist_potential_detail', source=item.source) }}">{{ pc }}</a>
+          {% endif %}
+        </td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>

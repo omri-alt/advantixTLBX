@@ -1,0 +1,77 @@
+{% extends "ecomnia_console_base.html" %}
+{% block title %}Ecomnia · WL potential · {{ source }}{% endblock %}
+{% block tool_body %}
+<h1>0-click campaigns · <code>{{ source }}</code></h1>
+<p class="muted">
+  Global-whitelist source on <strong>merged</strong> WL (campaign ∪ sheet) but <strong>0 clicks</strong> in the stats window from the last
+  <strong>Refresh WL from Ecomnia</strong> run. Set <code>cpcbysource["{{ source }}"]</code> to bid for traffic on these campaigns only.
+</p>
+<p class="muted">
+  Window:
+  <code>{{ wl_potential_meta.get('stats_window_start', '—') }}</code>
+  →
+  <code>{{ wl_potential_meta.get('stats_window_end', '—') }}</code>
+  ({{ wl_potential_meta.get('days', '—') }} days).
+</p>
+{% if wl_potential_note %}
+<div class="banner warn">{{ wl_potential_note }}</div>
+{% endif %}
+
+{% if not ec_ok %}
+<div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>
+{% endif %}
+
+<p><a href="{{ url_for('ui_ec_console_tool', page_slug='whitelist-derived') }}">← Campaign WL</a></p>
+
+{% if not rows %}
+<p class="muted">No cached rows for this source. Run <strong>Refresh WL from Ecomnia</strong> on the Campaign WL page (or this source has no 0-click campaigns in the last window).</p>
+{% else %}
+
+<form method="post" action="{{ url_for('ui_ec_console_whitelist_potential_detail') }}" id="wl-potential-form">
+  <input type="hidden" name="source" value="{{ source }}">
+
+  <section class="tool-section">
+    <h2>Set source CPC (<code>cpcbysource</code>)</h2>
+    <div class="btn-row" style="flex-direction:column;align-items:flex-start;gap:12px;">
+      <label>New CPC for <code>{{ source }}</code>
+        <input type="text" name="new_cpc" placeholder="e.g. 0.04" required inputmode="decimal" style="width:140px;">
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" name="dry_run" value="1"> Dry-run (no API update; merged <code>cpcbysource</code> logged at INFO)
+      </label>
+      <div class="btn-row">
+        <button type="submit" {% if not ec_ok %}disabled{% endif %}>Apply to selected</button>
+        <button type="button" onclick="document.querySelectorAll('#wl-potential-form input[name=campaign_id]').forEach(function(el){ el.checked = true; });">Select all</button>
+        <button type="button" onclick="document.querySelectorAll('#wl-potential-form input[name=campaign_id]').forEach(function(el){ el.checked = false; });">Clear</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="tool-section">
+    <h2>Campaigns ({{ rows|length }})</h2>
+    <table class="data">
+      <thead>
+        <tr>
+          <th style="width:36px;"></th>
+          <th>Campaign</th>
+          <th>Geo</th>
+          <th>Campaign bid</th>
+          <th>Source CPC</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><input type="checkbox" name="campaign_id" value="{{ r.campaign_id }}"></td>
+          <td>{{ r.campaign_name }}<br><code style="font-size:11px;">{{ r.campaign_id }}</code></td>
+          <td>{{ r.geo }}</td>
+          <td>{% if r.default_bid is not none %}{{ r.default_bid }}{% else %}—{% endif %}</td>
+          <td>{% if r.source_cpc is not none %}{{ r.source_cpc }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</form>
+{% endif %}
+{% endblock %}

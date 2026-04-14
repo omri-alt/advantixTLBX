@@ -71,10 +71,13 @@ from integrations.daily_conversion_postbacks import (
 from integrations.daily_postbacks_dashboard import build_dashboard_cards, feed_detail_context
 from integrations.ecomnia_console import (
     all_copy_paste_text,
+    apply_wl_potential_cpcbysource_updates,
+    compute_global_wl_zero_click_potential,
     derived_whitelist_copy_paste,
     exploration_action_items,
     geo_map_from_sheet_values,
     pull_derived_whitelist_from_api,
+    pull_derived_whitelist_with_campaigns,
     sync_geo_blacklists,
     utc_yesterday_iso,
     whitelist_check_flat_rows,
@@ -1327,11 +1330,37 @@ def _process_ecomnia_console_post(form) -> Tuple[Optional[str], Optional[str]]:
             flash_msg = f"Loaded {len(geo_map_new)} geo rows from sheet tab {ECOMNIA_GLOBA_LIST_TAB!r}."
 
         elif action == "refresh_whitelist_derived":
-            derived = pull_derived_whitelist_from_api(
+            try:
+                pot_days = int((form.get("wl_potential_days") or "30").strip() or "30")
+            except ValueError:
+                pot_days = 30
+            pot_days = max(1, min(pot_days, 90))
+            derived, campaigns = pull_derived_whitelist_with_campaigns(
                 EC_ADVERTISER_KEY,
                 EC_AUTH_KEY,
                 EC_SECRET_KEY,
             )
+            gm = dict(load_state().get("geo_map") or {})
+            pot = compute_global_wl_zero_click_potential(
+                campaigns,
+                gm,
+                EC_ADVERTISER_KEY,
+                EC_AUTH_KEY,
+                EC_SECRET_KEY,
+                days=pot_days,
+                skip_wl_campaigns=True,
+            )
+            derived["wl_potential"] = pot
+            if not gm:
+                derived["wl_potential_note"] = (
+                    "Sheet geo lists not loaded — merged WL uses campaign API only. "
+                    "Refresh Sheet lists on the lists page for sheet ∪ campaign merge."
+                )
+            by_src = pot.get("by_source") or {}
+            for item in derived.get("global_whitelist") or []:
+                if isinstance(item, dict):
+                    s = str(item.get("source") or "")
+                    item["potential_count"] = len(by_src.get(s) or [])
             update_cache(derived_whitelist=derived)
             record_run(
                 "refresh_whitelist_derived",
@@ -1339,13 +1368,18 @@ def _process_ecomnia_console_post(form) -> Tuple[Optional[str], Optional[str]]:
                 {
                     "campaigns": derived.get("campaigns_fetched"),
                     "global_wl_sources": len(derived.get("global_whitelist") or []),
+                    "wl_potential_days": pot_days,
+                    "wl_potential_errors": len(pot.get("errors") or []),
                 },
             )
             _cache_clear("ec:")
             flash_msg = (
                 f"Whitelist from API: {derived.get('campaigns_fetched', 0)} campaigns; "
-                f"global WL (≥2 campaigns): {len(derived.get('global_whitelist') or [])} sources."
+                f"global WL (≥2 campaigns): {len(derived.get('global_whitelist') or [])} sources; "
+                f"0-click potential computed ({pot_days}d window)."
             )
+            if pot.get("errors"):
+                flash_err = f"Potential pass had {len(pot['errors'])} campaign fetch errors (see run detail)."
 
         elif action == "sync_blacklists_dry":
             out = sync_geo_blacklists(
@@ -1532,6 +1566,95 @@ def ui_ec_console_do():
     if target not in EC_CONSOLE_PAGES:
         return redirect(url_for("ui_ec_console_hub"))
     return redirect(url_for("ui_ec_console_tool", page_slug=target))
+
+
+@app.route("/ec/console/whitelist-potential-detail", methods=["GET", "POST"])
+def ui_ec_console_whitelist_potential_detail():
+    """
+    Per global-WL source: campaigns on merged WL with 0 clicks in the last computed window;
+    set ``cpcbysource[source]`` via Ecomnia update (dry-run or apply).
+    """
+    ec_ok = bool(EC_ADVERTISER_KEY and EC_AUTH_KEY and EC_SECRET_KEY)
+    source = (request.args.get("source") or request.form.get("source") or "").strip()
+    if not source:
+        flash("Missing source.", "error")
+        return redirect(url_for("ui_ec_console_tool", page_slug="whitelist-derived"))
+
+    if request.method == "POST":
+        if not ec_ok:
+            flash("Set Ecomnia API keys in .env.", "error")
+            return redirect(url_for("ui_ec_console_whitelist_potential_detail", source=source))
+        raw_ids = request.form.getlist("campaign_id")
+        try:
+            new_cpc = float((request.form.get("new_cpc") or "").strip().replace(",", "."))
+        except ValueError:
+            flash("Invalid CPC value.", "error")
+            return redirect(url_for("ui_ec_console_whitelist_potential_detail", source=source))
+        if new_cpc <= 0:
+            flash("CPC must be greater than zero.", "error")
+            return redirect(url_for("ui_ec_console_whitelist_potential_detail", source=source))
+        dry = (request.form.get("dry_run") or "").strip().lower() in ("1", "on", "true", "yes")
+        st = load_state()
+        pot = (st.get("derived_whitelist") or {}).get("wl_potential") or {}
+        bys = pot.get("by_source") or {}
+        allowed = {str(r.get("campaign_id")) for r in bys.get(source, []) if r.get("campaign_id")}
+        picked = [x for x in raw_ids if str(x).strip() in allowed]
+        if not picked:
+            flash("No valid campaigns selected. Refresh WL from Ecomnia on the Campaign WL page, then try again.", "error")
+            return redirect(url_for("ui_ec_console_whitelist_potential_detail", source=source))
+        try:
+            out = apply_wl_potential_cpcbysource_updates(
+                EC_ADVERTISER_KEY,
+                EC_AUTH_KEY,
+                EC_SECRET_KEY,
+                source=source,
+                campaign_ids=picked,
+                new_cpc=new_cpc,
+                dry_run=dry,
+            )
+        except Exception as e:
+            logger.exception("wl_potential_cpc_apply")
+            flash(str(e), "error")
+            return redirect(url_for("ui_ec_console_whitelist_potential_detail", source=source))
+        record_run(
+            "wl_potential_cpc_apply",
+            bool(out.get("ok")),
+            {
+                "source": source,
+                "selected": len(picked),
+                "dry_run": dry,
+                "errors": (out.get("errors") or [])[:12],
+            },
+        )
+        _cache_clear("ec:")
+        if dry:
+            flash(
+                f"Dry-run: would set cpcbysource[{source!r}] = {new_cpc} on {len(picked)} campaign(s). "
+                f"See app log for full merged cpcbysource per campaign.",
+                "success",
+            )
+        elif out.get("ok"):
+            flash(f"Updated cpcbysource[{source!r}] = {new_cpc} on {len(picked)} campaign(s).", "success")
+        else:
+            flash(
+                "Some updates failed: " + "; ".join(str(e) for e in (out.get("errors") or [])[:8]),
+                "error",
+            )
+        return redirect(url_for("ui_ec_console_whitelist_potential_detail", source=source))
+
+    st = load_state()
+    derived = st.get("derived_whitelist") or {}
+    pot = derived.get("wl_potential") if isinstance(derived.get("wl_potential"), dict) else {}
+    rows = list((pot.get("by_source") or {}).get(source) or [])
+    return render_template(
+        "ecomnia_console_whitelist_potential_detail.html",
+        active_page="whitelist-derived",
+        ec_ok=ec_ok,
+        source=source,
+        rows=rows,
+        wl_potential_meta=pot,
+        wl_potential_note=derived.get("wl_potential_note"),
+    )
 
 
 @app.route("/ec/console/<path:page_slug>", methods=["GET"])

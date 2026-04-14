@@ -9,6 +9,7 @@ CPC level-up stays in **trackExploration** (``CpcLvlUp`` v/x); this module only 
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -17,17 +18,21 @@ import requests
 from integrations.ecomnia_geo_lists import (
     audit_whitelist_traffic,
     campaign_daily_budget_value,
+    campaign_default_bid_value,
     campaign_whitelist_sources,
+    clicks_for_source_from_stats,
     conversions_field_present_in_stat,
     conversions_from_source_stat,
+    cpc_for_source_from_campaign,
     date_range_last_days,
     fetch_adv_stats_by_date,
     fetch_adv_stats_by_source,
-    find_adv_stats_row_for_source,
     fetch_campaign_by_id,
     fetch_campaigns,
+    find_adv_stats_row_for_source,
     geo_bw_map_from_rows,
     global_whitelist_sources,
+    merged_contains_source,
     merged_whitelist_for_campaign,
     normalize_geo_key,
     post_update_advertiser_campaign,
@@ -210,6 +215,22 @@ def build_derived_whitelist_views(
     }
 
 
+def pull_derived_whitelist_with_campaigns(
+    advertiser_key: str,
+    auth_key: str,
+    secret_key: str,
+    *,
+    global_min_campaigns: int = 2,
+    session: Optional[requests.Session] = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Fetch campaigns once; return ``(derived_views, campaigns)`` for WL + potential counts."""
+    sess = session or requests.Session()
+    campaigns = fetch_campaigns(advertiser_key, auth_key, secret_key, session=sess)
+    out = build_derived_whitelist_views(campaigns, global_min_campaigns=global_min_campaigns)
+    out["campaigns_fetched"] = len([c for c in campaigns if isinstance(c, dict)])
+    return out, campaigns
+
+
 def pull_derived_whitelist_from_api(
     advertiser_key: str,
     auth_key: str,
@@ -219,11 +240,157 @@ def pull_derived_whitelist_from_api(
     session: Optional[requests.Session] = None,
 ) -> Dict[str, Any]:
     """Fetch campaigns and build global / per-geo / per-campaign whitelist views."""
+    derived, _camps = pull_derived_whitelist_with_campaigns(
+        advertiser_key,
+        auth_key,
+        secret_key,
+        global_min_campaigns=global_min_campaigns,
+        session=session,
+    )
+    return derived
+
+
+def compute_global_wl_zero_click_potential(
+    campaigns: Sequence[Mapping[str, Any]],
+    geo_map: Mapping[str, Mapping[str, Any]],
+    advertiser_key: str,
+    auth_key: str,
+    secret_key: str,
+    *,
+    days: int = 30,
+    skip_wl_campaigns: bool = True,
+    global_min_campaigns: int = 2,
+    session: Optional[requests.Session] = None,
+) -> Dict[str, Any]:
+    """
+    For each **global** WL source (on ≥ ``global_min_campaigns`` campaign API whitelists),
+    list campaigns where the source is on the **merged** WL (campaign ∪ sheet for geo) and
+    ``adv-stats-by-source`` shows **0 clicks** in the window — bid-test candidates.
+    """
     sess = session or requests.Session()
-    campaigns = fetch_campaigns(advertiser_key, auth_key, secret_key, session=sess)
-    out = build_derived_whitelist_views(campaigns, global_min_campaigns=global_min_campaigns)
-    out["campaigns_fetched"] = len([c for c in campaigns if isinstance(c, dict)])
+    pairs = global_whitelist_sources(list(campaigns), min_campaigns=global_min_campaigns)
+    global_sources = [s for s, _ in pairs]
+    utc_today = datetime.now(timezone.utc).date()
+    start, end = date_range_last_days(utc_today, max(1, min(int(days), 90)))
+    by_source: Dict[str, List[Dict[str, Any]]] = {s: [] for s in global_sources}
+    errors: List[str] = []
+
+    for c in campaigns:
+        if not isinstance(c, dict):
+            continue
+        nm = str(c.get("name") or "")
+        if skip_wl_campaigns and _campaign_suffix_wl(nm):
+            continue
+        cid = str(c.get("id") or "")
+        if not cid:
+            continue
+        merged, _fc, _fs = merged_whitelist_for_campaign(c, geo_map)
+        on_here = [s for s in global_sources if merged_contains_source(merged, s)]
+        if not on_here:
+            continue
+        try:
+            stats = fetch_adv_stats_by_source(
+                cid, start, end, advertiser_key, auth_key, secret_key, session=sess
+            )
+        except Exception as e:
+            errors.append(f"{nm}: {e}")
+            continue
+        for s in on_here:
+            if clicks_for_source_from_stats(stats, s) != 0:
+                continue
+            db = campaign_default_bid_value(c)
+            sc = cpc_for_source_from_campaign(c, s)
+            by_source[s].append(
+                {
+                    "campaign_id": cid,
+                    "campaign_name": nm,
+                    "geo": normalize_geo_key(str(c.get("geo") or "")),
+                    "default_bid": db,
+                    "source_cpc": sc,
+                    "clicks": 0,
+                }
+            )
+
+    for s in by_source:
+        by_source[s].sort(key=lambda x: (str(x.get("campaign_name") or "").lower(), x.get("campaign_id") or ""))
+
+    return {
+        "stats_window_start": start,
+        "stats_window_end": end,
+        "days": int(days),
+        "by_source": by_source,
+        "errors": errors[:80],
+    }
+
+
+def build_cpcbysource_with_source_cpc(
+    full_campaign: Mapping[str, Any],
+    source: str,
+    new_cpc: float,
+) -> Dict[str, Any]:
+    """Copy ``cpcbysource``, drop prior keys for this source (any casing), set ``source`` → ``new_cpc``."""
+    raw = full_campaign.get("cpcbysource")
+    out: Dict[str, Any] = {}
+    canon = (source or "").strip()
+    cl = canon.lower()
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            ks = str(k).strip()
+            if ks.lower() == cl:
+                continue
+            out[ks] = v
+    out[canon] = float(new_cpc)
     return out
+
+
+def apply_wl_potential_cpcbysource_updates(
+    advertiser_key: str,
+    auth_key: str,
+    secret_key: str,
+    *,
+    source: str,
+    campaign_ids: Sequence[str],
+    new_cpc: float,
+    dry_run: bool = False,
+    session: Optional[requests.Session] = None,
+) -> Dict[str, Any]:
+    """Set ``cpcbysource[source]`` on each campaign (full GET → merge → POST)."""
+    sess = session or requests.Session()
+    log: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    seen = {str(x).strip() for x in campaign_ids if str(x).strip()}
+    for cid in seen:
+        try:
+            full = fetch_campaign_by_id(cid, advertiser_key, auth_key, secret_key, session=sess)
+        except Exception as e:
+            errors.append(f"{cid}: fetch {e}")
+            continue
+        if not full:
+            errors.append(f"{cid}: empty campaign")
+            continue
+        payload = dict(full)
+        payload["cpcbysource"] = build_cpcbysource_with_source_cpc(full, source, new_cpc)
+        cname = str(full.get("name") or cid)
+        if dry_run:
+            log.append(
+                {
+                    "campaign_id": cid,
+                    "campaign_name": cname,
+                    "dry_run": True,
+                    "cpcbysource": payload["cpcbysource"],
+                }
+            )
+            continue
+        try:
+            post_update_advertiser_campaign(cid, payload, advertiser_key, auth_key, secret_key, session=sess)
+            log.append({"campaign_id": cid, "campaign_name": cname, "ok": True})
+        except Exception as e:
+            errors.append(f"{cname}: {e}")
+        time.sleep(0.35)
+    if dry_run:
+        for entry in log:
+            logger.info("WL potential dry-run: %s", entry)
+    return {"ok": not errors, "dry_run": dry_run, "log": log, "errors": errors, "source": source, "new_cpc": new_cpc}
 
 
 def whitelist_check_flat_rows(
