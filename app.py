@@ -161,6 +161,8 @@ def _last_run_time_ui(last_run: Dict[str, Any]) -> Tuple[str, str]:
 
 _WORKFLOW_THREADS_LOCK = threading.Lock()
 _WORKFLOW_THREADS: dict[str, threading.Thread] = {}
+_DAILY_POSTBACK_THREADS_LOCK = threading.Lock()
+_DAILY_POSTBACK_THREADS: dict[str, threading.Thread] = {}
 PUBLISHERS_DB_PATH = ROOT_DIR / "runtime" / "publishers.db"
 SK_TOOLS_SPREADSHEET_ID = "176wSQDDz9D1APmAXiYPeECwMqCQm3mvMBwgj8MKqmgk"
 
@@ -695,6 +697,52 @@ def _run_workflow_in_background(workflow_key: str, extra_args: str = "") -> Dict
         return running_result
 
 
+def _run_daily_postbacks_feed_in_background(
+    *,
+    feed_key: str,
+    report_date: str,
+    only_geo: str | None,
+    dry_run: bool,
+    no_resume: bool,
+    reset_sources: list[str] | None,
+) -> Dict[str, Any]:
+    """
+    Start one daily-postbacks feed run in a background thread.
+    Prevents 504s when a feed (especially Kelkoo all-geos) runs for minutes.
+    """
+    task_key = f"{feed_key}:{report_date}:{only_geo or 'all'}:{'dry' if dry_run else 'apply'}"
+    with _DAILY_POSTBACK_THREADS_LOCK:
+        existing = _DAILY_POSTBACK_THREADS.get(feed_key)
+        if existing and existing.is_alive():
+            return {"status": "already_running", "task_key": task_key}
+
+        def _worker() -> None:
+            try:
+                run_daily_conversion_postbacks_batch(
+                    report_date=report_date,
+                    only=feed_key,
+                    only_geo=only_geo,
+                    dry_run=dry_run,
+                    no_resume=no_resume,
+                    reset_sources=reset_sources,
+                )
+            except Exception:
+                logger.exception(
+                    "daily postbacks background run failed feed=%s date=%s geo=%s",
+                    feed_key,
+                    report_date,
+                    only_geo or "",
+                )
+            finally:
+                with _DAILY_POSTBACK_THREADS_LOCK:
+                    _DAILY_POSTBACK_THREADS.pop(feed_key, None)
+
+        t = threading.Thread(target=_worker, daemon=True, name=f"postbacks-{feed_key}")
+        _DAILY_POSTBACK_THREADS[feed_key] = t
+        t.start()
+        return {"status": "started", "task_key": task_key}
+
+
 def _sk_headers() -> dict[str, str]:
     from config import SOURCEKNOWLEDGE_API_KEY
     return {
@@ -1137,6 +1185,25 @@ def ui_kelkoo_daily_postbacks_feed(feed_key: str):
             if (request.form.get("reset_state") or "").strip().lower() in ("1", "on", "yes", "true")
             else None
         )
+        run_in_background = (not dry_run) and (fk in ("kelkoo1", "kelkoo2")) and (only_geo is None)
+        if run_in_background:
+            bg = _run_daily_postbacks_feed_in_background(
+                feed_key=fk,
+                report_date=report_date,
+                only_geo=only_geo,
+                dry_run=dry_run,
+                no_resume=no_resume,
+                reset_sources=reset_sources,
+            )
+            if bg.get("status") == "already_running":
+                flash(f"{fk} postbacks are already running in background.", "error")
+            else:
+                flash(
+                    f"Started {fk} apply run in background for {report_date}. "
+                    f"Refresh this page to track resume snapshot and last-run log.",
+                    "success",
+                )
+            return redirect(url_for("ui_kelkoo_daily_postbacks_feed", feed_key=fk, date=report_date))
         try:
             run_result = run_daily_conversion_postbacks_batch(
                 report_date=report_date,
