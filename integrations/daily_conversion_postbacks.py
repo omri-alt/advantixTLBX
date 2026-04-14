@@ -585,7 +585,11 @@ def run_flat_report_postbacks(
         )
 
     f0 = read_flat()
-    if not no_resume and f0.get("status") == "done":
+    if (
+        not no_resume
+        and f0.get("status") == "done"
+        and str(f0.get("row_stage") or "").strip().lower() != "after_click"
+    ):
         logger.info("%s %s: flat run already done, skipping", source_key, report_date)
         summary["skipped_done"] = True
         summary["ok"] = True
@@ -604,11 +608,49 @@ def run_flat_report_postbacks(
             b = _bucket(d, source_key, report_date)
             fl = b.setdefault("flat", default_flat_run_state())
             for k, v in kwargs.items():
-                if v is not None:
-                    fl[k] = v
+                fl[k] = v
             fl["last_updated_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         commit(_w)
+
+    def _heal_terminal_after_click(total_items: int) -> bool:
+        """
+        Guard against corrupted terminal state like:
+        ``status=done`` + ``next_index>=total_items`` + ``row_stage='after_click'``.
+        In that shape there is no deterministic row to resume, so clear dangling stage
+        (do NOT send an extra sale postback blindly).
+        """
+        fl = read_flat()
+        try:
+            next_idx = int(fl.get("next_index") or 0)
+        except (TypeError, ValueError):
+            next_idx = 0
+        row_stage = fl.get("row_stage")
+        status = str(fl.get("status") or "").lower()
+        if row_stage != "after_click":
+            return False
+        if total_items <= 0:
+            return False
+        if next_idx < total_items:
+            return False
+        logger.warning(
+            "%s %s: healing dangling terminal row_stage=after_click "
+            "(status=%s next_index=%s total_items=%s).",
+            source_key,
+            report_date,
+            status or "(empty)",
+            next_idx,
+            total_items,
+        )
+        write_flat(
+            row_stage=None,
+            status="done",
+            completed_at_utc=fl.get("completed_at_utc")
+            or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        return True
+
+    _healed_terminal = _heal_terminal_after_click(len(items))
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     write_flat(total_items=len(items), fetch_at_utc=now, status="partial")
@@ -718,7 +760,22 @@ def run_flat_report_postbacks(
                 completed_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if idx + 1 >= total else None,
             )
 
+    if _heal_terminal_after_click(total):
+        _healed_terminal = True
+    fl_end = read_flat()
+    try:
+        end_next_idx = int(fl_end.get("next_index") or 0)
+    except (TypeError, ValueError):
+        end_next_idx = 0
+    if end_next_idx >= total and fl_end.get("row_stage") is None:
+        write_flat(
+            status="done",
+            completed_at_utc=fl_end.get("completed_at_utc")
+            or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
     summary["sent"] = int(read_flat().get("postbacks_sent") or 0)
+    if _healed_terminal:
+        summary["state_healed"] = True
     summary["ok"] = True
     return summary
 
