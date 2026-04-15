@@ -473,7 +473,10 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             {"label": "Skip Keitaro", "value": "--skip-keitaro"},
             {"label": "Feed1 traffic only", "value": "--feed1-traffic-only"},
             {"label": "Skip Blend sync to Keitaro", "value": "--skip-blend-sync"},
-            {"label": "UK rerun (example)", "value": "--geo uk"},
+            {"label": "UK+FR offers rerun (merge geos)", "value": "--geo uk,fr"},
+            {"label": "Merchant override (example)", "value": "--geo uk --merchant-override 1:uk=15248713"},
+            {"label": "Platform picks next best (example)", "value": "--geo uk --merchant-auto-override 1:uk"},
+            {"label": "Offers + Keitaro only (fast)", "value": "--offers-and-keitaro-only --geo uk"},
             {"label": "Date + Skip Keitaro (example)", "value": "--date 2026-03-08 --skip-keitaro"},
             {"label": "Date only (example)", "value": "--date 2026-03-08"},
         ],
@@ -1924,16 +1927,16 @@ def ui_workflow(workflow_key: str):
             if len(bg) == 2:
                 extra_args = f"--geo {bg} {extra_args}".strip()
         if workflow_key == "daily":
-            dg = (request.form.get("daily_geo") or "").strip().lower()[:2]
+            dg = (request.form.get("daily_geo") or "").strip()
             # Remove a manually-typed --geo; the dedicated control wins when set.
             extra_args = re.sub(
-                r"--geo\s+[a-zA-Z]{2}\b",
+                r"--geo\s+\S+",
                 "",
                 extra_args,
                 flags=re.IGNORECASE,
             )
             extra_args = " ".join(extra_args.split())
-            if len(dg) == 2:
+            if dg:
                 extra_args = f"--geo {dg} {extra_args}".strip()
 
             blend_sync_mode = (request.form.get("daily_blend_sync") or "on").strip().lower()
@@ -1942,6 +1945,29 @@ def ui_workflow(workflow_key: str):
             extra_args = " ".join(extra_args.split())
             if blend_sync_mode == "off":
                 extra_args = f"--skip-blend-sync {extra_args}".strip()
+
+            # Normalize merchant override flags; dropdown mode controls become source of truth.
+            extra_args = re.sub(r"--merchant-override\s+\S+", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--merchant-auto-override\s+\S+", "", extra_args, flags=re.IGNORECASE)
+            extra_args = " ".join(extra_args.split())
+
+            mode = (request.form.get("daily_merchant_mode") or "none").strip().lower()
+            if mode == "manual":
+                mf = (request.form.get("daily_manual_feed") or "1").strip()
+                mg = (request.form.get("daily_manual_geo") or "").strip().lower()[:2]
+                mids = (request.form.get("daily_manual_ids") or "").strip().replace(" ", "")
+                if mf in ("1", "2") and len(mg) == 2 and mids:
+                    extra_args = f"--merchant-override {mf}:{mg}={mids} {extra_args}".strip()
+            elif mode == "platform":
+                pf = (request.form.get("daily_platform_feed") or "1").strip()
+                pg = (request.form.get("daily_platform_geo") or "").strip().lower()[:2]
+                pr_raw = (request.form.get("daily_platform_rank") or "2").strip()
+                try:
+                    pr = max(1, int(pr_raw))
+                except ValueError:
+                    pr = 2
+                if pf in ("1", "2") and len(pg) == 2:
+                    extra_args = f"--merchant-auto-override {pf}:{pg}:{pr} {extra_args}".strip()
         # Run workflow pages in background to avoid nginx/gateway timeout on long jobs.
         current_run = _run_workflow_in_background(workflow_key, extra_args)
     last_run = current_run or _load_last_run(workflow_key)

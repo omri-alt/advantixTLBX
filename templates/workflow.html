@@ -59,7 +59,7 @@
     <div style="height: 12px;"></div>
     <label for="daily_geo">Country rerun (optional)</label><br>
     <input id="daily_geo" name="daily_geo" type="text" placeholder="e.g. uk, fr, de" style="width: 220px;">
-    <div class="muted" style="margin-top:6px;">When set, appends <code>--geo xx</code> so the run targets one country only.</div>
+    <div class="muted" style="margin-top:6px;">When set, appends <code>--geo uk,fr,de</code> (comma-separated). Those countries merge into existing offers tabs; others stay unchanged. Use optional args for manual <code>--merchant-override 1:uk=id</code> or platform auto-pick <code>--merchant-auto-override 1:uk</code> (next best; use <code>1:uk:3</code> for 3rd rank), plus <code>--offers-and-keitaro-only</code> when needed.</div>
 
     <div style="height: 12px;"></div>
     <label for="daily_blend_sync">Blend sheet → Keitaro sync (step 7b)</label><br>
@@ -67,6 +67,54 @@
       <option value="on" selected>On (default)</option>
       <option value="off">Off (skip blend_sync_from_sheet)</option>
     </select>
+
+    <div style="height: 12px;"></div>
+    <label for="daily_merchant_mode">Merchant switch mode (optional)</label><br>
+    <select id="daily_merchant_mode" name="daily_merchant_mode" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+      <option value="none" selected>None (use normal merchant pick rules)</option>
+      <option value="manual">Manual (user selects merchant ID)</option>
+      <option value="platform">Platform auto-pick (next best / rank)</option>
+    </select>
+    <div class="muted" style="margin-top:6px;">
+      <strong>Mode meanings:</strong>
+      <code>Manual</code> forces a specific merchant ID for one feed+geo.
+      <code>Platform auto-pick</code> asks workflow rules to choose rank 2 (or another rank) for that feed+geo.
+      If both manual and platform flags exist, manual wins.
+    </div>
+
+    <div id="daily_manual_fields" style="display:none; margin-top:10px;">
+      <label for="daily_manual_feed">Manual override feed</label><br>
+      <select id="daily_manual_feed" name="daily_manual_feed" style="width: 220px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+        <option value="1" selected>Feed 1</option>
+        <option value="2">Feed 2</option>
+      </select>
+      <div style="height: 8px;"></div>
+      <label for="daily_manual_geo">Manual override geo</label><br>
+      <input id="daily_manual_geo" name="daily_manual_geo" type="text" placeholder="e.g. uk" style="width: 140px;">
+      <div style="height: 8px;"></div>
+      <label for="daily_manual_ids">Manual merchant ID(s)</label><br>
+      <input id="daily_manual_ids" name="daily_manual_ids" type="text" placeholder="e.g. 15248713 or 15248713,99887766" style="width: 520px;">
+      <div class="muted" style="margin-top:6px;">Comma list is tried in order as fallback for this geo.</div>
+    </div>
+
+    <div id="daily_platform_fields" style="display:none; margin-top:10px;">
+      <label for="daily_platform_feed">Platform auto-pick feed</label><br>
+      <select id="daily_platform_feed" name="daily_platform_feed" style="width: 220px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+        <option value="1" selected>Feed 1</option>
+        <option value="2">Feed 2</option>
+      </select>
+      <div style="height: 8px;"></div>
+      <label for="daily_platform_geo">Platform auto-pick geo</label><br>
+      <input id="daily_platform_geo" name="daily_platform_geo" type="text" placeholder="e.g. uk" style="width: 140px;">
+      <div style="height: 8px;"></div>
+      <label for="daily_platform_rank">Platform rank</label><br>
+      <select id="daily_platform_rank" name="daily_platform_rank" style="width: 220px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+        <option value="2" selected>2 (next best)</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+      </select>
+    </div>
     {% endif %}
     <div style="height: 8px;"></div>
     <label for="extra_args">Command args (optional)</label><br>
@@ -82,6 +130,19 @@
       sel.addEventListener('change', function() {
         input.value = sel.value || '';
       });
+    })();
+    (function() {
+      const modeSel = document.getElementById('daily_merchant_mode');
+      const manual = document.getElementById('daily_manual_fields');
+      const platform = document.getElementById('daily_platform_fields');
+      if (!modeSel || !manual || !platform) return;
+      const syncModeView = function() {
+        const m = (modeSel.value || 'none').toLowerCase();
+        manual.style.display = (m === 'manual') ? 'block' : 'none';
+        platform.style.display = (m === 'platform') ? 'block' : 'none';
+      };
+      modeSel.addEventListener('change', syncModeView);
+      syncModeView();
     })();
   </script>
 

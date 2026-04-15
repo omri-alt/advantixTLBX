@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 import requests
 
@@ -1025,3 +1025,71 @@ def write_offers_sheet(
         body={"values": data},
     ).execute()
     logger.info("Wrote %s offers to %s", len(data) - 1, sheet_name)
+
+
+OFFER_SHEET_HEADERS = [
+    "Country",
+    "Merchant ID",
+    "Product Title",
+    "Store Link",
+    "Audit Status",
+    "Timestamp",
+]
+
+
+def _geo_key_from_offer_country_cell(raw: Any) -> str:
+    s = str(raw or "").strip().upper()
+    if len(s) < 2:
+        return ""
+    return s[:2].lower()
+
+
+def read_offers_sheet_rows(
+    service: Any,
+    spreadsheet_id: str,
+    sheet_name: str,
+) -> List[Dict[str, Any]]:
+    """Read offer rows from a tab; return [] if missing, empty, or header mismatch."""
+    quoted = sheet_name.replace("'", "''")
+    try:
+        values = service.values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{quoted}'!A:ZZ",
+        ).execute().get("values") or []
+    except Exception:
+        return []
+    if len(values) < 2:
+        return []
+    header = [str(h or "").strip() for h in values[0]]
+    idx = {name: i for i, name in enumerate(header)}
+    if not all(h in idx for h in OFFER_SHEET_HEADERS):
+        return []
+    out: List[Dict[str, Any]] = []
+    for r in range(1, len(values)):
+        row = values[r]
+        out.append({
+            h: (row[idx[h]] if idx[h] < len(row) else "")
+            for h in OFFER_SHEET_HEADERS
+        })
+    return out
+
+
+def merge_offers_replace_geos(
+    existing: List[Dict[str, Any]],
+    new_rows: List[Dict[str, Any]],
+    replace_geos: Set[str],
+) -> List[Dict[str, Any]]:
+    """
+    Drop existing rows whose Country matches any geo in ``replace_geos`` (2-letter, lower),
+    then append ``new_rows``. Used when refreshing PLA for a subset of countries without
+    wiping the rest of the offers tab.
+    """
+    rg = {g.lower()[:2] for g in replace_geos if g and len(g.strip()) >= 2}
+    if not rg:
+        return list(existing) + list(new_rows)
+    kept = [
+        r
+        for r in existing
+        if _geo_key_from_offer_country_cell(r.get("Country")) not in rg
+    ]
+    return kept + list(new_rows)
