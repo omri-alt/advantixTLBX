@@ -223,7 +223,7 @@ def _blend_merchant_url_https(url: str) -> str:
 def _blend_adexa_action_payload(geo: str, merchant_url: str) -> str:
     """
     shopli ``raino`` → Adexa ``LinksMerchant.php`` with country (sheet geo → Adexa ISO2)
-    and URL-encoded merchant URL; ``publisherClickId={subid}`` for Keitaro.
+    and URL-encoded merchant URL; ``clickid={subid}`` for Keitaro.
     """
     site_id = (ADEXA_SITE_ID or "").strip()
     if not site_id:
@@ -237,9 +237,10 @@ def _blend_adexa_action_payload(geo: str, merchant_url: str) -> str:
     inner = (
         "https://api.adexad.com/LinksMerchant.php"
         f"?siteID={quote(str(site_id), safe='')}&country={quote(str(country), safe='')}"
-        f"&merchantUrl={m_enc}&publisherClickId={{subid}}"
+        f"&merchantUrl={m_enc}&clickid={{subid}}"
     )
-    return BLEND_ADEXA_RAIN_SHELL + quote(inner, safe="")
+    # Keep the inner Adexa URL readable like the working feed4 format; only merchantUrl stays encoded.
+    return BLEND_ADEXA_RAIN_SHELL + quote(inner, safe=":/?&={}")
 
 
 def _blend_yadore_action_payload(geo: str, merchant_url: str) -> str:
