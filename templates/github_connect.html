@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GitHub Connection</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Inter, Segoe UI, Arial, sans-serif; margin: 0; background: #0b1020; color: #eaf1fb; }
     .wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
@@ -14,9 +15,10 @@
   </style>
 </head>
 <body>
+  {% from "macros/page_header.html" import tool_header %}
   <div class="wrap">
-    <h1>GitHub Connection</h1>
-    <div class="muted">MVP status page for git + GitHub CLI connectivity.</div>
+    <div class="muted" style="margin-bottom:10px;"><a href="/">Home</a></div>
+    {{ tool_header("GitHub connection", "git remotes + gh auth status.", "github-connect", "") }}
 
     <div class="card">
       <strong>Repository detected:</strong> {{ "Yes" if git_exists else "No (.git not found)" }}

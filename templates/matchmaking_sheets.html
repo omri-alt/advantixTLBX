@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Match Making - Sheet Bulk Check</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Inter, Segoe UI, Arial, sans-serif; margin: 0; background: #0b1020; color: #eaf1fb; }
     .wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
@@ -18,9 +19,10 @@
   </style>
 </head>
 <body>
+  {% from "macros/page_header.html" import tool_header %}
   <div class="wrap">
-    <h1>Match Making - Sheet Bulk Monetization</h1>
-    <div class="muted">Runs <code>monetization_check.py</code> against the sourceToCheck sheet and writes Matches.</div>
+    <div class="muted" style="margin-bottom:10px;"><a href="{{ url_for('ui_matchmaking_hub') }}">← Matchmaking</a> · <a href="{{ url_for('ui_help') }}#matchmaking-sheets">Help</a></div>
+    {{ tool_header("Sheet bulk monetization", "monetization_check.py → Matches tab.", "matchmaking-sheets", "--max-rows optional") }}
 
     <div class="card">
       <form method="post">

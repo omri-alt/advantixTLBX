@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Publishers Hub - {{ brand_display }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
     .muted { color: #9ca3af; }
@@ -17,9 +18,9 @@
   </style>
 </head>
 <body>
-  <div><a href="/publishers/brands">Back to brands</a></div>
-  <h1>Brand: {{ brand_display }}</h1>
-  <div class="muted">Campaigns across all integrated publishers.</div>
+  {% from "macros/page_header.html" import tool_header %}
+  <div><a href="/publishers/brands">← Brands</a> · <a href="{{ url_for('ui_help') }}#publishers-brands">Help</a></div>
+  {{ tool_header("Publishers · " ~ brand_display, "Campaigns across platforms.", "publishers-brands", "") }}
   <div class="card">
     <table>
       <thead>

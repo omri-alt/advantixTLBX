@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SK QualityWL</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
     .muted { color: #9ca3af; }
@@ -24,9 +25,9 @@
   </style>
 </head>
 <body>
-  <div><a href="/sk">Back to SK tools</a></div>
-  <h1>QualityWL Dashboard</h1>
-  <div class="muted">Spreadsheet: {{ spreadsheet_id }} | Tab: {{ tab }}</div>
+  {% from "macros/page_header.html" import tool_header %}
+  <div><a href="/sk">← SK tools</a> · <a href="{{ url_for('ui_help') }}#sk-qualitywl">Help</a></div>
+  {{ tool_header("QualityWL dashboard", "Sheet tab read-only + filters.", "sk-qualitywl", tab) }}
 
   <div class="card">
     <form method="get" class="toolbar">

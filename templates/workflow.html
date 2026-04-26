@@ -1,9 +1,11 @@
+{% from "macros/page_header.html" import tool_header %}
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ workflow.title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
     .row { margin: 10px 0; }
@@ -20,9 +22,22 @@
   </style>
 </head>
 <body>
-  <div><a href="/">Back to dashboard</a></div>
-  <h1>{{ workflow.title }}</h1>
-  <div class="muted">{{ workflow.description }}</div>
+  <div><a href="/">Back to dashboard</a> · <a href="{{ url_for('ui_help') }}">Help</a></div>
+  {% if workflow_key == "daily" %}
+    {{ tool_header(workflow.title, "Kelkoo day: feeds, offers, Keitaro, Blend, sales.", "daily", "e.g. --skip-keitaro --geo uk") }}
+  {% elif workflow_key == "keitaro-sync" %}
+    {{ tool_header(workflow.title, "Offers sheet → Keitaro only.", "keitaro-sync", "e.g. --date 2026-03-08") }}
+  {% elif workflow_key == "blend" %}
+    {{ tool_header(workflow.title, "Blend sheet, potential refresh, populate.", "blend", "e.g. --geo fr --skip-potential") }}
+  {% elif workflow_key == "blend-keitaro-sync" %}
+    {{ tool_header(workflow.title, "Prune + rebuild Blend Keitaro campaign from sheet.", "blend-keitaro-sync", "e.g. --geo fr") }}
+  {% elif workflow_key == "monetization-check" %}
+    {{ tool_header(workflow.title, "Sheet URLs vs Kelkoo/Yadore → Matches tab.", "monetization-check", "e.g. --max-rows 20") }}
+  {% elif workflow_key == "blend-stop-closed" %}
+    {{ tool_header(workflow.title, "Zero share for unmonetized auto=v Kelkoo Blend rows.", "blend-stop-closed", "e.g. --geo it") }}
+  {% else %}
+    {{ tool_header(workflow.title, workflow.script, workflow_key) }}
+  {% endif %}
 
   <form method="post" class="row">
     <label for="args_template">Args template (optional)</label><br>
@@ -44,22 +59,16 @@
       <option value="adexa">Adexa (potentialAdexa)</option>
       <option value="yadore">Yadore (potentialYadore)</option>
     </select>
-    <div class="muted" style="margin-top:6px;">
-      Refreshes <strong>potential*</strong> tabs in the Blend spreadsheet. Populate step uses column <code>feed</code>
-      (<code>kelkoo1</code>, <code>kelkoo2</code>, <code>adexa</code>, <code>yadore</code>) per row.
-    </div>
     {% endif %}
     {% if workflow_key == 'blend-keitaro-sync' %}
     <div style="height: 12px;"></div>
     <label for="blend_sync_geo">Country (optional)</label><br>
     <input id="blend_sync_geo" name="blend_sync_geo" type="text" placeholder="e.g. uk, fr — blank = all geos" style="width: 320px;">
-    <div class="muted" style="margin-top:6px;">When set, appends <code>--geo xx</code> (same as typing it in optional args).</div>
     {% endif %}
     {% if workflow_key == 'daily' %}
     <div style="height: 12px;"></div>
     <label for="daily_geo">Country rerun (optional)</label><br>
     <input id="daily_geo" name="daily_geo" type="text" placeholder="e.g. uk, fr, de" style="width: 220px;">
-    <div class="muted" style="margin-top:6px;">When set, appends <code>--geo uk,fr,de</code> (comma-separated). Those countries merge into existing offers tabs; others stay unchanged. Use optional args for manual <code>--merchant-override 1:uk=id</code> or platform auto-pick <code>--merchant-auto-override 1:uk</code> (next best; use <code>1:uk:3</code> for 3rd rank), plus <code>--offers-and-keitaro-only</code> when needed.</div>
 
     <div style="height: 12px;"></div>
     <label for="daily_blend_sync">Blend sheet → Keitaro sync (step 7b)</label><br>
@@ -75,12 +84,6 @@
       <option value="manual">Manual (user selects merchant ID)</option>
       <option value="platform">Platform auto-pick (next best / rank)</option>
     </select>
-    <div class="muted" style="margin-top:6px;">
-      <strong>Mode meanings:</strong>
-      <code>Manual</code> forces a specific merchant ID for one feed+geo.
-      <code>Platform auto-pick</code> asks workflow rules to choose rank 2 (or another rank) for that feed+geo.
-      If both manual and platform flags exist, manual wins.
-    </div>
 
     <div id="daily_manual_fields" style="display:none; margin-top:10px;">
       <label for="daily_manual_feed">Manual override feed</label><br>
@@ -94,7 +97,6 @@
       <div style="height: 8px;"></div>
       <label for="daily_manual_ids">Manual merchant ID(s)</label><br>
       <input id="daily_manual_ids" name="daily_manual_ids" type="text" placeholder="e.g. 15248713 or 15248713,99887766" style="width: 520px;">
-      <div class="muted" style="margin-top:6px;">Comma list is tried in order as fallback for this geo.</div>
     </div>
 
     <div id="daily_platform_fields" style="display:none; margin-top:10px;">
@@ -126,7 +128,6 @@
       const sel = document.getElementById('args_template');
       const input = document.getElementById('extra_args');
       if (!sel || !input) return;
-      // When user changes template, overwrite text input.
       sel.addEventListener('change', function() {
         input.value = sel.value || '';
       });

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Match Making - Manual Monetization Check</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Inter, Segoe UI, Arial, sans-serif; margin: 0; background: #0b1020; color: #eaf1fb; }
     .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
@@ -20,9 +21,10 @@
   </style>
 </head>
 <body>
+  {% from "macros/page_header.html" import tool_header %}
   <div class="wrap">
-    <h1>Match Making - Manual Check</h1>
-    <div class="muted">Enter a domain/URL and check monetization across feeds.</div>
+    <div class="muted" style="margin-bottom:10px;"><a href="{{ url_for('ui_matchmaking_hub') }}">← Matchmaking</a> · <a href="{{ url_for('ui_help') }}#matchmaking-manual">Help</a></div>
+    {{ tool_header("Manual monetization check", "Domain/URL vs Kelkoo, Yadore, Adexa.", "matchmaking-manual", "POST domain + geo") }}
 
     <div class="card">
       <form method="post">

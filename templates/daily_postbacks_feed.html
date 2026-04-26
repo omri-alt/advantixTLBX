@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }} — Daily postbacks</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
     .muted { color: #9ca3af; font-size: 14px; line-height: 1.45; }
@@ -24,9 +25,9 @@
   </style>
 </head>
 <body>
-  <div><a href="{{ url_for('ui_kelkoo_daily_postbacks_hub') }}">All feeds</a> &middot; <a href="/">Home</a></div>
-  <h1>{{ title }}</h1>
-  <p class="muted">State file: <code>{{ state_path_display }}</code>. Change <strong>Report date</strong> below to inspect another day’s resume rows (<code>?date=YYYY-MM-DD</code> in the URL).</p>
+  {% from "macros/page_header.html" import tool_header %}
+  <div><a href="{{ url_for('ui_kelkoo_daily_postbacks_hub') }}">All feeds</a> · <a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#daily-postbacks">Help</a></div>
+  {{ tool_header(title, "Per-feed postback run + resume rows.", "daily-postbacks", "?date=YYYY-MM-DD") }}
 
   <div class="card">
     <h3 style="margin-top:0;color:#93c5fd;">Last run (logged)</h3>
@@ -39,7 +40,7 @@
       </p>
       <pre>{{ history.summary | tojson }}</pre>
     {% else %}
-      <p class="muted">No run has been logged yet for this feed from the UI or CLI (after deploy, runs are recorded automatically).</p>
+      <p class="muted" style="font-size:12px;">No logged run yet.</p>
     {% endif %}
   </div>
 
@@ -113,7 +114,7 @@
         <label><input type="checkbox" name="no_resume" value="1" {% if request.form.get('no_resume') %}checked{% endif %}> Ignore saved progress (<code>--no-resume</code>)</label>
       </div>
       <div>
-        <label><input type="checkbox" name="reset_state" value="1" {% if request.form.get('reset_state') %}checked{% endif %}> Clear resume state for this feed + date before run</label>
+        <label><input type="checkbox" name="reset_state" value="1" {% if request.form.get('reset_state') %}checked{% endif %}> Clear resume state <a href="{{ url_for('ui_help') }}#daily-postbacks-run" style="color:#6b7280;font-size:11px;">?</a></label>
       </div>
       <button type="submit">Run</button>
     </form>

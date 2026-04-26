@@ -1,18 +1,8 @@
 {% extends "ecomnia_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
 {% block title %}Ecomnia · WL potential · {{ source }}{% endblock %}
 {% block tool_body %}
-<h1>0-click campaigns · <code>{{ source }}</code></h1>
-<p class="muted">
-  Global-whitelist source on <strong>merged</strong> WL (campaign ∪ sheet) but <strong>0 clicks</strong> in the stats window from the last
-  <strong>Refresh WL from Ecomnia</strong> run. Set <code>cpcbysource["{{ source }}"]</code> to bid for traffic on these campaigns only.
-</p>
-<p class="muted">
-  Window:
-  <code>{{ wl_potential_meta.get('stats_window_start', '—') }}</code>
-  →
-  <code>{{ wl_potential_meta.get('stats_window_end', '—') }}</code>
-  ({{ wl_potential_meta.get('days', '—') }} days).
-</p>
+{{ tool_header("0-click · " ~ source, "Merged WL, 0 clicks in window — set cpcbysource.", "ec-wl-potential", (wl_potential_meta.get('stats_window_start', '—') ~ " → " ~ wl_potential_meta.get('stats_window_end', '—'))) }}
 {% if wl_potential_note %}
 <div class="banner warn">{{ wl_potential_note }}</div>
 {% endif %}

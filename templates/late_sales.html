@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kelkoo — Late sales postbacks</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
     .muted { color: #9ca3af; }
@@ -23,13 +24,9 @@
   </style>
 </head>
 <body>
-  <div><a href="/">Home</a> &middot; <a href="/">Dashboard</a></div>
-  <h1>Kelkoo — late sales postbacks</h1>
-  <div class="muted">
-    Compares the two latest <code>SalesReport_7days-generated-*</code> tabs (KLtools). Sale dates must fall in the late-sale window (excludes &ldquo;yesterday&rdquo; on-time sales relative to each tab&rsquo;s generation date).
-    Skips a row if its <code>click_id</code> appears in any <code>SalesReport_*_generated-*</code> daily tab (on-time postback already fired) or if a <code>{month}_late_sales_log</code> row already recorded a LateSale postback for that click.
-    <strong>Dry run</strong> shows the LateSale GET you would send for each non-skipped row. <strong>Apply</strong> sends those GETs only, then appends successful sends to the monthly log (e.g. <code>april_late_sales_log</code>).
-  </div>
+  {% from "macros/page_header.html" import tool_header %}
+  <div><a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#late-sales">Help</a></div>
+  {{ tool_header("Kelkoo — late sales postbacks", "KLtools 7-day vs daily tabs → LateSale GETs.", "late-sales", "dry-run | apply") }}
 
   <div class="card">
     <form method="post">

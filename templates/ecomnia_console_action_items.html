@@ -1,12 +1,9 @@
 {% extends "ecomnia_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
 {% from "ecomnia_console_macros.html" import last_run_block with context %}
 {% block title %}Ecomnia · Action items{% endblock %}
 {% block tool_body %}
-<h1>Exploration action items</h1>
-<p class="muted">
-  Active campaigns (not <code>-wl</code>) where <strong>yesterday spend &lt; daily budget</strong> and there are <strong>zero-click sources</strong> in the by-source report (not blacklisted).
-  Approve CPC level-up in Google Sheet <strong>trackExploration</strong> column <code>CpcLvlUp</code> with <strong>v</strong> or <strong>x</strong>; this UI does not change bids.
-</p>
+{{ tool_header("Exploration action items", "Under-spend + zero-click sources; CPC in trackExploration sheet.", "ec-action-items", "UTC yesterday + lookback days") }}
 
 {% if not ec_ok %}
 <div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>

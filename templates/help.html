@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Help Center · KLblend</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a2b;
+      --muted: #9aa4b2;
+      --text: #eaf1fb;
+      --line: #27324a;
+      --accent: #4f8cff;
+    }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      background: linear-gradient(180deg, #0b1020, #0d1426 35%, #0b1020);
+      color: var(--text);
+    }
+    .help-top {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 20px 24px 0;
+    }
+    .help-top h1 { margin: 0 0 6px; font-size: 1.65rem; }
+    .help-top .lead { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="help-top">
+    <a class="help-back" href="{{ url_for('ui_home') }}">← Control Center</a>
+    <h1>Help Center</h1>
+    <p class="lead">Flags, caveats, and examples for KLblend tools. Use the sidebar to jump; search filters sections below.</p>
+    <input type="search" class="help-search" id="help-search" placeholder="Search flags, tools, scripts…" autocomplete="off">
+  </div>
+
+  <div class="help-layout">
+    <aside class="help-sidebar" id="help-sidebar">
+      <div class="help-nav-h">Navigate</div>
+      <a href="#overview">Overview</a>
+      <a href="#daily-automations">Daily automations</a>
+      <a href="#kelkoo">Kelkoo</a>
+      <a href="#blend">Blend</a>
+      <a href="#ecomnia">Ecomnia</a>
+      <a href="#sourceknowledge">SourceKnowledge</a>
+      <a href="#matchmaking">Matchmaking</a>
+      <a href="#publishers">Publishers</a>
+      <a href="#autoserver">AutoServer</a>
+      <a href="#misc">Misc</a>
+    </aside>
+
+    <main class="help-main" id="help-main">
+
+      <section class="help-group help-section" id="overview" data-help-search="overview snapshot dashboard performance refresh apis">
+        <h2>Performance overview</h2>
+        <details class="help-acc" open data-help-search="overview snapshot">
+          <summary>Homepage overview tiles</summary>
+          <div class="help-acc-body">
+            <p>Tiles read the on-disk snapshot (fast). <strong>Refresh from APIs</strong> rebuilds revenue and DSP cost tiles and can take several minutes.</p>
+            <table>
+              <thead><tr><th>Action</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET /api/overview</code></td><td>Return last saved snapshot JSON.</td></tr>
+                <tr><td><code>POST /api/overview/refresh</code></td><td>Rebuild snapshot from live APIs.</td></tr>
+              </tbody>
+            </table>
+            <p><strong>Caveat:</strong> Daily rebuild also runs on a background schedule (<code>OVERVIEW_SCHEDULER_ENABLED</code>, <code>OVERVIEW_SNAPSHOT_HOUR</code>).</p>
+            <p><a href="{{ url_for('ui_home') }}">Open Control Center →</a></p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="daily-automations" data-help-search="workflow daily keitaro blend monetization nipuhim">
+        <h2>Daily automations</h2>
+        <p style="font-size:14px;color:#9aa4b2;margin:0 0 12px;">Each workflow runs a Python script with optional CLI args. The UI builds args from templates + optional fields + free-text <code>extra_args</code>.</p>
+
+        {% for key, wf in workflows.items() %}
+        <details class="help-acc" id="{{ key }}" data-help-search="{{ key }} {{ wf.title }} {{ wf.script }} {{ wf.description }}">
+          <summary>{{ wf.title }} (<code>{{ wf.script }}</code>)</summary>
+          <div class="help-acc-body">
+            <p>{{ wf.description }}</p>
+            <p><strong>Args hint:</strong> <code>{{ wf.args_hint }}</code></p>
+            <p><a href="{{ url_for('ui_workflow', workflow_key=key) }}">Open workflow page →</a></p>
+            {% if wf.args_templates %}
+            <table>
+              <thead><tr><th>Template label</th><th>Value appended</th></tr></thead>
+              <tbody>
+                {% for t in wf.args_templates %}
+                <tr><td>{{ t.label }}</td><td><code>{{ t.value or "(empty)" }}</code></td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% endif %}
+            {% if key == "daily" %}
+            <p><strong>Workflow UI fields:</strong> Country rerun → <code>--geo</code>; Blend step 7b on/off; merchant mode maps to <code>--merchant-override</code> / <code>--merchant-auto-override</code> (manual wins if both).</p>
+            <table>
+              <thead><tr><th>Flag</th><th>Description</th><th>Example</th></tr></thead>
+              <tbody>
+                <tr><td><code>--skip-keitaro</code></td><td>Skip Nipuhim + Blend Keitaro sync.</td><td><code>--skip-keitaro</code></td></tr>
+                <tr><td><code>--skip-blend</code></td><td>Skip entire Blend block.</td><td><code>--skip-blend</code></td></tr>
+                <tr><td><code>--feed1-traffic-only</code></td><td>Feed1 Keitaro only, then Blend as configured.</td><td></td></tr>
+                <tr><td><code>--single-merchant-per-geo</code></td><td>Legacy one merchant per geo for PLA.</td><td></td></tr>
+                <tr><td><code>--skip-sales-report</code></td><td>Skip Kelkoo yesterday sales export before late-sales.</td><td></td></tr>
+                <tr><td><code>--skip-late-sales</code></td><td>Skip late-sales step after sales report.</td><td></td></tr>
+                <tr><td><code>--late-sales-apply</code></td><td>With successful diff, late-sales sends GET postbacks.</td><td></td></tr>
+                <tr><td><code>--dry-run</code></td><td>Sales report does not write Sheets; late-sales never applies GETs.</td><td></td></tr>
+                <tr><td><code>--skip-blend-prune</code></td><td>Skip step 7a½ Blend prune on Keitaro.</td><td></td></tr>
+                <tr><td><code>--geo</code></td><td>Comma 2-letter geos; only those get fresh PLA + Keitaro; others unchanged in offers tabs.</td><td><code>--geo uk,fr,de</code></td></tr>
+                <tr><td><code>--merchant-override</code></td><td>Repeatable <code>1:uk=id</code> or comma ids for fallback order.</td><td><code>--merchant-override 1:uk=15248713</code></td></tr>
+                <tr><td><code>--merchant-auto-override</code></td><td>Platform rank for feed+geo; <code>1:uk:3</code> = 3rd rank.</td><td><code>--merchant-auto-override 1:uk</code></td></tr>
+                <tr><td><code>--offers-and-keitaro-only</code></td><td>Skips monthly log 0a, Blend potential 0b, tab delete 0; no fresh feed fixim download; steps 3–6 only.</td><td></td></tr>
+                <tr><td><code>--date</code></td><td>Run for a specific date tab context when supported.</td><td><code>--date 2026-03-08</code></td></tr>
+              </tbody>
+            </table>
+            <p><strong>Order (summary):</strong> monthly log → Blend potential (optional) → tab cleanup → feeds → fixim → merchants → PLA → combined sheet → Keitaro → Blend → sales report → late-sales. See <code>CLAUDE.md</code> for detail.</p>
+            {% elif key == "blend" %}
+            <p><strong>Blend feed dropdown:</strong> controls which potential sheets are refreshed (<code>kelkoo1</code>, <code>kelkoo2</code>, <code>adexa</code>, <code>yadore</code>). Blend tab column <code>feed</code> must match.</p>
+            {% elif key == "blend-keitaro-sync" %}
+            <p>Optional <strong>Country</strong> field appends <code>--geo</code>. Does not refresh potentialKelkoo* tabs.</p>
+            {% endif %}
+          </div>
+        </details>
+        {% endfor %}
+      </section>
+
+      <section class="help-group help-section" id="kelkoo" data-help-search="kelkoo late sales postbacks kltools">
+        <h2>Kelkoo</h2>
+        <details class="help-acc" id="late-sales" data-help-search="late sales postback kltools salesreport">
+          <summary>Late sales postbacks</summary>
+          <div class="help-acc-body">
+            <p>Compares the two latest <code>SalesReport_7days-generated-*</code> tabs on the KLtools workbook. Sale dates must fall in the late-sale window (excludes on-time “yesterday” sales vs each tab’s generation date). Skips rows if <code>click_id</code> already appears in a daily <code>SalesReport_*_generated-*</code> tab or if <code>{month}_late_sales_log</code> already recorded a LateSale postback.</p>
+            <table>
+              <thead><tr><th>Field</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>As-of date</td><td>Optional <code>YYYY-MM-DD</code>; blank = latest tab.</td></tr>
+                <tr><td>Mode</td><td><strong>Dry run</strong> shows GET URLs only. <strong>Apply</strong> sends GETs and appends successes to the monthly log.</td></tr>
+              </tbody>
+            </table>
+            <p><strong>Example:</strong> leave as-of blank, choose Dry run, submit to preview.</p>
+            <p><a href="{{ url_for('ui_kelkoo_late_sales') }}">Open late sales →</a></p>
+          </div>
+        </details>
+        <details class="help-acc" id="daily-postbacks" data-help-search="daily postbacks kelkoo adexa yadore conversion">
+          <summary>Daily conversion postbacks</summary>
+          <div class="help-acc-body">
+            <p>Per-feed pages run Kelkoo / Adexa / Yadore daily click &amp; sale GET postbacks (see <code>integrations/daily_conversion_postbacks.py</code>). State file: <code>runtime/daily_conversion_postbacks_state.json</code> (or <code>DAILY_CONVERSION_POSTBACK_STATE_PATH</code>). On a feed page, set <strong>Report date</strong> to inspect another day’s resume rows or use <code>?date=YYYY-MM-DD</code> in the URL.</p>
+            <p id="daily-postbacks-run"><strong>Run form:</strong> <em>Ignore saved progress</em> maps to <code>--no-resume</code>. <em>Clear resume state</em> wipes saved progress for this feed + report date before the run (use when you intentionally want a clean rerun).</p>
+            <p><a href="{{ url_for('ui_kelkoo_daily_postbacks_hub') }}">Open postbacks hub →</a></p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="blend" data-help-search="blend keitaro populate potential">
+        <h2>Blend</h2>
+        <details class="help-acc" id="blend-workflow-notes" data-help-search="blend sync populate potential clickcap">
+          <summary>Blend workflows (summary)</summary>
+          <div class="help-acc-body">
+            <p><strong>Blend workflow</strong> runs <code>run_blend_workflow.py</code>: Keitaro sync from the Blend sheet, refresh potential sheets, optional populate. <strong>Blend sheet → Keitaro</strong> runs only <code>blend_sync_from_sheet.py</code> (prune bad <code>auto=v</code>, rebuild offers/flows).</p>
+            <p><strong>Blend Stop Closed</strong> (<code>blend_stop_closed_merchants.py</code>): during-day, sets non-monetized <code>auto=v</code> Kelkoo1/2 Blend rows share to 0.</p>
+            <p>Env: <code>BLEND_SHEETS_SPREADSHEET_ID</code>, <code>BLEND_POTENTIAL_FEEDS</code>, feed API keys. Full URL rules are documented in <code>CLAUDE.md</code> (Blend → Keitaro).</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="ecomnia" data-help-search="ecomnia console sheet whitelist blacklist globaList">
+        <h2>Ecomnia</h2>
+        <details class="help-acc" id="ecomnia-console" data-help-search="ecomnia console hub lists">
+          <summary>Ecomnia console (hub &amp; tools)</summary>
+          <div class="help-acc-body">
+            <p>Console pages share nav: Sheet lists, Campaign WL, Sync BL, WL check, Action items. State and last-run metadata live in <code>runtime/ecomnia_console_state.json</code>. Sheet ID: <code>EC_SHEETS_SPREADSHEET_ID</code>; geo tab name <code>ECOMNIA_GLOBA_LIST_TAB</code> (default <code>globaList</code>).</p>
+            <p><strong>Sheet lists:</strong> load <code>globaList</code> → per-geo blacklist/whitelist copy blocks.</p>
+            <p><strong>Campaign whitelist:</strong> API whitelistsources + merged sheet view.</p>
+            <p><strong>Sync blacklists:</strong> dry-run vs apply; skips <code>-wl</code> campaigns.</p>
+            <p><strong>Whitelist check:</strong> campaign × source vs report clicks in a window.</p>
+            <p><strong>Action items:</strong> under-spend + zero-click sources; CPC bumps remain manual in <code>trackExploration</code>.</p>
+            <p><a href="{{ url_for('ui_ec_console_hub') }}">Open Ecomnia console →</a></p>
+            <details class="help-acc" id="ec-console-lists" style="margin-top:12px;border:0;">
+              <summary>Sheet lists (detail)</summary>
+              <div class="help-acc-body">
+                <p>Tab <code>globaList</code> (or <code>ECOMNIA_GLOBA_LIST_TAB</code>) → per-geo blacklist/whitelist copy blocks for the Ecomnia UI. <strong>Load from sheet</strong> refreshes the cached snapshot other tools use.</p>
+                <p><a href="{{ url_for('ui_ec_console_tool', page_slug='lists') }}">Open Sheet lists →</a></p>
+              </div>
+            </details>
+            <details class="help-acc" id="ec-campaign-wl" style="margin-top:8px;border:0;">
+              <summary>Campaign whitelist (detail)</summary>
+              <div class="help-acc-body">
+                <p>Each campaign exposes <strong>whitelistsources</strong>. <strong>Global whitelist</strong> = source on ≥2 campaigns. Checks merge this with sheet geo whitelist. <strong>Potential (0-click)</strong> = on merged WL but no clicks in the stats window — drill in to set <code>cpcbysource</code>.</p>
+                <p><a href="{{ url_for('ui_ec_console_tool', page_slug='whitelist-derived') }}">Open Campaign WL →</a></p>
+              </div>
+            </details>
+            <details class="help-acc" id="ec-sync-bl" style="margin-top:8px;border:0;">
+              <summary>Sync blacklists (detail)</summary>
+              <div class="help-acc-body">
+                <p>Same idea as legacy <code>explorations_blacklist_synch</code>: sources blacklisted in 4+ campaigns in a geo are added to other campaigns in that geo. Skips <code>-wl</code> campaigns. Use <strong>Dry-run</strong> then <strong>Apply</strong>.</p>
+                <p><a href="{{ url_for('ui_ec_console_tool', page_slug='sync-blacklists') }}">Open Sync BL →</a></p>
+              </div>
+            </details>
+            <details class="help-acc" id="ec-wl-check" style="margin-top:8px;border:0;">
+              <summary>Whitelist traffic check (detail)</summary>
+              <div class="help-acc-body">
+                <p>Each row: campaign × source on the <strong>merged</strong> whitelist (campaign <code>whitelistsources</code> ∪ sheet geo WL). Clicks from Ecomnia in the window.</p>
+                <p id="ec-wl-check-audit"><strong>Admin — single source audit:</strong> lists campaigns where the source is on the merged whitelist, has <strong>clicks</strong> in <code>adv-stats-by-source</code> for the window, and reported <strong>conversions/sales</strong> are 0. Default <strong>minimum 2 campaigns</strong> filters cross-campaign patterns; set <strong>Min. campaigns</strong> to <strong>1</strong> to see every match. If the API omits conversion columns, 0 conversions is assumed.</p>
+                <p><a href="{{ url_for('ui_ec_console_tool', page_slug='whitelist-check') }}">Open WL check →</a></p>
+              </div>
+            </details>
+            <details class="help-acc" id="ec-action-items" style="margin-top:8px;border:0;">
+              <summary>Action items (detail)</summary>
+              <div class="help-acc-body">
+                <p>Active non-<code>-wl</code> campaigns where yesterday spend &lt; daily budget and the by-source report shows zero-click sources (not blacklisted). Approve CPC bumps in sheet <strong>trackExploration</strong> column <code>CpcLvlUp</code> (<code>v</code>/<code>x</code>); this UI does not write bids.</p>
+                <p><a href="{{ url_for('ui_ec_console_tool', page_slug='action-items') }}">Open action items →</a></p>
+              </div>
+            </details>
+            <details class="help-acc" id="ec-wl-potential" style="margin-top:8px;border:0;">
+              <summary>WL 0-click potential (detail)</summary>
+              <div class="help-acc-body">
+                <p>Per-source page: campaigns where the source is on merged WL but had 0 clicks in the stats window from the last refresh. Set <code>cpcbysource</code> JSON for that source only.</p>
+              </div>
+            </details>
+          </div>
+        </details>
+        <details class="help-acc" id="ecomnia-bulk" data-help-search="ecomnia bulk open sheet tab">
+          <summary>Ecomnia bulk open (<code>/ec</code>)</summary>
+          <div class="help-acc-body">
+            <p>Reads rows from the EC sheet (brand, geo, hp, fbhp) and creates campaigns using prefix + Keitaro alias. Tab defaults to <code>bulk</code>. Modes: <strong>Dry run</strong> / <strong>Apply</strong>.</p>
+            <p><a href="{{ url_for('ui_ec') }}">Open bulk open →</a></p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="sourceknowledge" data-help-search="sourceknowledge sk console bulk">
+        <h2>SourceKnowledge</h2>
+        <details class="help-acc" id="sk-console" data-help-search="sk console bulk prefix alias">
+          <summary>SK console (<code>/sk</code>)</summary>
+          <div class="help-acc-body">
+            <p>Sheet-driven bulk open: prefix (e.g. KLFIX, KLWL), Keitaro alias (tracking segment), input tab name (e.g. <code>bulkSK-KLFIX</code>), dry-run vs apply.</p>
+            <p><a href="{{ url_for('ui_sk') }}">Open SK console →</a></p>
+          </div>
+        </details>
+        <details class="help-acc" id="sk-qualitywl" data-help-search="qualitywl sheet dashboard">
+          <summary>QualityWL dashboard</summary>
+          <div class="help-acc-body">
+            <p>Read-only view of the QualityWL tab from the SK tools spreadsheet (<code>SK_TOOLS_SPREADSHEET_ID</code>); row limit and reload via query form.</p>
+            <p><a href="{{ url_for('ui_sk_qualitywl') }}">Open QualityWL →</a></p>
+          </div>
+        </details>
+        <details class="help-acc" id="sk-tools-sheet" data-help-search="sk tools sheet tab browser">
+          <summary>SK tools sheet browser</summary>
+          <div class="help-acc-body">
+            <p>Pick a tab and row limit to browse the SK tools Google Sheet in the browser.</p>
+            <p><a href="{{ url_for('ui_sk_tools_sheet') }}">Open SK tools sheet →</a></p>
+          </div>
+        </details>
+        <details class="help-acc" id="sk-migrations" data-help-search="migrate sk tracking klwl klfix">
+          <summary>SK migration scripts (CLI)</summary>
+          <div class="help-acc-body">
+            <p><code>migrate_sk_tracking_urls.py</code> — single-campaign tracking URL updates.</p>
+            <p><code>migrate_sk_campaigns_bulk.py</code> — bulk rename + tracking URLs with resume state, <code>--dry-run</code>, <code>--only-active</code>, blocked/failed id files. See <code>CLAUDE.md</code>.</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="matchmaking" data-help-search="matchmaking monetization yadore adexa">
+        <h2>Matchmaking</h2>
+        <details class="help-acc" id="matchmaking-hub" data-help-search="matchmaking manual sheet">
+          <summary>Matchmaking hub</summary>
+          <div class="help-acc-body">
+            <p><strong>Manual:</strong> domain/URL + optional geo; compares Kelkoo feeds, Yadore (standard + couponing), Adexa.</p>
+            <p><strong>Sheet bulk:</strong> runs the monetization-check workflow against your configured Google Sheet.</p>
+            <p><a href="{{ url_for('ui_matchmaking_hub') }}">Open matchmaking →</a></p>
+            <details class="help-acc" id="matchmaking-manual" style="margin-top:12px;border:0;">
+              <summary>Manual check (detail)</summary>
+              <div class="help-acc-body">
+                <p>Enter a domain or URL and geo (or all). Compares feed2 vs feed1, Yadore standard + couponing, and Adexa Link Monetizer per country.</p>
+                <p><a href="{{ url_for('ui_matchmaking_manual') }}">Open manual check →</a></p>
+              </div>
+            </details>
+            <details class="help-acc" id="matchmaking-sheets" style="margin-top:8px;border:0;">
+              <summary>Sheet bulk (detail)</summary>
+              <div class="help-acc-body">
+                <p>Runs <code>monetization_check.py</code> against the <code>sourceToCheck</code> sheet and writes the Matches tab. Optional max rows in the form.</p>
+                <p><a href="{{ url_for('ui_matchmaking_sheets') }}">Open sheet bulk →</a></p>
+              </div>
+            </details>
+          </div>
+        </details>
+        <details class="help-acc" id="monetization-check" data-help-search="monetization check max-rows">
+          <summary>Monetization check workflow</summary>
+          <div class="help-acc-body">
+            <p>Script <code>monetization_check.py</code>. Optional <code>--max-rows N</code>. Writes Matches sheet.</p>
+            <p><a href="{{ url_for('ui_workflow', workflow_key='monetization-check') }}">Open workflow →</a></p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="publishers" data-help-search="publishers brands">
+        <h2>Publishers</h2>
+        <details class="help-acc" id="publishers-brands" data-help-search="publishers brands ecomnia snapshot">
+          <summary>Publisher brands browser</summary>
+          <div class="help-acc-body">
+            <p>Unified brands view across SK + EC. Use <strong>Refresh Snapshot</strong> (POST) or force refresh via GET query to rebuild the cached join used by the table.</p>
+            <p>Brand detail lists campaigns with platform, ids, and status for cross-publisher comparison.</p>
+            <p><a href="{{ url_for('ui_publishers_brands') }}">Open publishers →</a></p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="autoserver" data-help-search="autoserver scheduler apscheduler zeropark sk mehilot">
+        <h2>AutoServer automations</h2>
+        <details class="help-acc" id="automations-ui" data-help-search="automations trigger log">
+          <summary>Scheduler &amp; manual triggers</summary>
+          <div class="help-acc-body">
+            <p>APScheduler fires an hourly signal at minute 0. Jobs: Mehilot, KLFIX optimize, Pause unmon SK, KLWL (even hours), QualityWL (even hours), Close Nipuhim (hour 23). Env aliases are synced from <code>config</code> via <code>integrations/autoserver/env.py</code>.</p>
+            <table>
+              <thead><tr><th>API</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET /api/automations</code></td><td>Status + last run per job.</td></tr>
+                <tr><td><code>GET /api/automations/log?limit=20</code></td><td>Recent run log entries.</td></tr>
+                <tr><td><code>GET /api/automations/trigger/all</code></td><td>202 — queue all <code>run_manually</code>.</td></tr>
+                <tr><td><code>GET /api/automations/trigger/&lt;ClassName&gt;</code></td><td>202 — queue one job.</td></tr>
+              </tbody>
+            </table>
+            <p>Run log file: <code>data/autoserver_run_log.json</code> (trimmed to <code>AUTOSERVER_RUN_LOG_MAX</code>). Disable scheduler on extra Gunicorn workers: <code>AUTOSERVER_SCHEDULER_ENABLED=0</code>.</p>
+            <p><a href="{{ url_for('ui_automations') }}">Open automations UI →</a></p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="misc" data-help-search="github health nipuhim keitaro sync">
+        <h2>Misc</h2>
+        <details class="help-acc" id="github-connect" data-help-search="github git cli">
+          <summary>GitHub connection</summary>
+          <div class="help-acc-body">
+            <p>Shows whether <code>.git</code> exists, <code>git remote -v</code>, and <code>gh auth status</code> output for quick diagnostics.</p>
+            <p><a href="{{ url_for('ui_github_connect') }}">Open page →</a></p>
+          </div>
+        </details>
+        <details class="help-acc" id="keitaro-sync-help" data-help-search="keitaro sync offers sheet">
+          <summary>Keitaro sync only</summary>
+          <div class="help-acc-body">
+            <p>Runs <code>run_keitaro_sync.py</code> — offers from sheets to Keitaro without the full daily pipeline. Optional <code>--date</code>.</p>
+            <p><a href="{{ url_for('ui_workflow', workflow_key='keitaro-sync') }}">Open workflow →</a></p>
+          </div>
+        </details>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+  (function() {
+    var inp = document.getElementById("help-search");
+    if (!inp) return;
+    function norm(s) { return (s || "").toLowerCase(); }
+    function apply() {
+      var q = norm(inp.value).trim();
+      var sections = document.querySelectorAll(".help-section");
+      sections.forEach(function(sec) {
+        var hay = norm(sec.getAttribute("data-help-search")) + " " + norm(sec.textContent);
+        var show = !q || hay.indexOf(q) !== -1;
+        sec.style.display = show ? "" : "none";
+      });
+      document.querySelectorAll(".help-acc").forEach(function(acc) {
+        var hay = norm(acc.getAttribute("data-help-search")) + " " + norm(acc.textContent);
+        var show = !q || hay.indexOf(q) !== -1;
+        acc.style.display = show ? "" : "none";
+      });
+    }
+    inp.addEventListener("input", apply);
+    apply();
+    if (location.hash) {
+      var el = document.querySelector(location.hash);
+      if (el) setTimeout(function() { el.scrollIntoView({ behavior: "smooth", block: "start" }); }, 100);
+    }
+  })();
+  </script>
+</body>
+</html>

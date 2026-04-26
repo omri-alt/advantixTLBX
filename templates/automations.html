@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AutoServer automations · KLblend</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     :root {
       --bg: #0b1020;
@@ -18,8 +19,8 @@
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Inter, Segoe UI, Arial, sans-serif; background: linear-gradient(180deg, #0b1020, #0d1426 35%, #0b1020); color: var(--text); }
     .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
-    .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
-    .top h1 { margin: 0; font-size: 1.5rem; }
+    .top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+    .top .tool-page-title { font-size: 1.35rem; }
     .muted { color: var(--muted); font-size: 14px; }
     .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
     .dot.on { background: var(--ok); box-shadow: 0 0 10px rgba(34,197,94,.45); }
@@ -47,12 +48,12 @@
   </style>
 </head>
 <body>
+  {% from "macros/page_header.html" import tool_header %}
   <div class="wrap">
     <p><a class="back" href="{{ url_for('ui_home') }}">← Control Center</a></p>
     <div class="top">
-      <div>
-        <h1>AutoServer automations</h1>
-        <p class="muted">Hourly jobs (minute 0) + manual triggers. APIs: <code>/api/automations</code>, <code>/api/automations/log</code>.</p>
+      <div style="flex:1;min-width:0;">
+        {{ tool_header("AutoServer automations", "Hourly jobs + manual triggers + run log.", "automations-ui", "GET /api/automations") }}
       </div>
       <div>
         <span id="sched-ind"><span class="dot off"></span><span id="sched-txt">Scheduler …</span></span>
@@ -64,7 +65,7 @@
 
     <section class="log">
       <h2>Recent runs</h2>
-      <p class="muted">Newest first · auto-refresh every 60s</p>
+      <p class="muted" style="margin:0 0 8px;font-size:12px;">Newest first · refresh 60s</p>
       <div class="scroll">
         <table>
           <thead><tr><th>Time</th><th>Automation</th><th>Trigger</th><th>Duration</th><th>Status</th></tr></thead>

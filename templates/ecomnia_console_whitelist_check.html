@@ -1,9 +1,9 @@
 {% extends "ecomnia_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
 {% from "ecomnia_console_macros.html" import last_run_block with context %}
 {% block title %}Ecomnia · Whitelist check{% endblock %}
 {% block tool_body %}
-<h1>Whitelist traffic check</h1>
-<p class="muted">Each row: <strong>campaign × source</strong> where the source is on the <strong>merged</strong> whitelist (campaign <code>whitelistsources</code> ∪ sheet geo whitelist). Clicks from EC in the window (0 = no traffic). Below, <strong>Admin source audit</strong> finds one source on merged WL with <strong>clicks &gt; 0</strong> and <strong>no conversions</strong> in the report (see conversions/sales fields when present).</p>
+{{ tool_header("Whitelist traffic check", "Merged WL × source vs report clicks.", "ec-wl-check", "Days + campaign limit") }}
 
 {% if not ec_ok %}
 <div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>
@@ -41,7 +41,7 @@
 
 <section class="tool-section">
   <h2>Admin — single source (traffic, no conversions)</h2>
-  <p class="muted">Lists campaigns where the source is on the <strong>merged whitelist</strong>, has <strong>clicks</strong> in <code>adv-stats-by-source</code> for the window, and reported <strong>conversions/sales</strong> are 0. Default <strong>minimum 2 campaigns</strong> filters to cross-campaign patterns; set to <strong>1</strong> to see every match. If the API omits conversion columns, 0 conversions is assumed.</p>
+  <p class="muted" style="font-size:12px;">Audit merged-WL traffic with no conversions. <a href="{{ url_for('ui_help') }}#ec-wl-check-audit" style="color:#6b7280;">?</a></p>
   <form method="post" action="{{ url_for('ui_ec_console_do') }}" class="btn-row" style="flex-direction:column;align-items:stretch;gap:12px;">
     <input type="hidden" name="page" value="whitelist-check">
     <input type="hidden" name="action" value="whitelist_focus_source">

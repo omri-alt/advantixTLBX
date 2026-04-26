@@ -1,9 +1,9 @@
 {% extends "ecomnia_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
 {% from "ecomnia_console_macros.html" import last_run_block with context %}
 {% block title %}Ecomnia · Sheet lists{% endblock %}
 {% block tool_body %}
-<h1>Sheet lists</h1>
-<p class="muted">Tab <code>{{ globa_tab }}</code> → geo <strong>blacklist</strong> / <strong>whitelist</strong> for copy-paste into Ecomnia. Load refreshes the cached snapshot used by other tools.</p>
+{{ tool_header("Sheet lists", "Geo BL/WL from tab " ~ globa_tab ~ ".", "ec-console-lists", "POST Load from sheet") }}
 
 {% if not ec_ok %}
 <div class="banner warn">Set Ecomnia API keys in <code>.env</code> to enable actions.</div>
@@ -19,7 +19,6 @@
     <input type="hidden" name="action" value="refresh_lists">
     <button type="submit" {% if not ec_ok or not sheet_ok %}disabled{% endif %}>Load from sheet</button>
   </form>
-  <p class="muted">After load, use the blocks below for the Ecomnia UI (one source per line). “All geos” is a single combined block.</p>
   <label>All geos (copy)</label>
   <textarea class="copybox all" readonly>{{ copy_all or "(Load from sheet first.)" }}</textarea>
   {% for geo, g in geo_map|dictsort %}

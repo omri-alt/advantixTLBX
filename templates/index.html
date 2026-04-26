@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KLblend Control Center</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     :root {
       --bg: #0b1020;
@@ -43,9 +44,15 @@
       transition: border-color .15s ease, box-shadow .15s ease;
     }
     .ql-card:hover { border-color: var(--accent); box-shadow: 0 8px 28px rgba(0,0,0,.28); }
-    .ql-card h3 { margin: 0 0 6px; font-size: 1rem; color: #e2e8f0; }
-    .ql-card p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
-    .ql-card .go { margin-top: 12px; font-size: 12px; font-weight: 600; color: #93c5fd; }
+    .ql-card h3 { margin: 0; font-size: 1rem; color: #e2e8f0; }
+    .ql-card::after {
+      content: "→";
+      display: block;
+      margin-top: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #93c5fd;
+    }
     .automations-section { margin-top: 8px; }
     .overview { margin: 0 0 32px; }
     .overview h2 { margin: 0 0 10px; font-size: 1.15rem; font-weight: 700; }
@@ -99,13 +106,13 @@
     <div class="hero">
       <div>
         <h1 class="title">KLblend Control Center</h1>
-        <div class="muted">Performance, publisher consoles, and daily automations across Kelkoo, Blend, Ecomnia, SourceKnowledge, and related feeds.</div>
+        <div class="muted" style="font-size:13px;max-width:640px;">Kelkoo, Blend, Ecomnia, SK, Zeropark — dashboards and ops tools. <a href="{{ url_for('ui_help') }}" class="tool-help-link" style="display:inline-flex;width:auto;height:auto;padding:2px 8px;margin-left:6px;vertical-align:middle;">?</a> <a href="{{ url_for('ui_help') }}" style="color:#93c5fd;">Help</a></div>
       </div>
     </div>
 
     <section class="overview" id="overview-widget" aria-live="polite">
       <h2 class="section-title">Performance overview</h2>
-      <p class="muted" style="margin:0 0 10px;font-size:13px;">Tiles load from the on-disk snapshot (fast). Use <strong>Refresh from APIs</strong> only when you want a full live rebuild (slow).</p>
+      <p class="muted" style="margin:0 0 10px;font-size:13px;max-height:2.6em;overflow:hidden;">Snapshot tiles (fast). <strong>Refresh</strong> = full API rebuild. <a href="{{ url_for('ui_help') }}#overview" style="color:#6b7280;font-size:12px;">?</a></p>
       <div class="ov-actions">
         <button type="button" class="btn btn-sm" id="overview-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh from APIs</button>
         <span class="muted" id="overview-snap-hint"></span>
@@ -130,55 +137,41 @@
 
     <section class="tools-section" aria-label="Tools">
       <h2 class="section-title">Tools</h2>
-      <p class="section-lead">Quick links to consoles and operational pages. Consoles group bulk and focused utilities in one place (Ecomnia and SourceKnowledge follow that pattern).</p>
       <div class="ql-grid">
         <a class="ql-card" href="{{ url_for('ui_ec_console_hub') }}">
           <h3>Ecomnia console</h3>
-          <p>Geo lists, whitelist audit, sheet-driven bulk opens, and related Ecomnia tooling.</p>
-          <div class="go">Open console →</div>
         </a>
         <a class="ql-card" href="{{ url_for('ui_sk') }}">
           <h3>SourceKnowledge console</h3>
-          <p>Sheet bulk opens and SK workflows; more features will land here over time.</p>
-          <div class="go">Open console →</div>
         </a>
         <a class="ql-card" href="{{ url_for('ui_kelkoo_late_sales') }}">
           <h3>Late sales</h3>
-          <p>Today’s Kelkoo KLtools late-sales flow; additional feeds can be wired in later.</p>
-          <div class="go">Open late sales →</div>
         </a>
         <a class="ql-card" href="{{ url_for('ui_kelkoo_daily_postbacks_hub') }}">
           <h3>Postbacks</h3>
-          <p>Daily conversion postbacks: Kelkoo feeds, Adexa, and Yadore.</p>
-          <div class="go">Open postbacks →</div>
         </a>
         <a class="ql-card" href="{{ url_for('ui_automations') }}">
           <h3>AutoServer automations</h3>
-          <p>SK, Zeropark, and Ecomnia scheduled jobs: status, manual triggers, and run log.</p>
-          <div class="go">Open automations →</div>
         </a>
         <a class="ql-card" href="{{ url_for('ui_matchmaking_hub') }}">
           <h3>Matchmaking</h3>
-          <p>Manual domain checks and sheet bulk monetization — same console, two entry points.</p>
-          <div class="go">Open matchmaking →</div>
         </a>
       </div>
     </section>
 
     <section class="automations-section" aria-label="Daily automations">
       <h2 class="section-title">Daily automations</h2>
-      <p class="section-lead">Scheduled-style workflows with last-run status and links to run or inspect each flow.</p>
     </section>
 
     <div class="grid">
       {% for group in groups %}
       <div class="card">
         <h3>{{ group.title }}</h3>
-        {% if group.description %}<div class="muted">{{ group.description }}</div>{% endif %}
         {% for wf in group["items"] %}
         <div class="wf">
           <div class="row">
             <strong>{{ wf.title }}</strong>
+            <a href="{{ url_for('ui_help') }}#{{ wf.key }}" style="color:#6b7280;font-size:12px;margin-left:6px;" title="Help">?</a>
             {% if wf.last_run %}
             <span class="status-{{ wf.last_run.status }}">{{ wf.last_run.status }}</span>
             {{ wf.last_run | workflow_run_time }}
@@ -186,7 +179,6 @@
             <span class="muted">No run yet</span>
             {% endif %}
           </div>
-          <div class="muted" style="margin:4px 0 8px;">{{ wf.description }}</div>
           <a class="btn" href="/workflows/{{ wf.key }}">Open</a>
         </div>
         {% endfor %}

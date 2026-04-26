@@ -1,9 +1,9 @@
 {% extends "ecomnia_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
 {% from "ecomnia_console_macros.html" import last_run_block with context %}
 {% block title %}Ecomnia · Sync blacklists{% endblock %}
 {% block tool_body %}
-<h1>Sync blacklists</h1>
-<p class="muted">Same idea as legacy <code>explorations_blacklist_synch</code>: sources blacklisted in 4+ campaigns in a geo get added to other campaigns in that geo. Skips <code>-wl</code> campaigns.</p>
+{{ tool_header("Sync blacklists", "Cross-campaign geo BL sync; skips -wl.", "ec-sync-bl", "Dry-run → Apply") }}
 
 {% if not ec_ok %}
 <div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>

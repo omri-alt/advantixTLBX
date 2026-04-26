@@ -1,13 +1,9 @@
 {% extends "ecomnia_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
 {% from "ecomnia_console_macros.html" import last_run_block with context %}
 {% block title %}Ecomnia · Campaign whitelist{% endblock %}
 {% block tool_body %}
-<h1>Campaign whitelist (API)</h1>
-<p class="muted">
-  Each campaign exposes <strong>whitelistsources</strong> in the API. <strong>Global whitelist</strong> here means a source on <strong>at least two</strong> campaigns.
-  Whitelist checks elsewhere <strong>merge</strong> this with sheet geo whitelist.
-  <strong>Potential (0-click)</strong> counts campaigns where that source is on the merged WL but had <strong>no clicks</strong> in the stats window — open the row to set <code>cpcbysource</code> bids.
-</p>
+{{ tool_header("Campaign whitelist (API)", "API whitelistsources + global WL + 0-click potential.", "ec-campaign-wl", "Refresh WL from Ecomnia") }}
 
 {% if not ec_ok %}
 <div class="banner warn">Set Ecomnia API keys in <code>.env</code>.</div>

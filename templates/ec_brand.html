@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EC Brand - {{ brand }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
     .muted { color: #9ca3af; }
@@ -17,9 +18,9 @@
   </style>
 </head>
 <body>
-  <div><a href="/ec">Back to EC tools</a></div>
-  <h1>Brand: {{ brand }}</h1>
-  <div class="muted">All EC campaigns for this brand.</div>
+  {% from "macros/page_header.html" import tool_header %}
+  <div><a href="/ec">← EC tools</a> · <a href="{{ url_for('ui_help') }}#ecomnia-bulk">Help</a></div>
+  {{ tool_header("EC · " ~ brand, "Campaigns for this brand.", "ecomnia-bulk", "") }}
   <div class="toolbar">
     <input id="campSearch" type="text" placeholder="Search campaign name/id...">
     <select id="statusFilter">

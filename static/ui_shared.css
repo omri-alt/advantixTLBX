@@ -1,0 +1,187 @@
+/* Compact tool headers + Help Center (KLblend UI declutter). */
+.tool-page-head {
+  margin-bottom: 14px;
+  max-width: 900px;
+}
+.tool-page-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tool-page-head-text {
+  min-width: 0;
+}
+.tool-page-title {
+  margin: 0;
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+.tool-page-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #9aa4b2;
+  line-height: 1.35;
+  max-height: 2.8em;
+  overflow: hidden;
+}
+.tool-page-ex {
+  font-size: 12px;
+  color: #93c5fd;
+  white-space: nowrap;
+}
+.tool-help-link {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  text-decoration: none;
+  width: 26px;
+  height: 26px;
+  line-height: 24px;
+  text-align: center;
+  border-radius: 8px;
+  border: 1px solid #374151;
+  background: rgba(15, 23, 42, 0.35);
+}
+.tool-help-link:hover {
+  color: #93c5fd;
+  border-color: #4f8cff;
+}
+
+/* Help Center */
+.help-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+.help-sidebar {
+  position: sticky;
+  top: 12px;
+  flex: 0 0 200px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.help-sidebar a {
+  display: block;
+  color: #9aa4b2;
+  text-decoration: none;
+  padding: 4px 0;
+  border-left: 2px solid transparent;
+  padding-left: 8px;
+  margin-left: -8px;
+}
+.help-sidebar a:hover {
+  color: #eaf1fb;
+}
+.help-sidebar .help-nav-h {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  margin: 14px 0 6px;
+}
+.help-main {
+  flex: 1;
+  min-width: 0;
+}
+.help-search {
+  width: 100%;
+  max-width: 420px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #27324a;
+  background: #0f172a;
+  color: #eaf1fb;
+  font: inherit;
+  margin-bottom: 18px;
+}
+.help-group {
+  margin-bottom: 28px;
+}
+.help-group h2 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+  border-bottom: 1px solid #27324a;
+  padding-bottom: 8px;
+}
+.help-acc {
+  border: 1px solid #27324a;
+  border-radius: 12px;
+  background: #121a2b;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.help-acc summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-weight: 600;
+  list-style: none;
+}
+.help-acc summary::-webkit-details-marker {
+  display: none;
+}
+.help-acc summary::before {
+  content: "▸ ";
+  color: #64748b;
+}
+.help-acc[open] summary::before {
+  content: "▾ ";
+}
+.help-acc-body {
+  padding: 0 14px 14px;
+  font-size: 14px;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+.help-acc-body p {
+  margin: 0 0 10px;
+}
+.help-acc-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 10px 0;
+}
+.help-acc-body th,
+.help-acc-body td {
+  border: 1px solid #27324a;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.help-acc-body th {
+  background: #151f33;
+  color: #9aa4b2;
+}
+.help-acc-body code {
+  color: #93c5fd;
+  font-size: 12px;
+}
+.help-back {
+  display: inline-block;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: #86efac;
+  text-decoration: none;
+}
+.help-back:hover {
+  text-decoration: underline;
+}
+@media (max-width: 860px) {
+  .help-layout {
+    flex-direction: column;
+  }
+  .help-sidebar {
+    position: static;
+    flex: none;
+    width: 100%;
+    border-bottom: 1px solid #27324a;
+    padding-bottom: 12px;
+  }
+}

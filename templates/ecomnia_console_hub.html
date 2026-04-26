@@ -1,12 +1,8 @@
 {% extends "ecomnia_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
 {% block title %}Ecomnia console · Hub{% endblock %}
 {% block tool_body %}
-<h1>Ecomnia console</h1>
-<p class="muted">
-  Operate geo lists, campaign whitelists, blacklist sync, whitelist traffic checks, and exploration action items.
-  Each tile opens a dedicated page with controls, cached output tables, and a <strong>last run log</strong> (JSON detail from the console state file).
-</p>
-<p class="muted">State: <code>runtime/ecomnia_console_state.json</code> · Sheet: <code>{{ spreadsheet_id }}</code></p>
+{{ tool_header("Ecomnia console", "Geo lists, WL, BL sync, checks, action items.", "ecomnia-console", "state: runtime/ecomnia_console_state.json") }}
 
 {% if not ec_ok %}
 <div class="banner warn">Set <code>ADVERTISER_KEY</code>, <code>AUTH_KEY</code>, <code>SECRET_KEY</code> in <code>.env</code> for Ecomnia API actions.</div>
@@ -21,7 +17,6 @@
     {% set r_lists = runs.get('refresh_lists') %}
     <a class="tile" href="{{ url_for('ui_ec_console_tool', page_slug='lists') }}">
       <h3>Sheet lists</h3>
-      <p>Load <code>{{ globa_tab }}</code> from Google Sheets. Copy-paste blacklist and whitelist blocks per geo.</p>
       <span class="tile-meta">
         {% if r_lists %}<span class="{{ 'ok' if r_lists.ok else 'bad' }}">{{ r_lists.at_utc }}</span> · {{ 'ok' if r_lists.ok else 'failed' }}{% else %}Never run{% endif %}
       </span>
@@ -29,7 +24,6 @@
     {% set r_wl = runs.get('refresh_whitelist_derived') %}
     <a class="tile" href="{{ url_for('ui_ec_console_tool', page_slug='whitelist-derived') }}">
       <h3>Campaign whitelist</h3>
-      <p>API <code>whitelistsources</code> per campaign, global WL (≥2 campaigns), merged with sheet for checks.</p>
       <span class="tile-meta">
         {% if r_wl %}<span class="{{ 'ok' if r_wl.ok else 'bad' }}">{{ r_wl.at_utc }}</span> · {{ 'ok' if r_wl.ok else 'failed' }}{% else %}Never run{% endif %}
       </span>
@@ -37,7 +31,6 @@
     {% set r_dry = runs.get('sync_blacklists_dry') %}
     <a class="tile" href="{{ url_for('ui_ec_console_tool', page_slug='sync-blacklists') }}">
       <h3>Sync blacklists</h3>
-      <p>Cross-campaign geo blacklist sync (dry-run and apply). Skips <code>-wl</code> campaigns.</p>
       <span class="tile-meta">
         Dry-run {% if r_dry %}<span class="{{ 'ok' if r_dry.ok else 'bad' }}">{{ r_dry.at_utc }}</span>{% else %}—{% endif %}
       </span>
@@ -45,7 +38,6 @@
     {% set r_chk = runs.get('whitelist_check') %}
     <a class="tile" href="{{ url_for('ui_ec_console_tool', page_slug='whitelist-check') }}">
       <h3>Whitelist traffic check</h3>
-      <p>Campaign × source on merged WL vs report clicks in a window.</p>
       <span class="tile-meta">
         {% if r_chk %}<span class="{{ 'ok' if r_chk.ok else 'bad' }}">{{ r_chk.at_utc }}</span> · {{ (r_chk.detail or {}).get('rows', '—') }} rows{% else %}Never run{% endif %}
       </span>
@@ -53,7 +45,6 @@
     {% set r_act = runs.get('action_items') %}
     <a class="tile" href="{{ url_for('ui_ec_console_tool', page_slug='action-items') }}">
       <h3>Exploration action items</h3>
-      <p>Under-spend yesterday plus zero-click sources. CPC bumps stay manual in <strong>trackExploration</strong>.</p>
       <span class="tile-meta">
         {% if r_act %}<span class="{{ 'ok' if r_act.ok else 'bad' }}">{{ r_act.at_utc }}</span> · {{ (r_act.detail or {}).get('items', '—') }} items{% else %}Never run{% endif %}
       </span>

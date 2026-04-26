@@ -1,0 +1,15 @@
+{# Compact page title + one-line context + Help anchor. Include static/ui_shared.css on the page once. #}
+{% macro tool_header(title, subtitle, help_id, example="") -%}
+<div class="tool-page-head">
+  <div class="tool-page-head-row">
+    <div class="tool-page-head-text">
+      <h1 class="tool-page-title">{{ title }}</h1>
+      <p class="tool-page-sub">
+        {% if subtitle %}{{ subtitle }}{% endif %}
+        {% if example %}<code class="tool-page-ex">{{ example }}</code>{% endif %}
+      </p>
+    </div>
+    <a class="tool-help-link" href="{{ url_for('ui_help') }}#{{ help_id }}" title="Documentation">?</a>
+  </div>
+</div>
+{%- endmacro %}

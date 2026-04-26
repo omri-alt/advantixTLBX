@@ -974,6 +974,12 @@ def ui_automations():
     return render_template("automations.html")
 
 
+@app.route("/help", methods=["GET"])
+def ui_help():
+    """Help Center: flags, examples, and caveats moved out of tool pages."""
+    return render_template("help.html", workflows=WORKFLOWS)
+
+
 @app.route("/github", methods=["GET"])
 def ui_github_connect():
     repo_root = ROOT_DIR

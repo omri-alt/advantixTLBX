@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Daily conversion postbacks</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
     .muted { color: #9ca3af; font-size: 14px; line-height: 1.5; }
@@ -50,12 +51,9 @@
   </style>
 </head>
 <body>
-  <div><a href="/">Back to dashboard</a></div>
-  <h1>Daily conversion postbacks</h1>
-  <p class="muted">
-    Keitaro GET postbacks from Kelkoo (per country), Adexa StatsRaw, and Yadore conversion/detail.
-    Resume state: <code>{{ state_path_display }}</code>. Click a feed for last-run log and to run again.
-  </p>
+  {% from "macros/page_header.html" import tool_header %}
+  <div><a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#daily-postbacks">Help</a></div>
+  {{ tool_header("Daily conversion postbacks", "Kelkoo / Adexa / Yadore GET postbacks + resume state.", "daily-postbacks", state_path_display) }}
 
   <div class="tile-grid">
     {% for f in feeds %}

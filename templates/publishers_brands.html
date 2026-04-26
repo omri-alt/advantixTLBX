@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Publishers Hub</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
     .muted { color: #9ca3af; }
@@ -18,9 +19,9 @@
   </style>
 </head>
 <body>
-  <div><a href="/">Back to dashboard</a></div>
-  <h1>Publishers Hub</h1>
-  <div class="muted">Unified brands view across SK + EC.</div>
+  {% from "macros/page_header.html" import tool_header %}
+  <div><a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#publishers-brands">Help</a></div>
+  {{ tool_header("Publishers hub", "Unified brands (SK + EC).", "publishers-brands", "POST refresh snapshot") }}
 
   <div class="card">
     <form method="post" style="display:flex; gap:8px; align-items:center;">
