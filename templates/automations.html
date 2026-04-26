@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoServer automations · KLblend</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a2b;
+      --muted: #9aa4b2;
+      --text: #eaf1fb;
+      --line: #27324a;
+      --ok: #22c55e;
+      --bad: #ef4444;
+      --accent: #4f8cff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, Segoe UI, Arial, sans-serif; background: linear-gradient(180deg, #0b1020, #0d1426 35%, #0b1020); color: var(--text); }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+    .top h1 { margin: 0; font-size: 1.5rem; }
+    .muted { color: var(--muted); font-size: 14px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+    .dot.on { background: var(--ok); box-shadow: 0 0 10px rgba(34,197,94,.45); }
+    .dot.off { background: var(--bad); }
+    .btn { display: inline-block; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); color: var(--text); text-decoration: none; background: #17223a; cursor: pointer; font: inherit; }
+    .btn:hover { border-color: #3a4e78; background: #1d2b47; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn-sm { padding: 6px 10px; font-size: 13px; border-radius: 8px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+    .card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 14px 16px; }
+    .card h3 { margin: 0 0 6px; font-size: 1rem; }
+    .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+    .badge.ok { background: rgba(34,197,94,.2); color: #86efac; }
+    .badge.err { background: rgba(239,68,68,.2); color: #fca5a5; }
+    .errbox { margin-top: 8px; font-size: 12px; color: #fca5a5; max-height: 120px; overflow: auto; }
+    details.errcoll { margin-top: 8px; font-size: 12px; }
+    .log { margin-top: 28px; }
+    .log h2 { margin: 0 0 10px; font-size: 1.1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    .scroll { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+    a.back { color: #93c5fd; text-decoration: none; font-size: 14px; }
+    a.back:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p><a class="back" href="{{ url_for('ui_home') }}">← Control Center</a></p>
+    <div class="top">
+      <div>
+        <h1>AutoServer automations</h1>
+        <p class="muted">Hourly jobs (minute 0) + manual triggers. APIs: <code>/api/automations</code>, <code>/api/automations/log</code>.</p>
+      </div>
+      <div>
+        <span id="sched-ind"><span class="dot off"></span><span id="sched-txt">Scheduler …</span></span>
+        <button type="button" class="btn" id="btn-all" style="margin-left:10px;">Trigger all</button>
+      </div>
+    </div>
+
+    <div class="grid" id="cards"></div>
+
+    <section class="log">
+      <h2>Recent runs</h2>
+      <p class="muted">Newest first · auto-refresh every 60s</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Time</th><th>Automation</th><th>Trigger</th><th>Duration</th><th>Status</th></tr></thead>
+          <tbody id="log-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+  <script>
+  (function() {
+    var cardsEl = document.getElementById("cards");
+    var logBody = document.getElementById("log-body");
+    var schedInd = document.getElementById("sched-ind");
+    var schedTxt = document.getElementById("sched-txt");
+    var btnAll = document.getElementById("btn-all");
+    var api = {{ url_for("api_automations") | tojson }};
+    var apiLog = {{ url_for("api_automations_log") | tojson }};
+    var trigAll = {{ url_for("api_automations_trigger_all") | tojson }};
+    var trigPrefix = "/api/automations/trigger/";
+
+    function dur(s, f) {
+      if (!s || !f) return "—";
+      try {
+        var a = new Date(s).getTime(), b = new Date(f).getTime();
+        if (isNaN(a) || isNaN(b)) return "—";
+        var sec = Math.max(0, Math.round((b - a) / 1000));
+        if (sec < 60) return sec + "s";
+        var m = Math.floor(sec / 60), r = sec % 60;
+        return m + "m " + r + "s";
+      } catch (e) { return "—"; }
+    }
+
+    function esc(s) {
+      var d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    }
+
+    function renderCards(data) {
+      var on = data.scheduler_running;
+      schedInd.querySelector(".dot").className = "dot " + (on ? "on" : "off");
+      schedTxt.textContent = on ? "Scheduler running" : "Scheduler stopped";
+      var items = data.automations || [];
+      cardsEl.innerHTML = items.map(function(a) {
+        var lr = a.last_run || null;
+        var ok = lr && lr.status === "success";
+        var badge = lr
+          ? '<span class="badge ' + (ok ? "ok" : "err") + '">' + (ok ? "✅ success" : "❌ error") + "</span>"
+          : '<span class="muted">No run yet</span>';
+        var ts = lr ? (lr.finished_at || lr.started_at || "") : "";
+        var errHtml = lr && lr.error
+          ? "<details class=\"errcoll\"><summary>Error detail</summary><div class=\"errbox\">" + esc(lr.error) + "</div></details>"
+          : "";
+        var url = trigPrefix + encodeURIComponent(a.class_name);
+        return (
+          '<div class="card">' +
+            "<h3>" + esc(a.label) + "</h3>" +
+            '<div class="muted" style="margin-bottom:6px;">' + esc(a.class_name) + " · " + esc(a.schedule) + "</div>" +
+            "<div><strong>Last run</strong> " + esc(ts) + " " + badge + "</div>" +
+            errHtml +
+            '<p style="margin-top:10px;"><button type="button" class="btn btn-sm trigger-one" data-url="' + esc(url) + '">Trigger</button></p>' +
+          "</div>"
+        );
+      }).join("");
+      cardsEl.querySelectorAll(".trigger-one").forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          btn.disabled = true;
+          fetch(btn.getAttribute("data-url"), { credentials: "same-origin" })
+            .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); })
+            .then(function(x) {
+              if (!x.ok && x.j && x.j.message) alert(x.j.message);
+              loadAll();
+            })
+            .catch(function() { alert("Request failed"); })
+            .finally(function() { btn.disabled = false; });
+        });
+      });
+    }
+
+    function renderLog(entries) {
+      logBody.innerHTML = (entries || []).map(function(e) {
+        return (
+          "<tr>" +
+            "<td>" + esc(e.finished_at || e.started_at) + "</td>" +
+            "<td>" + esc(e.automation) + "</td>" +
+            "<td>" + esc(e.triggered_by) + "</td>" +
+            "<td>" + esc(dur(e.started_at, e.finished_at)) + "</td>" +
+            "<td>" + esc(e.status) + "</td>" +
+          "</tr>"
+        );
+      }).join("") || '<tr><td colspan="5" class="muted">No entries yet</td></tr>';
+    }
+
+    function loadAll() {
+      return fetch(api, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function(r) { return r.json(); })
+        .then(renderCards)
+        .then(function() {
+          return fetch(apiLog + "?limit=20", { credentials: "same-origin", headers: { Accept: "application/json" } });
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) { renderLog(d.entries || []); })
+        .catch(function() {});
+    }
+
+    btnAll.addEventListener("click", function() {
+      btnAll.disabled = true;
+      fetch(trigAll, { credentials: "same-origin" })
+        .then(function(r) { return r.json(); })
+        .finally(function() {
+          btnAll.disabled = false;
+          loadAll();
+        });
+    });
+
+    loadAll();
+    setInterval(loadAll, 60000);
+  })();
+  </script>
+</body>
+</html>

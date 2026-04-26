@@ -365,3 +365,21 @@ if not ADEXA_API_KEY:
     )
 ADEXA_API_KEY = (ADEXA_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
 
+# --- AutoServer (migrated APScheduler + libz automations) ---
+# Hourly jobs at minute 0; manual triggers return 202 and run in background (see ``scheduler/autoserver_scheduler.py``).
+# Multi-worker Gunicorn: set ``AUTOSERVER_SCHEDULER_ENABLED=0`` on all but one worker (same idea as overview scheduler).
+AUTOSERVER_SCHEDULER_ENABLED = (
+    os.getenv("AUTOSERVER_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+)
+AUTOSERVER_RUN_LOG_MAX = int((os.getenv("AUTOSERVER_RUN_LOG_MAX") or "500").strip() or "500")
+_as_log_raw = (os.getenv("AUTOSERVER_RUN_LOG_PATH") or "").strip()
+if _as_log_raw:
+    _as_p = Path(_as_log_raw)
+    AUTOSERVER_RUN_LOG_PATH = _as_p if _as_p.is_absolute() else Path(__file__).resolve().parent / _as_p
+else:
+    AUTOSERVER_RUN_LOG_PATH = Path(__file__).resolve().parent / "data" / "autoserver_run_log.json"
+# QualityWL / SK tools workbook (gspread). Defaults to the same id used in ``app.py`` when unset.
+SK_TOOLS_SPREADSHEET_ID = (
+    os.getenv("SK_TOOLS_SPREADSHEET_ID") or "176wSQDDz9D1APmAXiYPeECwMqCQm3mvMBwgj8MKqmgk"
+).strip()
+

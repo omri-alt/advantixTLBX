@@ -84,6 +84,16 @@ from integrations.ecomnia_console import (
     whitelist_focus_source_traffic_no_buy,
 )
 from integrations.ecomnia_run_history import load_state, record_run, update_cache
+from automations.autoserver import AUTOMATION_SPECS
+from automations.autoserver.run_log import last_run_by_automation, read_entries_newest_first
+from scheduler.autoserver_scheduler import (
+    ensure_automations_initialized,
+    get_automation_listeners,
+    schedule_trigger_all,
+    schedule_trigger_one,
+    scheduler_running,
+    start_autoserver_scheduler,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -956,6 +966,12 @@ def ui_home():
         overview_snapshot_tz=OVERVIEW_SNAPSHOT_TZ,
         overview_snapshot_hour=OVERVIEW_SNAPSHOT_HOUR,
     )
+
+
+@app.route("/automations", methods=["GET"])
+def ui_automations():
+    """AutoServer-derived automations: scheduler status, manual triggers, run log."""
+    return render_template("automations.html")
 
 
 @app.route("/github", methods=["GET"])
@@ -2043,6 +2059,79 @@ def api_postback_status():
     return jsonify(postback_banner_payload_for_today())
 
 
+def _api_automations_payload() -> Dict[str, Any]:
+    ensure_automations_initialized()
+    last_map = last_run_by_automation()
+    listeners = get_automation_listeners()
+    by_class = {a.__class__.__name__: a for a in listeners}
+    rows: list[dict[str, Any]] = []
+    for spec in AUTOMATION_SPECS:
+        cn = spec["class_name"]
+        lr = last_map.get(cn)
+        rows.append(
+            {
+                "class_name": cn,
+                "label": spec["label"],
+                "schedule": spec["schedule"],
+                "registered": cn in by_class,
+                "last_run": lr,
+            }
+        )
+    return {"scheduler_running": scheduler_running(), "automations": rows}
+
+
+@app.route("/api/automations", methods=["GET"])
+def api_automations():
+    """List AutoServer automations + scheduler state + last run per job (from run log)."""
+    return jsonify(_api_automations_payload())
+
+
+@app.route("/api/automations/log", methods=["GET"])
+def api_automations_log():
+    """Newest-first run log entries (JSON file under ``data/autoserver_run_log.json``)."""
+    limit = request.args.get("limit", default=20, type=int)
+    if limit is None or limit < 1:
+        limit = 20
+    limit = min(limit, 500)
+    entries = read_entries_newest_first(limit=limit)
+    return jsonify({"limit": limit, "entries": entries})
+
+
+@app.route("/api/automations/trigger/all", methods=["GET"])
+def api_automations_trigger_all():
+    """Queue all automations in the background (202 Accepted)."""
+    ensure_automations_initialized()
+    schedule_trigger_all()
+    payload = _api_automations_payload()
+    payload["status"] = "scheduled"
+    payload["message"] = "All automations scheduled to run in the background"
+    return jsonify(payload), 202
+
+
+@app.route("/api/automations/trigger/<name>", methods=["GET"])
+def api_automations_trigger_one(name: str):
+    """Queue one automation by class name (case-insensitive)."""
+    ensure_automations_initialized()
+    key = (name or "").strip().lower()
+    for automation in get_automation_listeners():
+        if automation.__class__.__name__.lower() == key:
+            schedule_trigger_one(automation)
+            return jsonify(
+                {
+                    "status": "scheduled",
+                    "message": f"Automation {automation.__class__.__name__} scheduled in the background",
+                    "automation": automation.__class__.__name__,
+                }
+            ), 202
+    return jsonify(
+        {
+            "status": "error",
+            "message": f'Automation "{name}" not found',
+            "available": [a.__class__.__name__ for a in get_automation_listeners()],
+        }
+    ), 404
+
+
 @app.route("/api/overview/slice/revenue", methods=["GET"])
 def api_overview_slice_revenue():
     """Live Keitaro revenue slice for dashboard tiles (independent of snapshot)."""
@@ -2261,6 +2350,11 @@ def assistance_get_streams_by_campaign():
             "response_body": e.response_body,
         }), (e.status_code or 502)
 
+
+try:
+    start_autoserver_scheduler()
+except Exception as e:
+    logger.warning("AutoServer scheduler did not start: %s", e)
 
 try:
     start_daily_overview_scheduler()

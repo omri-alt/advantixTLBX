@@ -21,7 +21,9 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
 | Area            | Role                                                                                                                                 |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | Project root    | Main entry scripts (`run_daily_workflow.py`, `update_offers_from_sheet.py`, `blend_sync_from_sheet.py`, SK migration scripts, etc.). |
-| `integrations/` | API clients (Keitaro, Kelkoo helpers, Zeropark, Yadore).                                                                             |
+| `integrations/` | API clients (Keitaro, Kelkoo helpers, Zeropark, Yadore, **autoserver** SK/ZP/EC helpers).                                             |
+| `automations/autoserver/` | Merged AutoServer jobs (hourly + manual); see AutoServer section below.                                      |
+| `scheduler/`    | In-process schedulers (`autoserver_scheduler.py` APScheduler wiring).                                                               |
 | `workflows/`    | Kelkoo daily logic, monthly log, shared workflow code.                                                                               |
 | `cli/`          | Thin wrappers that call root scripts with stable paths (`cli/run_daily_workflow.py`, etc.).                                          |
 | `services/`     | Legacy/alternate client modules; some code paths still reference these.                                                              |
@@ -41,6 +43,7 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
   - **Adexa (Blend sync):** `ADEXA_SITE_ID` (required for `feed=adexa` rows when building Keitaro offer URLs in `blend_sync_from_sheet.py`).
   - **SourceKnowledge:** `SOURCEKNOWLEDGE_API_KEY` from `KEYSK` or legacy `keySK` (see below).
   - **Zeropark / Yadore:** `KEYZP`, `YADORE_API_KEY`, etc.
+  - **AutoServer:** `AUTOSERVER_SCHEDULER_ENABLED` (default on), `AUTOSERVER_RUN_LOG_PATH`, `AUTOSERVER_RUN_LOG_MAX`, `SK_TOOLS_SPREADSHEET_ID` (QualityWL gspread workbook). Legacy names `keyZP`, `keySK`, `ECadvKey` / `ECauthKey` / `ECsecretKey`, `keyKL` are populated from KLblend keys when missing—see `integrations/autoserver/env.py`.
 
 ## Daily Kelkoo → Keitaro workflow
 
@@ -67,6 +70,8 @@ Rough order: monthly log for yesterday → optional Blend potential refresh → 
 - `--offers-and-keitaro-only` — skips monthly log 0a, Blend potential 0b, tab delete 0, and **does not rewrite fixim from a fresh feed download**; still downloads feeds for PLA id alternates, refetches reports + recolors existing `{date}_fixim_*`, then steps 3–6 only (no step 4b monthly log “today”, no Blend step 7).
 
 **Control Center (Flask):** `/workflows/daily` exposes geo + merchant-mode dropdowns; they normalize args so users do not have to type raw flags. The homepage loads `GET /api/postback-status` (UTC “today” rollup from `runtime/daily_postbacks_last_run.json`) for the slim postback banner above the overview.
+
+**AutoServer (merged):** Legacy AutoServer **libz** clients live under `integrations/autoserver/` (`sk.py`, `zp.py`, `ec.py`, `kl_as.py`, `skunmon.py`, `gdocs_as.py`). Hourly automations are in `automations/autoserver/` (`MehilotAuto`, `KLFIXoptimize`, `PauseUnmonSK`, `KLWL`, `QualityWL`, `CloseNipuhimAuto`). `integrations/autoserver/env.py` maps KLblend `config` values into AutoServer-style env names (`keyZP`, `keySK`, `ECadvKey`, …) before those modules import. **Scheduler:** `scheduler/autoserver_scheduler.py` starts a `BackgroundScheduler` job at **minute 0 every hour** (same cadence as the old AutoServer `app.py`); `start_autoserver_scheduler()` is invoked from `app.py` at import time (works with Gunicorn). Disable on extra workers with `AUTOSERVER_SCHEDULER_ENABLED=0`. **Run log:** append-only JSON list at `data/autoserver_run_log.json` (max 500 entries, `AUTOSERVER_RUN_LOG_MAX`), written by `BaseAutomation._wrap_run`. **API:** `GET /api/automations` (status + last run per job), `GET /api/automations/log?limit=20`, `GET /api/automations/trigger/all` and `GET /api/automations/trigger/<ClassName>` return **202** and queue work on the scheduler (or a daemon thread if the scheduler is stopped). **UI:** `/automations` (linked from the homepage Tools grid).
 
 **Blend block (step 7):**
 
