@@ -2035,6 +2035,14 @@ def api_overview():
     return jsonify(out)
 
 
+@app.route("/api/postback-status", methods=["GET"])
+def api_postback_status():
+    """Daily conversion postback completion rollup for the Control Center banner (UTC day)."""
+    from integrations.daily_postbacks_run_history import postback_banner_payload_for_today
+
+    return jsonify(postback_banner_payload_for_today())
+
+
 @app.route("/api/overview/slice/revenue", methods=["GET"])
 def api_overview_slice_revenue():
     """Live Keitaro revenue slice for dashboard tiles (independent of snapshot)."""

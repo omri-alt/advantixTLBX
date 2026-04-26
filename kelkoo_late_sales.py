@@ -3,8 +3,8 @@ Kelkoo late-sales (KLtools): diff last two ``SalesReport_7days-generated-*`` tab
 apply sale-date window rules, build postback URLs, optionally GET each URL.
 
 Dedup before sending (apply or dry-run display):
-  - ``SalesReport_<saleday>_generated-<genday>`` daily exports: ``click_id`` already present
-    (on-time sale; original postback already fired).
+  - ``SalesReport_<saleday>_generated-<genday>`` or ``SalesReport_feed{n}_<saleday>_generated-<genday>``
+    daily exports: ``click_id`` already present (on-time sale; original postback already fired).
   - ``{month}_late_sales_log`` tabs: ``click_id`` already has ``late_postback_fired_at_utc`` set
     (we already sent a LateSale postback for that sale).
 
@@ -26,7 +26,10 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 import requests
 
 TAB_RE = re.compile(r"^SalesReport_7days-generated-(\d{4}-\d{2}-\d{2})$")
-DAILY_TAB_RE = re.compile(r"^SalesReport_(\d{4}-\d{2}-\d{2})_generated-(\d{4}-\d{2}-\d{2})$")
+DAILY_TAB_RE = re.compile(
+    r"^SalesReport_(?:(feed\d+)_)?(\d{4}-\d{2}-\d{2})_generated-(\d{4}-\d{2}-\d{2})$",
+    re.I,
+)
 
 _MONTH_EN = (
     "january",

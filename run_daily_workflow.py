@@ -8,7 +8,8 @@ pick merchants → generate PLA offers → combined sheet → sync Keitaro.
 0. Delete the previous calendar day's YYYY-MM-DD_fixim_* / _offers_* / _offers_today tabs if present.
 1. Download merchants feed for feed1 and feed2 → write YYYY-MM-DD_fixim_1, _fixim_2.
 2. Fetch Kelkoo reports (month-to-date or previous month on 1st); color fixim sheets.
-3. Choose top-N merchants per geo (CPC + leads rules in workflows.kelkoo_daily).
+3. Choose top-N merchants per geo (CPC + leads rules in workflows.kelkoo_daily); default up to **3**
+   merchants per geo with rank-weighted PLA interleave (use ``--single-merchant-per-geo`` for legacy single-merchant).
 4. Generate PLA offers → write YYYY-MM-DD_offers_1, _offers_2.
 5. Create YYYY-MM-DD_offers_today (combined view with Feed column).
 6. Sync both feeds to Keitaro (unless --skip-keitaro or no offers).
@@ -18,6 +19,11 @@ Optional: ``--run-daily-conversion-postbacks`` runs ``run_daily_conversion_postb
 workflow (Kelkoo per-geo + Adexa + Yadore → Keitaro GET postbacks). Use ``--postback-report-date YYYY-MM-DD`` to
 override the stats date (default: yesterday UTC).
 
+After PLA / Keitaro / Blend (or when skipped): **8)** yesterday Kelkoo sales report tabs on the late-sales workbook
+(``workflows.kelkoo_sales_report``), then **9)** Kelkoo late-sales diff/dry-run (use ``--late-sales-apply`` to send
+GET postbacks). Use ``--skip-sales-report`` / ``--skip-late-sales`` to bypass. Global ``--dry-run`` skips sheet writes
+for the sales report and forces late-sales dry-run.
+
 Requires .env: KEITARO_BASE_URL, KEITARO_API_KEY, FEED1_API_KEY, FEED2_API_KEY; credentials.json.
 Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) for step 0b/7a; feeds without an API key are skipped.
 
@@ -25,7 +31,7 @@ Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) fo
   python run_daily_workflow.py --date 2026-04-03
   python run_daily_workflow.py --skip-keitaro
   python run_daily_workflow.py --feed1-traffic-only
-  python run_daily_workflow.py --multi-merchant-fallback
+  python run_daily_workflow.py --single-merchant-per-geo
   python run_daily_workflow.py --skip-blend
   python run_daily_workflow.py --skip-blend-sync
   python run_daily_workflow.py --geo uk,fr
@@ -36,6 +42,10 @@ Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) fo
   python run_daily_workflow.py --include-flex
   python run_daily_workflow.py --run-daily-conversion-postbacks
   python run_daily_workflow.py --run-daily-conversion-postbacks --postback-report-date 2026-04-08
+  python run_daily_workflow.py --skip-sales-report
+  python run_daily_workflow.py --skip-late-sales
+  python run_daily_workflow.py --late-sales-apply
+  python run_daily_workflow.py --dry-run
 """
 from __future__ import annotations
 
@@ -69,7 +79,7 @@ from workflows.kelkoo_daily import (
     build_pla_id_alternates_for_feed,
     download_merchants_feed,
     fetch_reports,
-    generate_offers_with_fallback,
+    generate_offers_rank_weighted_interleave,
     get_top_merchants_per_geo,
     merge_offers_replace_geos,
     read_offers_sheet_rows,
@@ -182,13 +192,17 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
     skip_blend = "--skip-blend" in argv
     skip_blend_sync = "--skip-blend-sync" in argv
     feed1_traffic_only = "--feed1-traffic-only" in argv
-    blend_multi_merchant_fallback = "--multi-merchant-fallback" in argv
+    merchants_per_geo = 1 if "--single-merchant-per-geo" in argv else 3
     include_flex_merchants = "--include-flex" in argv
     static_only = not include_flex_merchants
     only_geos: Set[str] | None = None
     run_daily_conversion_postbacks = "--run-daily-conversion-postbacks" in argv
     offers_and_keitaro_only = "--offers-and-keitaro-only" in argv
     postback_report_date = (datetime.now(timezone.utc).date() - timedelta(days=1)).strftime("%Y-%m-%d")
+    skip_sales_report = "--skip-sales-report" in argv
+    skip_late_sales = "--skip-late-sales" in argv
+    late_sales_apply = "--late-sales-apply" in argv
+    workflow_dry_run = "--dry-run" in argv
     merchant_overrides, implied_geos_manual = _collect_merchant_overrides(argv)
     merchant_auto_overrides, implied_geos_auto = _collect_merchant_auto_overrides(argv)
 
@@ -222,7 +236,7 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
         "skip_blend": skip_blend,
         "skip_blend_sync": skip_blend_sync,
         "feed1_traffic_only": feed1_traffic_only,
-        "blend_multi_merchant_fallback": blend_multi_merchant_fallback,
+        "merchants_per_geo": merchants_per_geo,
         "static_only": static_only,
         "only_geos": only_geos,
         "partial_geos": frozenset(partial_geos),
@@ -231,6 +245,10 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
         "run_daily_conversion_postbacks": run_daily_conversion_postbacks,
         "offers_and_keitaro_only": offers_and_keitaro_only,
         "postback_report_date": postback_report_date,
+        "skip_sales_report": skip_sales_report,
+        "skip_late_sales": skip_late_sales,
+        "late_sales_apply": late_sales_apply,
+        "workflow_dry_run": workflow_dry_run,
     }
 
 BLEND_DAILY_MAX_NEW_ROWS = 50
@@ -497,6 +515,54 @@ def _apply_platform_auto_overrides_to_chosen(
     return ch
 
 
+def _run_post_pla_automation_tail(service: Any, pa: dict) -> None:
+    """Sales report (late-sales workbook) then Kelkoo late-sales flow; errors are logged, non-fatal."""
+    dry = bool(pa.get("workflow_dry_run"))
+    if dry:
+        print("   (--dry-run: sales report will not write sheets; late-sales will not apply GETs.)")
+
+    print()
+    print("8. Kelkoo yesterday sales report (late-sales workbook) ...")
+    if pa.get("skip_sales_report"):
+        print("   Skipped (--skip-sales-report).")
+    else:
+        try:
+            from workflows.kelkoo_sales_report import run_yesterday_sales_reports
+
+            run_yesterday_sales_reports(service, dry_run=dry)
+            print("   Done.")
+        except Exception as e:
+            print(f"   Sales report step error (non-fatal): {e}")
+
+    print()
+    print("9. Kelkoo late-sales detection ...")
+    if pa.get("skip_late_sales"):
+        print("   Skipped (--skip-late-sales).")
+        return
+    try:
+        from kelkoo_late_sales import run_late_sales_flow
+
+        from config import KELKOO_LATE_SALES_SPREADSHEET_ID, LATE_SALES_POSTBACK_BASE
+
+        root = Path(__file__).resolve().parent
+        cred = root / "credentials.json"
+        apply_ls = bool(pa.get("late_sales_apply")) and not dry
+        res = run_late_sales_flow(
+            credentials_path=cred,
+            spreadsheet_id=KELKOO_LATE_SALES_SPREADSHEET_ID,
+            postback_base=LATE_SALES_POSTBACK_BASE,
+            as_of_str="",
+            apply=apply_ls,
+        )
+        if res.get("ok"):
+            mode = "apply" if apply_ls else "dry-run"
+            print(f"   Late-sales ({mode}): ok.")
+        else:
+            print(f"   Late-sales: {res.get('error', 'failed')}")
+    except Exception as e:
+        print(f"   Late-sales step error (non-fatal): {e}")
+
+
 def run_pla_offers_keitaro_blend_tail(
     service: Any,
     *,
@@ -507,7 +573,7 @@ def run_pla_offers_keitaro_blend_tail(
     perf2: dict,
     fixim_1: str,
     fixim_2: str,
-    blend_multi_merchant_fallback: bool,
+    merchants_per_geo: int,
     partial_geos: frozenset[str],
     merchant_overrides: Dict[int, Dict[str, List[str]]],
     merchant_auto_overrides: Dict[int, Dict[str, int]],
@@ -525,14 +591,17 @@ def run_pla_offers_keitaro_blend_tail(
     offers_1 = f"{date_str}_offers_1"
     offers_2 = f"{date_str}_offers_2"
 
-    base_top_n = 3 if blend_multi_merchant_fallback else 1
+    base_top_n = max(1, int(merchants_per_geo))
     max_auto_rank = 1
     for feed_data in merchant_auto_overrides.values():
         for rank in feed_data.values():
             if rank > max_auto_rank:
                 max_auto_rank = rank
     rank_depth = max(base_top_n, max_auto_rank)
-    print(f"3. Choosing merchants (top-{rank_depth} scan; report rules + CPC floor) ...")
+    print(
+        f"3. Choosing merchants (top-{rank_depth} scan; up to {base_top_n} per geo; "
+        "report rules + CPC floor) ..."
+    )
     ranked1 = get_top_merchants_per_geo(
         service, SPREADSHEET_ID, fixim_1, perf1, top_n=rank_depth
     )
@@ -573,10 +642,10 @@ def run_pla_offers_keitaro_blend_tail(
     print("4. Generating offers from PLA feed ...")
     pla_alt1 = build_pla_id_alternates_for_feed(merchants1)
     pla_alt2 = build_pla_id_alternates_for_feed(merchants2)
-    rows1_new = generate_offers_with_fallback(
+    rows1_new = generate_offers_rank_weighted_interleave(
         FEED1_API_KEY, chosen1, pla_id_alternates=pla_alt1
     )
-    rows2_new = generate_offers_with_fallback(
+    rows2_new = generate_offers_rank_weighted_interleave(
         FEED2_API_KEY, chosen2, pla_id_alternates=pla_alt2
     )
 
@@ -685,7 +754,7 @@ def main() -> None:
     skip_blend = pa["skip_blend"]
     skip_blend_sync = pa["skip_blend_sync"]
     feed1_traffic_only = pa["feed1_traffic_only"]
-    blend_multi_merchant_fallback = pa["blend_multi_merchant_fallback"]
+    merchants_per_geo = int(pa["merchants_per_geo"])
     static_only = pa["static_only"]
     partial_geos: frozenset[str] = pa["partial_geos"]
     merchant_overrides: Dict[int, Dict[str, List[str]]] = pa["merchant_overrides"]
@@ -709,6 +778,8 @@ def main() -> None:
     yesterday_str = (datetime.strptime(date_str, "%Y-%m-%d").date() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     print(f"Daily workflow for {date_str}")
+    if merchants_per_geo == 1:
+        print("Merchants per geo: 1 (--single-merchant-per-geo).")
     if offers_and_keitaro_only:
         print("Mode: --offers-and-keitaro-only (skips monthly log, Blend potential, tab delete, feed→fixim download; re-colors fixim from reports)")
     if partial_geos:
@@ -778,7 +849,7 @@ def main() -> None:
             perf2=perf2,
             fixim_1=fixim_1,
             fixim_2=fixim_2,
-            blend_multi_merchant_fallback=blend_multi_merchant_fallback,
+            merchants_per_geo=merchants_per_geo,
             partial_geos=partial_geos,
             merchant_overrides=merchant_overrides,
             merchant_auto_overrides=merchant_auto_overrides,
@@ -792,6 +863,7 @@ def main() -> None:
             run_daily_conversion_postbacks=run_daily_conversion_postbacks,
             postback_report_date=postback_report_date,
         )
+        _run_post_pla_automation_tail(service, pa)
         return
 
     print("0a. Monthly log: yesterday's merchants + Kelkoo monetization (column E) ...")
@@ -876,7 +948,7 @@ def main() -> None:
         perf2=perf2,
         fixim_1=fixim_1,
         fixim_2=fixim_2,
-        blend_multi_merchant_fallback=blend_multi_merchant_fallback,
+        merchants_per_geo=merchants_per_geo,
         partial_geos=partial_geos,
         merchant_overrides=merchant_overrides,
         merchant_auto_overrides=merchant_auto_overrides,
@@ -890,6 +962,7 @@ def main() -> None:
         run_daily_conversion_postbacks=run_daily_conversion_postbacks,
         postback_report_date=postback_report_date,
     )
+    _run_post_pla_automation_tail(service, pa)
 
 
 if __name__ == "__main__":

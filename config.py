@@ -135,6 +135,30 @@ BLEND_POTENTIAL_FEEDS: tuple[str, ...] = _parse_blend_potential_feeds()
 FEED1_API_KEY = (os.getenv("FEED1_API_KEY") or "").strip()
 FEED2_API_KEY = (os.getenv("FEED2_API_KEY") or "").strip()
 
+
+def discover_kelkoo_feed_api_keys() -> tuple[tuple[int, str], ...]:
+    """
+    All configured Kelkoo publisher keys: ``FEED1_API_KEY``, ``FEED2_API_KEY``, …
+    Any index with a non-empty key is included (gaps allowed, e.g. only ``FEED3``).
+
+    If none are set, falls back to legacy ``KEY_KL`` / ``keyKL`` as feed index ``1``
+    (same role as the standalone KLsales report script).
+    """
+    found: list[tuple[int, str]] = []
+    for n in range(1, 33):
+        k = (os.getenv(f"FEED{n}_API_KEY") or "").strip()
+        if k:
+            found.append((n, k))
+    if not found:
+        legacy = (
+            (os.getenv("KEY_KL") or os.getenv("keyKL") or "").strip()
+            or _read_env_fallback("KEY_KL")
+            or _read_env_fallback("keyKL")
+        ).strip()
+        if legacy:
+            found.append((1, legacy))
+    return tuple(found)
+
 KELKOO_ACCOUNT_ID = (os.getenv("KELKOO_ACCOUNT_ID") or "47692679-139a-4232-9170-574f76601827").strip()
 KELKOO_ACCOUNT_ID_2 = (os.getenv("KELKOO_ACCOUNT_ID_2") or "").strip() or None
 FEED1_KELKOO_ACCOUNT_ID = (os.getenv("FEED1_KELKOO_ACCOUNT_ID") or "").strip() or KELKOO_ACCOUNT_ID
@@ -228,6 +252,25 @@ def _parse_kelkoo_raw_report_geos() -> tuple[str, ...]:
 
 
 KELKOO_RAW_REPORT_GEOS: tuple[str, ...] = _parse_kelkoo_raw_report_geos()
+
+
+def raw_report_geos_for_feed_index(feed_index: int) -> tuple[str, ...]:
+    """
+    Kelkoo raw report ``country=`` list for a feed index.
+    Set ``FEEDn_RAW_REPORT_GEOS`` (comma-separated); otherwise ``KELKOO_RAW_REPORT_GEOS``.
+    """
+    raw = (os.getenv(f"FEED{feed_index}_RAW_REPORT_GEOS") or "").strip().lower()
+    if raw:
+        out: list[str] = []
+        for part in raw.split(","):
+            p = part.strip().lower()
+            if not p:
+                continue
+            out.append(p[:2] if len(p) >= 2 and p[:2].isalpha() else p)
+        if out:
+            return tuple(out)
+    return KELKOO_RAW_REPORT_GEOS
+
 
 # Zeropark
 KEYZP = (os.getenv("KEYZP") or "").strip()

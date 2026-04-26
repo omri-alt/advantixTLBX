@@ -1,6 +1,6 @@
 """
 Kelkoo daily workflow: download merchants feed, segment by reports (red/yellow/green),
-pick one green merchant per geo, generate offers sheet. Used by run_daily_workflow.py.
+pick ranked merchants per geo, generate offers sheet. Used by run_daily_workflow.py.
 """
 from __future__ import annotations
 
@@ -995,6 +995,99 @@ def generate_offers_with_fallback(
             except Exception as e:
                 logger.warning("PLA %s merchant %s: %s", geo, m_id, e)
                 continue
+    return master
+
+
+def _offer_row_from_pla_tsv_line(geo: str, m_id: str, line: str) -> Optional[Dict[str, Any]]:
+    line = line.strip()
+    if not line:
+        return None
+    parts = line.split("\t")
+    direct_link = (parts[2].replace('"', "").strip() if len(parts) > 2 else "") or ""
+    if not direct_link.startswith("http"):
+        for p in parts:
+            p = p.strip()
+            if p.startswith("http"):
+                direct_link = p
+                break
+    if not direct_link:
+        direct_link = "Link Not Found"
+    title = (parts[1].replace('"', "") if len(parts) > 1 else "N/A").strip()
+    return {
+        "Country": geo.upper(),
+        "Merchant ID": m_id,
+        "Product Title": title,
+        "Store Link": direct_link,
+        "Audit Status": "Active",
+        "Timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def generate_offers_rank_weighted_interleave(
+    api_key: str,
+    geo_to_merchant_ids: Dict[str, List[str]],
+    max_products_per_geo: int = 100,
+    *,
+    pla_id_alternates: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    For each geo, take merchants in CPC rank order (caller provides ordered ids) and
+    interleave PLA product rows using weights ``N, N-1, …, 1`` per cycle (rank-1 gets
+    the largest share), up to ``max_products_per_geo`` offers.
+
+    If only one merchant is listed for a geo, behavior matches a single-merchant fill.
+    """
+    master: List[Dict[str, Any]] = []
+    for geo, merchant_ids in geo_to_merchant_ids.items():
+        mids = [m for m in merchant_ids if m]
+        if not mids:
+            continue
+        queues: List[List[str]] = []
+        for m_id in mids:
+            try:
+                nid = _normalize_merchant_id_from_sheet(m_id)
+                alt = pla_id_alternates.get(nid) if pla_id_alternates and nid else None
+                lines = _pla_tsv_lines_for_merchant(
+                    api_key,
+                    geo,
+                    str(m_id),
+                    alternate_merchant_ids=[alt] if alt else None,
+                )
+                if len(lines) <= 1:
+                    queues.append([])
+                else:
+                    queues.append([ln for ln in lines[1 : max_products_per_geo + 1] if ln.strip()])
+            except Exception as e:
+                logger.warning("PLA %s merchant %s: %s", geo, m_id, e)
+                queues.append([])
+
+        n = len(mids)
+        pattern: List[int] = []
+        for i in range(n):
+            pattern.extend([i] * (n - i))
+
+        if not pattern:
+            continue
+
+        ptrs = [0] * n
+        total = 0
+        pos = 0
+        while total < max_products_per_geo:
+            progressed = False
+            for _ in range(len(pattern)):
+                mid_i = pattern[pos % len(pattern)]
+                pos += 1
+                if ptrs[mid_i] < len(queues[mid_i]):
+                    row = _offer_row_from_pla_tsv_line(geo, str(mids[mid_i]), queues[mid_i][ptrs[mid_i]])
+                    ptrs[mid_i] += 1
+                    if row:
+                        master.append(row)
+                        total += 1
+                        progressed = True
+                    if total >= max_products_per_geo:
+                        break
+            if not progressed:
+                break
     return master
 
 

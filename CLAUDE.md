@@ -17,15 +17,17 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
 
 ## Repository layout
 
-| Area | Role |
-|------|------|
-| Project root | Main entry scripts (`run_daily_workflow.py`, `update_offers_from_sheet.py`, `blend_sync_from_sheet.py`, SK migration scripts, etc.). |
-| `integrations/` | API clients (Keitaro, Kelkoo helpers, Zeropark, Yadore). |
-| `workflows/` | Kelkoo daily logic, monthly log, shared workflow code. |
-| `cli/` | Thin wrappers that call root scripts with stable paths (`cli/run_daily_workflow.py`, etc.). |
-| `services/` | Legacy/alternate client modules; some code paths still reference these. |
-| `apps_script/` | Google Apps Script related assets. |
-| `tools/` | One-off migration and utility scripts (e.g. Ecomnia tracking URL migration). |
+
+| Area            | Role                                                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Project root    | Main entry scripts (`run_daily_workflow.py`, `update_offers_from_sheet.py`, `blend_sync_from_sheet.py`, SK migration scripts, etc.). |
+| `integrations/` | API clients (Keitaro, Kelkoo helpers, Zeropark, Yadore).                                                                             |
+| `workflows/`    | Kelkoo daily logic, monthly log, shared workflow code.                                                                               |
+| `cli/`          | Thin wrappers that call root scripts with stable paths (`cli/run_daily_workflow.py`, etc.).                                          |
+| `services/`     | Legacy/alternate client modules; some code paths still reference these.                                                              |
+| `apps_script/`  | Google Apps Script related assets.                                                                                                   |
+| `tools/`        | One-off migration and utility scripts (e.g. Ecomnia tracking URL migration).                                                         |
+
 
 **Convention:** Prefer matching existing style in a file (imports, logging, subprocess vs direct calls). Avoid drive-by refactors; keep changes scoped to the task.
 
@@ -35,7 +37,8 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
 - Includes `_read_env_fallback()` for malformed `.env` lines (extra spaces, `KEY = = value`).
 - Important variables:
   - **Keitaro:** `KEITARO_BASE_URL`, `KEITARO_API_KEY`, optional campaign alias/id.
-  - **Kelkoo / Sheets:** `FEED1_API_KEY`, `FEED2_API_KEY`, optional `FEED2_MERCHANTS_GEOS` (comma 2-letter geos for feed2 merchants API only—skips markets you have on feed1 but not on feed2), `KELKOO_SHEETS_SPREADSHEET_ID`, `BLEND_SHEETS_SPREADSHEET_ID`.
+  - **Kelkoo / Sheets:** `FEED1_API_KEY`, `FEED2_API_KEY`, optional `FEED3_API_KEY`, … (any `FEEDn_API_KEY` is picked up by `discover_kelkoo_feed_api_keys()` for sales-report-only flows), optional `FEED2_MERCHANTS_GEOS` (comma 2-letter geos for feed2 merchants API only—skips markets you have on feed1 but not on feed2), optional per-feed raw geos `FEEDn_RAW_REPORT_GEOS` (else `KELKOO_RAW_REPORT_GEOS`), legacy publisher key `KEY_KL` / `keyKL` if no `FEEDn_API_KEY` is set, `KELKOO_SHEETS_SPREADSHEET_ID`, `BLEND_SHEETS_SPREADSHEET_ID`, `KELKOO_LATE_SALES_SPREADSHEET_ID`.
+  - **Adexa (Blend sync):** `ADEXA_SITE_ID` (required for `feed=adexa` rows when building Keitaro offer URLs in `blend_sync_from_sheet.py`).
   - **SourceKnowledge:** `SOURCEKNOWLEDGE_API_KEY` from `KEYSK` or legacy `keySK` (see below).
   - **Zeropark / Yadore:** `KEYZP`, `YADORE_API_KEY`, etc.
 
@@ -43,13 +46,24 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
 
 **Script:** `run_daily_workflow.py` (wrapper: `cli/run_daily_workflow.py`).
 
-Rough order: monthly log for yesterday → optional Blend potential refresh → delete previous day’s dated tabs → download feeds → reports/color fixim → pick merchants → PLA offers → combined sheet → Keitaro sync for both feeds.
+Rough order: monthly log for yesterday → optional Blend potential refresh → delete previous day’s dated tabs → download feeds → reports/color fixim → pick merchants (default **top 3** per geo, rank-weighted PLA interleave) → PLA offers → combined sheet → Keitaro sync for both feeds → Blend block → **yesterday sales report** tabs on the late-sales workbook → **Kelkoo late-sales** diff (dry-run unless `--late-sales-apply`).
 
 **Flags (non-exhaustive):**
 
 - `--skip-keitaro` — skips Nipuhim Keitaro sync and Blend Keitaro sync; still can run Blend sheet populate unless `--skip-blend`.
 - `--skip-blend` — skips the whole Blend block.
 - `--feed1-traffic-only` — feed1 Keitaro only, then Blend steps as configured.
+- `--single-merchant-per-geo` — legacy: only one merchant per geo for PLA (default is three).
+- `--skip-sales-report` — skip Kelkoo yesterday sales export (`workflows/kelkoo_sales_report.py`) before late-sales.
+- `--skip-late-sales` — skip the Kelkoo late-sales step after the sales report.
+- `--late-sales-apply` — late-sales step sends GET postbacks when combined with a successful diff (still suppressed if global `--dry-run` is set).
+- `--dry-run` — workflow: sales report does not write Sheets; late-sales never applies GETs.
+- `--geo uk,fr,de` — comma-separated 2-letter geos: only those countries get fresh PLA + Keitaro sync; **existing rows for other geos stay** in `{date}_offers_*` (merge/replace per geo, not full tab wipe).
+- `--merchant-override 1:uk=15248713` — repeatable; forces feed `1` or `2`, geo `uk`, merchant id list (comma = fallback order). Manual wins over auto-pick if both are set.
+- `--merchant-auto-override 1:uk` — platform picks rank **2** for that feed+geo from fixim-ranked candidates; `1:uk:3` picks rank 3, etc.
+- `--offers-and-keitaro-only` — skips monthly log 0a, Blend potential 0b, tab delete 0, and **does not rewrite fixim from a fresh feed download**; still downloads feeds for PLA id alternates, refetches reports + recolors existing `{date}_fixim_*`, then steps 3–6 only (no step 4b monthly log “today”, no Blend step 7).
+
+**Control Center (Flask):** `/workflows/daily` exposes geo + merchant-mode dropdowns; they normalize args so users do not have to type raw flags. The homepage loads `GET /api/postback-status` (UTC “today” rollup from `runtime/daily_postbacks_last_run.json`) for the slim postback banner above the overview.
 
 **Blend block (step 7):**
 
@@ -59,11 +73,18 @@ Rough order: monthly log for yesterday → optional Blend potential refresh → 
 
 Related: `blend_potential_merchants.py`, `populate_blend_from_potential.py`, `blend_sync_from_sheet.py` (uses `BLEND_SHEETS_SPREADSHEET_ID` from config).
 
+## Blend → Keitaro (`blend_sync_from_sheet.py`)
+
+- Reads tab `**Blend`** on `BLEND_SHEETS_SPREADSHEET_ID`; columns include `brandName`, `offerUrl`, `clickCap`, `geo`, `feed` (`kelkoo1` / `kelkoo2` / `adexa` / `yadore`), `auto`, optional `merchantId`.
+- **Kelkoo** rows: `offerUrl` is wrapped like Nipuhim via `assistance.build_offer_action_payload` (per-feed account ids).
+- **Adexa** rows: outer shell `https://shopli.city/raino?rain=` then inner `https://api.adexad.com/LinksMerchant.php?siteID=…&country=<geo>&merchantUrl=<encoded>&clickid={subid}`. The `rain` value is quoted so `=`, `&`, `?`, and Keitaro macros stay readable (only `merchantUrl` is heavily encoded), matching the proven **feed4** style more closely than a fully percent-encoded inner URL.
+- **Yadore** rows: outer `https://shopli.city/rainotest?rain=` then inner `api.yadore.com/v2/d` with encoded merchant URL, market, `placementId={subid}`, `projectId` from `YADORE_PROJECT_ID` (with a documented fallback in the script).
+
 ## SourceKnowledge (SK) — what was added
 
 ### API key
 
-- User stores the key in `.env` as **`KEYSK`**.
+- User stores the key in `.env` as `**KEYSK`**.
 - `config.SOURCEKNOWLEDGE_API_KEY` resolves `KEYSK` / `keySK` with fallback parsing.
 - Legacy copy of the original automation: `sk_legacy_snapshot.py` (do not treat as the single source of truth for new features; use dedicated scripts).
 
@@ -86,7 +107,7 @@ Related: `blend_potential_merchants.py`, `populate_blend_from_potential.py`, `bl
 - **Rate limits:** adaptive — on `429`, cooldown then retry; network errors retry after cooldown.
 - **Resume:** default state file `sk_migration_state.json` tracks `done_ids`, `failed_ids`, `blocked_ids`, last index. **Skips IDs already in `done_ids`** unless `--no-resume`.
 - **Outputs:** `sk_migration_failed_ids.txt`, `sk_migration_blocked_ids.txt`; override with `--failed-ids-file` / `--blocked-ids-file`.
-- **`--only-active`:** when listing all campaigns, only include `active: true` from list response (reduces work on dead inventory).
+- `**--only-active`:** when listing all campaigns, only include `active: true` from list response (reduces work on dead inventory).
 
 CLI mirrors live under `cli/` where applicable (e.g. `cli/migrate_sk_campaigns_bulk.py`).
 
@@ -101,10 +122,10 @@ These are operational checkpoints; do not delete casually if a migration is mid-
 
 ## How to run things safely
 
-- Prefer **`--dry-run`** on migration scripts when available.
+- Prefer `**--dry-run`** on migration scripts when available.
 - For bulk SK: use default resume state so completed campaigns are not PUT again.
-- Use **`--only-active`** for full-list passes if archived campaigns should be ignored at list time.
-- Read **`README.md`** for full command examples (Kelkoo daily, Keitaro sync, Blend, monetization checker).
+- Use `**--only-active**` for full-list passes if archived campaigns should be ignored at list time.
+- Read `**README.md**` for full command examples (Kelkoo daily, Keitaro sync, Blend, monetization checker).
 
 ## What “success” looks like for assistants
 
@@ -128,20 +149,21 @@ Hardcoded in the CONFIG block at the top of the script: `ADVERTISER_KEY`, `AUTH_
 - Inner URL base switches from `https://dighlyconsive.com/<uuid>` → `https://trck.shopli.city/7FDKRK`.
 - Parameter remapping:
 
-  | Old param | New param |
-  |-----------|-----------|
-  | `click_id` | `external_id` |
-  | `adv_price` | `cost` |
-  | `sub_id` | `sub_id_5` |
-  | `oadest` | `sub_id_3` |
-  | `geo` | `sub_id_2` |
-  | `brand` | `sub_id_6` |
-  | `hp` | `sub_id_1` |
-  | `ctrl_*` / `traffic_type` | DROPPED |
+  | Old param                 | New param     |
+  | ------------------------- | ------------- |
+  | `click_id`                | `external_id` |
+  | `adv_price`               | `cost`        |
+  | `sub_id`                  | `sub_id_5`    |
+  | `oadest`                  | `sub_id_3`    |
+  | `geo`                     | `sub_id_2`    |
+  | `brand`                   | `sub_id_6`    |
+  | `hp`                      | `sub_id_1`    |
+  | `ctrl_*` / `traffic_type` | DROPPED       |
+
 
 ### Safe operation
 
-- **`DRY_RUN = True`** (default) — prints all conversions, makes no API calls. Always run this first.
+- `**DRY_RUN = True`** (default) — prints all conversions, makes no API calls. Always run this first.
 - Set `DRY_RUN = False` to apply changes.
 - `REQUEST_DELAY = 0.5 s` polite delay between update calls; script has exponential backoff retry logic on transient failures.
 - Campaigns that don't contain the old domain are skipped automatically.
@@ -164,4 +186,4 @@ python update_tracking_urls.py          # live run
 
 ---
 
-*Last aligned with repo state: daily workflow + Blend integration, SK migration tooling, checkpoint/blocked handling, and `KEYSK` configuration.*
+*Last aligned with repo state: daily workflow merchant rerun/override UI and flags, Blend Adexa offer URL shape, SK migration tooling, checkpoint/blocked handling, and `KEYSK` configuration.*
