@@ -12,9 +12,13 @@ Expected columns (case-insensitive):
 Optional:
   - costumecpc / customcpc / cpc
 
+With ``--apply``, you may add ``--register-exploration`` to append each created campaign
+to the ``SKtrackExploration`` tab (``SK_OPTIMIZER_SHEET_ID``) for the hourly optimizer.
+Use ``--mon-network kl|feed1|feed2|feed3|feed4`` (default ``kl``) for the new rows.
+
 Examples:
   python sk_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --dry-run
-  python sk_bulk_open_from_sheet.py --prefix KLFLEX --alias 9Xq9dSMh --apply
+  python sk_bulk_open_from_sheet.py --prefix KLFLEX --alias 9Xq9dSMh --apply --register-exploration --mon-network kl
 """
 from __future__ import annotations
 
@@ -22,18 +26,17 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List
 from urllib.parse import quote
 
 import requests
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import SOURCEKNOWLEDGE_API_KEY  # noqa: E402
+from config import SK_TOOLS_SPREADSHEET_ID, SOURCEKNOWLEDGE_API_KEY  # noqa: E402
 
 
 BASE_URL = "https://api.sourceknowledge.com/affiliate/v2"
-SKTOOLS_SPREADSHEET_ID = "176wSQDDz9D1APmAXiYPeECwMqCQm3mvMBwgj8MKqmgk"
 DEFAULT_INPUT_TAB = "bulkSK-KLFIX"
 REQUEST_TIMEOUT = 60
 COOLDOWN_SECONDS = 60
@@ -96,7 +99,7 @@ def _get_credentials_path() -> str:
     return str(p)
 
 
-def _read_input_rows(tab_name: str) -> list[dict[str, str]]:
+def _read_input_rows(tab_name: str, spreadsheet_id: str) -> list[dict[str, str]]:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
@@ -104,7 +107,7 @@ def _read_input_rows(tab_name: str) -> list[dict[str, str]]:
     service = build("sheets", "v4", credentials=creds).spreadsheets()
 
     quoted = tab_name.replace("'", "''")
-    res = service.values().get(spreadsheetId=SKTOOLS_SPREADSHEET_ID, range=f"'{quoted}'!A:Z").execute()
+    res = service.values().get(spreadsheetId=spreadsheet_id, range=f"'{quoted}'!A:Z").execute()
     values = res.get("values") or []
     if not values:
         return []
@@ -187,6 +190,8 @@ def main() -> None:
     alias = ""
     tab = DEFAULT_INPUT_TAB
     apply = False
+    register_exploration = False
+    mon_network = "kl"
 
     args = sys.argv[1:]
     i = 0
@@ -203,6 +208,14 @@ def main() -> None:
         if a == "--tab" and i + 1 < len(args):
             tab = args[i + 1].strip()
             i += 2
+            continue
+        if a == "--mon-network" and i + 1 < len(args):
+            mon_network = args[i + 1].strip().lower()
+            i += 2
+            continue
+        if a == "--register-exploration":
+            register_exploration = True
+            i += 1
             continue
         if a == "--apply":
             apply = True
@@ -221,25 +234,35 @@ def main() -> None:
         _usage_error("Missing --prefix")
     if not alias:
         _usage_error("Missing --alias")
+    if register_exploration and not apply:
+        _usage_error("--register-exploration requires --apply")
 
-    rows = _read_input_rows(tab)
+    input_sheet_id = (SK_TOOLS_SPREADSHEET_ID or "").strip()
+    if not input_sheet_id:
+        _usage_error("SK_TOOLS_SPREADSHEET_ID is not set in config/.env")
+
+    rows = _read_input_rows(tab, input_sheet_id)
     if not rows:
         print(f"No rows found in tab '{tab}'.")
         return
 
     print("SK bulk campaign opener from sheet")
     print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}")
-    print(f"Spreadsheet: {SKTOOLS_SPREADSHEET_ID}")
+    print(f"Input spreadsheet: {input_sheet_id}")
     print(f"Tab: {tab}")
     print(f"Prefix: {prefix}")
     print(f"Alias: {alias}")
+    if register_exploration:
+        print(f"Register exploration: yes (monNetwork={mon_network})")
     print(f"Rows: {len(rows)}")
     print()
 
     created_adv = 0
     created_camp = 0
     failed = 0
-
+    track_rows: List[Dict[str, Any]] = []
+    if register_exploration and apply:
+        from integrations.autoserver.sk_optimizer import exploration_row_from_bulk_sheet_row
     for idx, item in enumerate(rows, start=1):
         brand = _strip_brand_name(item["brand"])
         geo = item["geo"].lower()
@@ -277,6 +300,10 @@ def main() -> None:
             created_camp += 1
             cid = camp.get("id")
             print(f"[{idx}/{len(rows)}] OK advertiser_id={adv_id} campaign_id={cid}")
+            if register_exploration and cid is not None and apply:
+                track_rows.append(
+                    exploration_row_from_bulk_sheet_row(item, camp, mon_network=mon_network)
+                )
             time.sleep(2)
         except Exception as e:
             failed += 1
@@ -287,6 +314,15 @@ def main() -> None:
         f"Summary: rows={len(rows)} created_advertisers={created_adv} "
         f"created_campaigns={created_camp} failed={failed} mode={'apply' if apply else 'dry-run'}"
     )
+    if register_exploration and apply and track_rows:
+        from integrations.autoserver.sk_optimizer import append_sk_exploration_tracking_rows
+
+        n_added, err = append_sk_exploration_tracking_rows(track_rows)
+        if err:
+            print(f"SKtrackExploration append error: {err}")
+            sys.exit(1)
+        print(f"SKtrackExploration: appended {n_added} new row(s).")
+
     if apply and failed:
         sys.exit(1)
 

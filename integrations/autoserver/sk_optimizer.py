@@ -463,3 +463,109 @@ def checkUnmonWL_SK() -> None:
 
     if changed and rows:
         gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_WL, rows)
+
+
+def _normalize_exploration_sheet_row(raw: Dict[str, Any]) -> Dict[str, str]:
+    """Map sheet row keys onto ``HEADERS_EXPLORATION`` (supports legacy ``campId`` / ``campName``)."""
+    cid = raw.get("campaignId") or raw.get("campId") or ""
+    cname = raw.get("campaignName") or raw.get("campName") or ""
+    out: Dict[str, str] = {}
+    for h in HEADERS_EXPLORATION:
+        if h == "campaignId":
+            out[h] = str(cid).strip()
+        elif h == "campaignName":
+            out[h] = str(cname).strip()
+        else:
+            v = raw.get(h, "")
+            if v is None:
+                out[h] = ""
+            elif isinstance(v, (dict, list)):
+                out[h] = json.dumps(v, ensure_ascii=False)
+            else:
+                out[h] = str(v)
+    return out
+
+
+def exploration_row_from_bulk_sheet_row(
+    item: Dict[str, str],
+    camp_json: Dict[str, Any],
+    *,
+    mon_network: str = "kl",
+) -> Dict[str, str]:
+    """
+    Build one ``SKtrackExploration`` row after a bulk-open campaign create.
+
+    ``item`` is a row dict from the bulk input tab (``brand``, ``geo``, ``url``, ``hpfb``, …).
+    ``camp_json`` is the SK ``POST /campaigns`` response body.
+    """
+    cid = camp_json.get("id")
+    name = str(camp_json.get("name") or "").strip()
+    brand = str(item.get("brand") or "").strip()
+    geo = str(item.get("geo") or "").strip().lower()[:2]
+    url = str(item.get("url") or "").strip()
+    if url and not url.lower().startswith("http"):
+        url = f"https://{url.lstrip('/')}"
+    active = bool(camp_json.get("active", True))
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    log_line = f"{ts} Added from SK bulk opener"
+    row: Dict[str, str] = {
+        "campaignId": str(cid) if cid is not None else "",
+        "campaignName": name,
+        "brand": brand,
+        "geo": geo,
+        "monUrl": url,
+        "monNetwork": (mon_network or "kl").strip().lower(),
+        "wl": "[]",
+        "status": "active" if active else "paused",
+        "budgetReachedYesterday": "",
+        "lastBlacklisted": "",
+        "lastMonCheck": "",
+        "lastAction": "",
+        "logs": log_line,
+    }
+    return {h: row.get(h, "") for h in HEADERS_EXPLORATION}
+
+
+def append_sk_exploration_tracking_rows(rows: List[Dict[str, Any]]) -> tuple[int, str]:
+    """
+    Append rows to ``SKtrackExploration`` for campaign IDs not already present.
+    ``rows`` may be partial dicts; each is normalized to ``HEADERS_EXPLORATION``.
+    Returns ``(added_count, error_message)`` — ``error_message`` empty on success.
+    """
+    sheet_id = (SK_OPTIMIZER_SHEET_ID or "").strip()
+    if not sheet_id:
+        return 0, "SK_OPTIMIZER_SHEET_ID is not set"
+    if not rows:
+        return 0, ""
+    try:
+        gd.append_missing_headers_row1(sheet_id, TAB_EXPLORATION, HEADERS_EXPLORATION)
+        data = gd.read_sheet_withID(sheet_id, TAB_EXPLORATION)
+    except Exception as e:
+        logger.exception("append_sk_exploration_tracking_rows: read failed")
+        return 0, str(e)
+
+    normalized = [_normalize_exploration_sheet_row(r) for r in data]
+    existing_ids = {r["campaignId"] for r in normalized if r.get("campaignId")}
+
+    added = 0
+    for raw in rows:
+        if all(h in raw for h in HEADERS_EXPLORATION):
+            nr = {h: "" if raw.get(h) is None else str(raw.get(h, "")) for h in HEADERS_EXPLORATION}
+        else:
+            nr = _normalize_exploration_sheet_row(raw)
+        cid = (nr.get("campaignId") or "").strip()
+        if not cid or cid in existing_ids:
+            continue
+        normalized.append(nr)
+        existing_ids.add(cid)
+        added += 1
+
+    if not added:
+        return 0, ""
+
+    try:
+        gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_EXPLORATION, normalized)
+    except Exception as e:
+        logger.exception("append_sk_exploration_tracking_rows: write failed")
+        return 0, str(e)
+    return added, ""

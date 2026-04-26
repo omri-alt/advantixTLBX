@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SourceKnowledge console{% endblock %}</title>
+  <style>
+    :root { --bg:#0b1220; --panel:#111827; --line:#374151; --text:#e5e7eb; --muted:#9ca3af; --ok:#22c55e; --accent:#4ade80; --warn:#f59e0b; --tile-hover:#1e293b; }
+    body { font-family: Segoe UI, system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; }
+    a { color: #86efac; }
+    .sk-shell { max-width: 1280px; margin: 0 auto; padding: 20px 24px 48px; }
+    .sk-nav {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+      padding: 12px 16px; margin: -20px -24px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .sk-nav a { text-decoration: none; color: var(--muted); }
+    .sk-nav a:hover { color: var(--text); }
+    .sk-nav a.active { color: var(--accent); font-weight: 600; }
+    .sk-nav .sep { color: var(--line); user-select: none; }
+    .sk-nav-inner { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+    .sk-nav-tools { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+    h1 { margin: 8px 0 6px; font-size: 1.5rem; }
+    .muted { color: var(--muted); font-size: 14px; max-width: 900px; line-height: 1.55; }
+    .banner { padding: 12px 14px; border-radius: 10px; margin: 12px 0; border: 1px solid var(--line); }
+    .banner.ok { border-color: #166534; background: rgba(34,197,94,0.08); }
+    .banner.err { border-color: #92400e; background: rgba(245,158,11,0.1); }
+    .banner.warn { border-color: #6b4f1d; background: rgba(245,158,11,0.06); }
+    section.tool-section { margin: 24px 0; }
+    section.tool-section > h2 { font-size: 1.05rem; margin-bottom: 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+    .tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 16px; margin-top: 20px; }
+    .tile {
+      display: block; text-decoration: none; color: inherit;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px;
+      transition: border-color .15s ease, box-shadow .15s ease, transform .1s ease;
+    }
+    .tile:hover { border-color: var(--accent); box-shadow: 0 8px 24px rgba(0,0,0,.25); transform: translateY(-2px); }
+    .tile h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
+    .tile-meta { display: block; margin-top: 14px; font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; line-height: 1.4; }
+    .sk-inner-card { max-width: 560px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--panel); margin-top: 12px; }
+    .sk-inner-card input[type="text"], .sk-inner-card select {
+      width: 100%; max-width: 520px; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; box-sizing: border-box;
+    }
+    .sk-inner-card button { padding: 8px 12px; background: #22c55e; border: 1px solid #16a34a; border-radius: 6px; color: #052e16; font-weight: 700; cursor: pointer; margin-top: 10px; }
+    .sk-inner-card button:hover { background: #16a34a; }
+    pre.log-pre { margin: 0; padding: 12px; background: #0f172a; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; line-height: 1.45; overflow-x: auto; max-height: 420px; overflow-y: auto; white-space: pre-wrap; }
+  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <div class="sk-shell">
+    <nav class="sk-nav">
+      <div class="sk-nav-inner">
+        <a href="/">Home</a>
+        <span class="sep">·</span>
+        <a href="{{ url_for('ui_sk') }}" class="{{ 'active' if active_page == 'hub' else '' }}">SK hub</a>
+        <span class="sep">·</span>
+        <a href="{{ url_for('ui_sk_bulk_open') }}" class="{{ 'active' if active_page == 'bulk-open' else '' }}">Bulk opener</a>
+        <span class="sep">·</span>
+        <a href="{{ url_for('ui_help') }}#sk-console">Help</a>
+      </div>
+      <div class="sk-nav-tools">
+        {% if sk_optimizer_sheet_id %}
+        <a href="https://docs.google.com/spreadsheets/d/{{ sk_optimizer_sheet_id }}/edit{% if sk_optimizer_expl_gid %}#gid={{ sk_optimizer_expl_gid }}{% endif %}" target="_blank" rel="noopener">SKtrackExploration</a>
+        <a href="https://docs.google.com/spreadsheets/d/{{ sk_optimizer_sheet_id }}/edit{% if sk_optimizer_wl_gid %}#gid={{ sk_optimizer_wl_gid }}{% endif %}" target="_blank" rel="noopener">SKtrackWL</a>
+        {% endif %}
+        <a href="{{ url_for('ui_sk_qualitywl') }}">QualityWL</a>
+        <a href="{{ url_for('ui_sk_tools_sheet') }}">Tools sheet</a>
+      </div>
+    </nav>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for cat, msg in messages %}
+          <div class="banner {% if cat == 'error' %}err{% else %}ok{% endif %}">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% block tool_body %}{% endblock %}
+  </div>
+</body>
+</html>

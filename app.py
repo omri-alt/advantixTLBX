@@ -929,6 +929,33 @@ def _ec_extract_brand(camp: dict[str, Any], merchants_by_mid: dict[str, str]) ->
     return "unknown"
 
 
+def _sk_optimizer_sheet_link_context() -> dict[str, Any]:
+    """Workbook id + worksheet gids for SKtrackExploration / SKtrackWL links (gspread)."""
+    sk_id = (SK_OPTIMIZER_SHEET_ID or "").strip()
+    expl_gid: str | None = None
+    wl_gid: str | None = None
+    if sk_id:
+        try:
+            from integrations.autoserver.gdocs_as import client as _gspread_client
+
+            _wb = _gspread_client.open_by_key(sk_id)
+            try:
+                expl_gid = str(_wb.worksheet("SKtrackExploration").id)
+            except Exception:
+                expl_gid = None
+            try:
+                wl_gid = str(_wb.worksheet("SKtrackWL").id)
+            except Exception:
+                wl_gid = None
+        except Exception:
+            pass
+    return {
+        "sk_optimizer_sheet_id": sk_id,
+        "sk_optimizer_expl_gid": expl_gid,
+        "sk_optimizer_wl_gid": wl_gid,
+    }
+
+
 @app.route("/", methods=["GET"])
 def ui_home():
     group_titles: Dict[str, str] = {
@@ -961,32 +988,11 @@ def ui_home():
         if gk not in ordered_group_keys:
             out_groups.append(v)
 
-    sk_expl_gid: str | None = None
-    sk_wl_gid: str | None = None
-    if SK_OPTIMIZER_SHEET_ID:
-        try:
-            from integrations.autoserver.gdocs_as import client as _gspread_client
-
-            _wb = _gspread_client.open_by_key(SK_OPTIMIZER_SHEET_ID)
-            try:
-                sk_expl_gid = str(_wb.worksheet("SKtrackExploration").id)
-            except Exception:
-                sk_expl_gid = None
-            try:
-                sk_wl_gid = str(_wb.worksheet("SKtrackWL").id)
-            except Exception:
-                sk_wl_gid = None
-        except Exception:
-            pass
-
     return render_template(
         "index.html",
         groups=out_groups,
         overview_snapshot_tz=OVERVIEW_SNAPSHOT_TZ,
         overview_snapshot_hour=OVERVIEW_SNAPSHOT_HOUR,
-        sk_optimizer_sheet_id=SK_OPTIMIZER_SHEET_ID,
-        sk_optimizer_expl_gid=sk_expl_gid,
-        sk_optimizer_wl_gid=sk_wl_gid,
     )
 
 
@@ -1122,8 +1128,16 @@ def ui_matchmaking_sheets():
     return render_template("matchmaking_sheets.html", last_run=last_run)
 
 
-@app.route("/sk", methods=["GET", "POST"])
+@app.route("/sk", methods=["GET"])
 def ui_sk():
+    """SourceKnowledge console hub (tiles + links)."""
+    ctx = _sk_optimizer_sheet_link_context()
+    return render_template("sk_console_hub.html", active_page="hub", **ctx)
+
+
+@app.route("/sk/bulk-open", methods=["GET", "POST"])
+def ui_sk_bulk_open():
+    """Bulk-create SK campaigns from a Google Sheet tab; optionally register rows on SKtrackExploration."""
     bulk_open_result = None
     if request.method == "POST":
         prefix = (request.form.get("prefix") or "").strip()
@@ -1131,6 +1145,8 @@ def ui_sk():
         tab = (request.form.get("tab") or "bulkSK-KLFIX").strip()
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         apply = mode == "apply"
+        register_exploration = bool((request.form.get("register_exploration") or "").strip())
+        mon_network = (request.form.get("mon_network") or "kl").strip().lower()
 
         if prefix and alias and tab:
             script = ROOT_DIR / "sk_bulk_open_from_sheet.py"
@@ -1143,8 +1159,12 @@ def ui_sk():
                 alias,
                 "--tab",
                 tab,
+                "--mon-network",
+                mon_network or "kl",
                 "--apply" if apply else "--dry-run",
             ]
+            if register_exploration and apply:
+                args.append("--register-exploration")
             proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
             output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
             bulk_open_result = {
@@ -1155,10 +1175,17 @@ def ui_sk():
                 "alias": alias,
                 "tab": tab,
                 "mode": "apply" if apply else "dry-run",
+                "register_exploration": register_exploration and apply,
             }
             _cache_clear("sk:")
 
-    return render_template("sk.html", bulk_open_result=bulk_open_result)
+    ctx = _sk_optimizer_sheet_link_context()
+    return render_template(
+        "sk_bulk_open.html",
+        active_page="bulk-open",
+        bulk_open_result=bulk_open_result,
+        **ctx,
+    )
 
 
 @app.route("/kelkoo/late-sales", methods=["GET", "POST"])

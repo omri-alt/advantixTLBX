@@ -20,7 +20,7 @@
 </head>
 <body>
   {% from "macros/page_header.html" import tool_header %}
-  <div><a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#sk-tools-sheet">Help</a></div>
+  <div><a href="/">Home</a> · <a href="{{ url_for('ui_sk') }}">SK hub</a> · <a href="{{ url_for('ui_help') }}#sk-tools-sheet">Help</a></div>
   {{ tool_header("SK tools sheet", "Browse tabs from the SK tools workbook.", "sk-tools-sheet", "GET tab + rows") }}
 
   <div class="card">

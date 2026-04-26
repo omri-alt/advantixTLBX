@@ -1,0 +1,51 @@
+{% extends "sk_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
+{% block title %}SourceKnowledge · Bulk opener{% endblock %}
+{% block tool_body %}
+{{ tool_header("Bulk opener", "Sheet rows → SK advertisers + campaigns.", "sk-console", "dry-run | apply") }}
+
+<div class="sk-inner-card">
+  <form method="post" action="{{ url_for('ui_sk_bulk_open') }}">
+    <div style="margin:8px 0;">
+      <label for="prefix">Prefix</label><br>
+      <input type="text" id="prefix" name="prefix" placeholder="KLFIX / KLFLEX / KLWL..." value="{{ request.form.get('prefix', '') }}" required>
+    </div>
+    <div style="margin:8px 0;">
+      <label for="alias">Keitaro alias (tracking domain id)</label><br>
+      <input type="text" id="alias" name="alias" placeholder="7FDKRK or your custom alias" value="{{ request.form.get('alias', '') }}" required>
+    </div>
+    <div style="margin:8px 0;">
+      <label for="tab">Input tab</label><br>
+      <input type="text" id="tab" name="tab" value="{{ request.form.get('tab', 'bulkSK-KLFIX') }}" placeholder="bulkSK-KLFIX" required>
+    </div>
+    <div style="margin:8px 0;">
+      <label for="mon_network">Monetization network (for SKtrackExploration)</label><br>
+      <select id="mon_network" name="mon_network">
+        {% set mn = request.form.get('mon_network', 'kl') %}
+        <option value="kl" {% if mn == 'kl' %}selected{% endif %}>kl (Kelkoo keyKL)</option>
+        <option value="feed1" {% if mn == 'feed1' %}selected{% endif %}>feed1</option>
+        <option value="feed2" {% if mn == 'feed2' %}selected{% endif %}>feed2</option>
+        <option value="feed3" {% if mn == 'feed3' %}selected{% endif %}>feed3 (Yadore)</option>
+        <option value="feed4" {% if mn == 'feed4' %}selected{% endif %}>feed4 (Adexa)</option>
+      </select>
+    </div>
+    <div style="margin:8px 0;">
+      <label for="mode">Mode</label><br>
+      <select id="mode" name="mode">
+        <option value="dry-run" {% if request.form.get('mode', 'dry-run') != 'apply' %}selected{% endif %}>Dry run</option>
+        <option value="apply" {% if request.form.get('mode') == 'apply' %}selected{% endif %}>Apply</option>
+      </select>
+    </div>
+    <div style="margin:8px 0;">
+      <label><input type="checkbox" name="register_exploration" value="1" {% if request.form.get('register_exploration') %}checked{% endif %}> After apply, add each new campaign to <strong>SKtrackExploration</strong> (optimizer)</label>
+    </div>
+    <button type="submit">Run</button>
+  </form>
+  {% if bulk_open_result %}
+    <hr style="border-color:#374151;margin:16px 0;">
+    <div>Status: <strong>{{ bulk_open_result.status }}</strong> (exit {{ bulk_open_result.exit_code }})</div>
+    <div class="muted">prefix={{ bulk_open_result.prefix }}, alias={{ bulk_open_result.alias }}, tab={{ bulk_open_result.tab }}, mode={{ bulk_open_result.mode }}{% if bulk_open_result.register_exploration %}, register_exploration=yes{% endif %}</div>
+    <pre class="log-pre">{{ bulk_open_result.log or "(No output)" }}</pre>
+  {% endif %}
+</div>
+{% endblock %}

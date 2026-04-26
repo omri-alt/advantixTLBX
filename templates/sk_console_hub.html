@@ -1,0 +1,34 @@
+{% extends "sk_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
+{% block title %}SourceKnowledge console · Hub{% endblock %}
+{% block tool_body %}
+{{ tool_header("SourceKnowledge console", "Bulk open, tracking sheets, QualityWL.", "sk-console", "") }}
+
+<section class="tool-section">
+  <h2>Tools</h2>
+  <div class="tile-grid">
+    <a class="tile" href="{{ url_for('ui_sk_bulk_open') }}">
+      <h3>Bulk opener</h3>
+      <span class="tile-meta">Create campaigns from sheet tab · optional SKtrackExploration rows</span>
+    </a>
+    {% if sk_optimizer_sheet_id %}
+    <a class="tile" href="https://docs.google.com/spreadsheets/d/{{ sk_optimizer_sheet_id }}/edit{% if sk_optimizer_expl_gid %}#gid={{ sk_optimizer_expl_gid }}{% endif %}" target="_blank" rel="noopener">
+      <h3>SKtrackExploration</h3>
+      <span class="tile-meta">Optimizer tracking (Google Sheet)</span>
+    </a>
+    <a class="tile" href="https://docs.google.com/spreadsheets/d/{{ sk_optimizer_sheet_id }}/edit{% if sk_optimizer_wl_gid %}#gid={{ sk_optimizer_wl_gid }}{% endif %}" target="_blank" rel="noopener">
+      <h3>SKtrackWL</h3>
+      <span class="tile-meta">WL optimizer sheet</span>
+    </a>
+    {% endif %}
+    <a class="tile" href="{{ url_for('ui_sk_qualitywl') }}">
+      <h3>QualityWL</h3>
+      <span class="tile-meta">Win rates tab</span>
+    </a>
+    <a class="tile" href="{{ url_for('ui_sk_tools_sheet') }}">
+      <h3>SK tools sheet</h3>
+      <span class="tile-meta">Browse workbook tabs</span>
+    </a>
+  </div>
+</section>
+{% endblock %}
