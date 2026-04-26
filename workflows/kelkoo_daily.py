@@ -35,6 +35,11 @@ COLOR_GREEN = {"red": 0.85, "green": 0.92, "blue": 0.83}     # #d9ead3 ready to 
 
 CPC_FLOOR = 0.02
 
+# PLA: cap product rows per merchant per geo; combined cap per geo is
+# ``min(max_products_per_geo, max_products_per_merchant * n_merchants)`` (defaults → 60 with 3 merchants).
+DEFAULT_MAX_PRODUCTS_PER_MERCHANT = 20
+DEFAULT_MAX_PRODUCTS_PER_GEO = 60
+
 # Kelkoo reports use leadCount (often shown as "leads" on sheets); coloring uses the same.
 LEADS_LOW_MAX = 399  # < 400 leads → green or yellow row when colored
 # Orange rows (400–799 leads in ``apply_fixim_colors``) are **never** chosen — no more traffic.
@@ -890,8 +895,9 @@ def _pla_tsv_lines_for_merchant(
 def generate_offers(
     api_key: str,
     geo_to_merchant_id: Dict[str, str],
-    max_products_per_geo: int = 100,
+    max_products_per_geo: int = DEFAULT_MAX_PRODUCTS_PER_GEO,
     *,
+    max_products_per_merchant: int = DEFAULT_MAX_PRODUCTS_PER_MERCHANT,
     pla_id_alternates: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """For each (geo, merchant_id) fetch PLA feed and build offer rows (Country, Merchant ID, Product Title, Store Link, Audit Status, Timestamp)."""
@@ -908,7 +914,8 @@ def generate_offers(
             )
             if len(lines) <= 1:
                 continue
-            for line in lines[1 : max_products_per_geo + 1]:
+            total_cap = min(max_products_per_geo, max_products_per_merchant)
+            for line in lines[1 : total_cap + 1]:
                 line = line.strip()
                 if not line:
                     continue
@@ -939,19 +946,23 @@ def generate_offers(
 def generate_offers_with_fallback(
     api_key: str,
     geo_to_merchant_ids: Dict[str, List[str]],
-    max_products_per_geo: int = 100,
+    max_products_per_geo: int = DEFAULT_MAX_PRODUCTS_PER_GEO,
     *,
+    max_products_per_merchant: int = DEFAULT_MAX_PRODUCTS_PER_MERCHANT,
     pla_id_alternates: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generate offers per geo by trying multiple merchants in order until we fill
-    ``max_products_per_geo`` items (or merchant candidates are exhausted).
+    ``min(max_products_per_geo, max_products_per_merchant * n_non_empty_merchants)``
+    items (or merchant candidates are exhausted).
     """
     master: List[Dict[str, Any]] = []
     for geo, merchant_ids in geo_to_merchant_ids.items():
         produced = 0
+        n_sel = sum(1 for m in merchant_ids if m)
+        total_cap = min(max_products_per_geo, max_products_per_merchant * n_sel) if n_sel else 0
         for m_id in merchant_ids:
-            if produced >= max_products_per_geo:
+            if produced >= total_cap:
                 break
             if not m_id:
                 continue
@@ -966,8 +977,8 @@ def generate_offers_with_fallback(
                 )
                 if len(lines) <= 1:
                     continue
-                for line in lines[1 : max_products_per_geo + 1]:
-                    if produced >= max_products_per_geo:
+                for line in lines[1 : max_products_per_merchant + 1]:
+                    if produced >= total_cap:
                         break
                     line = line.strip()
                     if not line:
@@ -1026,14 +1037,16 @@ def _offer_row_from_pla_tsv_line(geo: str, m_id: str, line: str) -> Optional[Dic
 def generate_offers_rank_weighted_interleave(
     api_key: str,
     geo_to_merchant_ids: Dict[str, List[str]],
-    max_products_per_geo: int = 100,
+    max_products_per_geo: int = DEFAULT_MAX_PRODUCTS_PER_GEO,
     *,
+    max_products_per_merchant: int = DEFAULT_MAX_PRODUCTS_PER_MERCHANT,
     pla_id_alternates: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     For each geo, take merchants in CPC rank order (caller provides ordered ids) and
     interleave PLA product rows using weights ``N, N-1, …, 1`` per cycle (rank-1 gets
-    the largest share), up to ``max_products_per_geo`` offers.
+    the largest share), up to ``min(max_products_per_geo, max_products_per_merchant * N)``
+    offers (at most ``max_products_per_merchant`` lines queued per merchant).
 
     If only one merchant is listed for a geo, behavior matches a single-merchant fill.
     """
@@ -1042,6 +1055,8 @@ def generate_offers_rank_weighted_interleave(
         mids = [m for m in merchant_ids if m]
         if not mids:
             continue
+        n = len(mids)
+        total_cap = min(max_products_per_geo, max_products_per_merchant * n)
         queues: List[List[str]] = []
         for m_id in mids:
             try:
@@ -1056,12 +1071,13 @@ def generate_offers_rank_weighted_interleave(
                 if len(lines) <= 1:
                     queues.append([])
                 else:
-                    queues.append([ln for ln in lines[1 : max_products_per_geo + 1] if ln.strip()])
+                    queues.append(
+                        [ln for ln in lines[1 : max_products_per_merchant + 1] if ln.strip()]
+                    )
             except Exception as e:
                 logger.warning("PLA %s merchant %s: %s", geo, m_id, e)
                 queues.append([])
 
-        n = len(mids)
         pattern: List[int] = []
         for i in range(n):
             pattern.extend([i] * (n - i))
@@ -1072,7 +1088,7 @@ def generate_offers_rank_weighted_interleave(
         ptrs = [0] * n
         total = 0
         pos = 0
-        while total < max_products_per_geo:
+        while total < total_cap:
             progressed = False
             for _ in range(len(pattern)):
                 mid_i = pattern[pos % len(pattern)]
@@ -1084,7 +1100,7 @@ def generate_offers_rank_weighted_interleave(
                         master.append(row)
                         total += 1
                         progressed = True
-                    if total >= max_products_per_geo:
+                    if total >= total_cap:
                         break
             if not progressed:
                 break

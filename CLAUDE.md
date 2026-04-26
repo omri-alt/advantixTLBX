@@ -60,7 +60,7 @@ Rough order: monthly log for yesterday → optional Blend potential refresh → 
 - `--dry-run` — workflow: sales report does not write Sheets; late-sales never applies GETs.
 - `--skip-blend-prune` — skip step 7a½ (Keitaro detach for offers not monetized in potential sheets).
 
-**Nipuhim Keitaro sync:** `update_offers_from_sheet.py` only uploads the **first N** store-link rows per geo from the offers tab (default in script is 10). The daily workflow passes `--max-offers 100` so it matches the PLA generator cap (`run_daily_workflow.KEITARO_SYNC_MAX_OFFERS_PER_GEO`); otherwise multi-merchant PLA rows beyond that cap never reach Keitaro.
+**Nipuhim Keitaro sync:** `update_offers_from_sheet.py` only uploads the **first N** store-link rows per geo from the offers tab (default in script is 10). The daily workflow passes `--max-offers 60` so it matches the PLA generator cap (`run_daily_workflow.KEITARO_SYNC_MAX_OFFERS_PER_GEO`, aligned with up to 20 product rows per merchant × up to 3 merchants per geo); otherwise multi-merchant PLA rows beyond that cap never reach Keitaro.
 - `--geo uk,fr,de` — comma-separated 2-letter geos: only those countries get fresh PLA + Keitaro sync; **existing rows for other geos stay** in `{date}_offers_*` (merge/replace per geo, not full tab wipe).
 - `--merchant-override 1:uk=15248713` — repeatable; forces feed `1` or `2`, geo `uk`, merchant id list (comma = fallback order). Manual wins over auto-pick if both are set.
 - `--merchant-auto-override 1:uk` — platform picks rank **2** for that feed+geo from fixim-ranked candidates; `1:uk:3` picks rank 3, etc.

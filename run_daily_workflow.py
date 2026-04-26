@@ -96,8 +96,8 @@ from workflows.monthly_log_monetization import (
 SPREADSHEET_ID = KELKOO_SHEETS_SPREADSHEET_ID
 
 # Keitaro Nipuhim sync reads only the first N rows per geo from the offers sheet (``--max-offers``).
-# Keep in sync with ``generate_offers_rank_weighted_interleave`` default ``max_products_per_geo`` (100).
-KEITARO_SYNC_MAX_OFFERS_PER_GEO = 100
+# Keep in sync with ``generate_offers_rank_weighted_interleave`` default combined per-geo cap (60).
+KEITARO_SYNC_MAX_OFFERS_PER_GEO = 60
 
 _DAILY_SHEET_SUFFIXES = ("_fixim_1", "_fixim_2", "_offers_1", "_offers_2", "_offers_today")
 
