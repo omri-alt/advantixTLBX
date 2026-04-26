@@ -27,6 +27,7 @@ from config import (
     EC_AUTH_KEY,
     EC_SECRET_KEY,
     EC_SHEETS_SPREADSHEET_ID,
+    SK_OPTIMIZER_SHEET_ID,
     ECOMNIA_GLOBA_LIST_TAB,
     FEED1_API_KEY,
     FEED2_API_KEY,
@@ -960,11 +961,32 @@ def ui_home():
         if gk not in ordered_group_keys:
             out_groups.append(v)
 
+    sk_expl_gid: str | None = None
+    sk_wl_gid: str | None = None
+    if SK_OPTIMIZER_SHEET_ID:
+        try:
+            from integrations.autoserver.gdocs_as import client as _gspread_client
+
+            _wb = _gspread_client.open_by_key(SK_OPTIMIZER_SHEET_ID)
+            try:
+                sk_expl_gid = str(_wb.worksheet("SKtrackExploration").id)
+            except Exception:
+                sk_expl_gid = None
+            try:
+                sk_wl_gid = str(_wb.worksheet("SKtrackWL").id)
+            except Exception:
+                sk_wl_gid = None
+        except Exception:
+            pass
+
     return render_template(
         "index.html",
         groups=out_groups,
         overview_snapshot_tz=OVERVIEW_SNAPSHOT_TZ,
         overview_snapshot_hour=OVERVIEW_SNAPSHOT_HOUR,
+        sk_optimizer_sheet_id=SK_OPTIMIZER_SHEET_ID,
+        sk_optimizer_expl_gid=sk_expl_gid,
+        sk_optimizer_wl_gid=sk_wl_gid,
     )
 
 

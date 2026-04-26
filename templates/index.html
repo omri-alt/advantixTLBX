@@ -144,6 +144,14 @@
         <a class="ql-card" href="{{ url_for('ui_sk') }}">
           <h3>SourceKnowledge console</h3>
         </a>
+        {% if sk_optimizer_sheet_id %}
+        <a class="ql-card" href="https://docs.google.com/spreadsheets/d/{{ sk_optimizer_sheet_id }}/edit{% if sk_optimizer_expl_gid %}#gid={{ sk_optimizer_expl_gid }}{% endif %}" target="_blank" rel="noopener">
+          <h3>SKtrackExploration</h3>
+        </a>
+        <a class="ql-card" href="https://docs.google.com/spreadsheets/d/{{ sk_optimizer_sheet_id }}/edit{% if sk_optimizer_wl_gid %}#gid={{ sk_optimizer_wl_gid }}{% endif %}" target="_blank" rel="noopener">
+          <h3>SKtrackWL</h3>
+        </a>
+        {% endif %}
         <a class="ql-card" href="{{ url_for('ui_kelkoo_late_sales') }}">
           <h3>Late sales</h3>
         </a>

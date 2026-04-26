@@ -18,19 +18,19 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
 ## Repository layout
 
 
-| Area            | Role                                                                                                                                 |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Project root    | Main entry scripts (`run_daily_workflow.py`, `update_offers_from_sheet.py`, `blend_sync_from_sheet.py`, SK migration scripts, etc.). |
-| `integrations/` | API clients (Keitaro, Kelkoo helpers, Zeropark, Yadore, **autoserver** SK/ZP/EC helpers).                                             |
-| `automations/autoserver/` | Merged AutoServer jobs (hourly + manual); see AutoServer section below.                                      |
-| `scheduler/`    | In-process schedulers (`autoserver_scheduler.py` APScheduler wiring).                                                               |
-| `workflows/`    | Kelkoo daily logic, monthly log, shared workflow code.                                                                               |
-| `cli/`          | Thin wrappers that call root scripts with stable paths (`cli/run_daily_workflow.py`, etc.).                                          |
-| `services/`     | Legacy/alternate client modules; some code paths still reference these.                                                              |
-| `apps_script/`  | Google Apps Script related assets.                                                                                                   |
-| `templates/help.html` | Help Center (`/help`): flags, tables, and examples moved off tool pages.                                                        |
-| `static/`       | Shared UI assets (e.g. `ui_shared.css` for compact headers + Help layout).                                                          |
-| `tools/`        | One-off migration and utility scripts (e.g. Ecomnia tracking URL migration).                                                         |
+| Area                      | Role                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Project root              | Main entry scripts (`run_daily_workflow.py`, `update_offers_from_sheet.py`, `blend_sync_from_sheet.py`, SK migration scripts, etc.). |
+| `integrations/`           | API clients (Keitaro, Kelkoo helpers, Zeropark, Yadore, **autoserver** SK/ZP/EC helpers).                                            |
+| `automations/autoserver/` | Merged AutoServer jobs (hourly + manual); see AutoServer section below.                                                              |
+| `scheduler/`              | In-process schedulers (`autoserver_scheduler.py` APScheduler wiring).                                                                |
+| `workflows/`              | Kelkoo daily logic, monthly log, shared workflow code.                                                                               |
+| `cli/`                    | Thin wrappers that call root scripts with stable paths (`cli/run_daily_workflow.py`, etc.).                                          |
+| `services/`               | Legacy/alternate client modules; some code paths still reference these.                                                              |
+| `apps_script/`            | Google Apps Script related assets.                                                                                                   |
+| `templates/help.html`     | Help Center (`/help`): flags, tables, and examples moved off tool pages.                                                             |
+| `static/`                 | Shared UI assets (e.g. `ui_shared.css` for compact headers + Help layout).                                                           |
+| `tools/`                  | One-off migration and utility scripts (e.g. Ecomnia tracking URL migration).                                                         |
 
 
 **Convention:** Prefer matching existing style in a file (imports, logging, subprocess vs direct calls). Avoid drive-by refactors; keep changes scoped to the task.
@@ -45,7 +45,7 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
   - **Adexa (Blend sync):** `ADEXA_SITE_ID` (required for `feed=adexa` rows when building Keitaro offer URLs in `blend_sync_from_sheet.py`).
   - **SourceKnowledge:** `SOURCEKNOWLEDGE_API_KEY` from `KEYSK` or legacy `keySK` (see below).
   - **Zeropark / Yadore:** `KEYZP`, `YADORE_API_KEY`, etc.
-  - **AutoServer:** `AUTOSERVER_SCHEDULER_ENABLED` (default on), `AUTOSERVER_RUN_LOG_PATH`, `AUTOSERVER_RUN_LOG_MAX`, `SK_TOOLS_SPREADSHEET_ID` (QualityWL gspread workbook). Legacy names `keyZP`, `keySK`, `ECadvKey` / `ECauthKey` / `ECsecretKey`, `keyKL` are populated from KLblend keys when missing—see `integrations/autoserver/env.py`.
+  - **AutoServer:** `AUTOSERVER_SCHEDULER_ENABLED` (default on), `AUTOSERVER_RUN_LOG_PATH`, `AUTOSERVER_RUN_LOG_MAX`, `SK_TOOLS_SPREADSHEET_ID` (QualityWL gspread workbook), **`SK_OPTIMIZER_SHEET_ID`** (SK exploration / WL tracking tabs; defaults to `SK_TOOLS_SPREADSHEET_ID`). Legacy names `keyZP`, `keySK`, `ECadvKey` / `ECauthKey` / `ECsecretKey`, `keyKL` are populated from KLblend keys when missing—see `integrations/autoserver/env.py`.
 
 ## Daily Kelkoo → Keitaro workflow
 
@@ -66,14 +66,17 @@ Rough order: monthly log for yesterday → optional Blend potential refresh → 
 - `--skip-blend-prune` — skip step 7a½ (Keitaro detach for offers not monetized in potential sheets).
 
 **Nipuhim Keitaro sync:** `update_offers_from_sheet.py` only uploads the **first N** store-link rows per geo from the offers tab (default in script is 10). The daily workflow passes `--max-offers 60` so it matches the PLA generator cap (`run_daily_workflow.KEITARO_SYNC_MAX_OFFERS_PER_GEO`, aligned with up to 20 product rows per merchant × up to 3 merchants per geo); otherwise multi-merchant PLA rows beyond that cap never reach Keitaro.
+
 - `--geo uk,fr,de` — comma-separated 2-letter geos: only those countries get fresh PLA + Keitaro sync; **existing rows for other geos stay** in `{date}_offers_*` (merge/replace per geo, not full tab wipe).
 - `--merchant-override 1:uk=15248713` — repeatable; forces feed `1` or `2`, geo `uk`, merchant id list (comma = fallback order). Manual wins over auto-pick if both are set.
 - `--merchant-auto-override 1:uk` — platform picks rank **2** for that feed+geo from fixim-ranked candidates; `1:uk:3` picks rank 3, etc.
 - `--offers-and-keitaro-only` — skips monthly log 0a, Blend potential 0b, tab delete 0, and **does not rewrite fixim from a fresh feed download**; still downloads feeds for PLA id alternates, refetches reports + recolors existing `{date}_fixim_*`, then steps 3–6 only (no step 4b monthly log “today”, no Blend step 7).
 
-**Control Center (Flask):** `/workflows/daily` exposes geo + merchant-mode dropdowns; they normalize args so users do not have to type raw flags. The homepage loads `GET /api/postback-status` (UTC “today” rollup from `runtime/daily_postbacks_last_run.json`) for the slim postback banner above the overview. **Long-form UI copy** (flags, caveats, examples) lives in **`/help`** (Help Center); tool pages keep a one-line subtitle + `?` link to the matching anchor.
+**Control Center (Flask):** `/workflows/daily` exposes geo + merchant-mode dropdowns; they normalize args so users do not have to type raw flags. The homepage loads `GET /api/postback-status` (UTC “today” rollup from `runtime/daily_postbacks_last_run.json`) for the slim postback banner above the overview. **Long-form UI copy** (flags, caveats, examples) lives in `**/help`** (Help Center); tool pages keep a one-line subtitle + `?` link to the matching anchor.
 
-**AutoServer (merged):** Legacy AutoServer **libz** clients live under `integrations/autoserver/` (`sk.py`, `zp.py`, `ec.py`, `kl_as.py`, `skunmon.py`, `gdocs_as.py`). Hourly automations are in `automations/autoserver/` (`MehilotAuto`, `KLFIXoptimize`, `PauseUnmonSK`, `KLWL`, `QualityWL`, `CloseNipuhimAuto`). `integrations/autoserver/env.py` maps KLblend `config` values into AutoServer-style env names (`keyZP`, `keySK`, `ECadvKey`, …) before those modules import. **Scheduler:** `scheduler/autoserver_scheduler.py` starts a `BackgroundScheduler` job at **minute 0 every hour** (same cadence as the old AutoServer `app.py`); `start_autoserver_scheduler()` is invoked from `app.py` at import time (works with Gunicorn). Disable on extra workers with `AUTOSERVER_SCHEDULER_ENABLED=0`. **Run log:** append-only JSON list at `data/autoserver_run_log.json` (max 500 entries, `AUTOSERVER_RUN_LOG_MAX`), written by `BaseAutomation._wrap_run`. **API:** `GET /api/automations` (status + last run per job), `GET /api/automations/log?limit=20`, `GET /api/automations/trigger/all` and `GET /api/automations/trigger/<ClassName>` return **202** and queue work on the scheduler (or a daemon thread if the scheduler is stopped). **UI:** `/automations` (linked from the homepage Tools grid).
+**AutoServer (merged):** Legacy AutoServer **libz** clients live under `integrations/autoserver/` (`sk.py`, `zp.py`, `ec.py`, `kl_as.py`, `skunmon.py`, `gdocs_as.py`, **`sk_optimizer.py`**). Hourly automations are in `automations/autoserver/` (`MehilotAuto`, `KLFIXoptimize`, `PauseUnmonSK`, **`SKExplorationOptimizer`**, `KLWL`, `QualityWL`, `CloseNipuhimAuto`). `integrations/autoserver/env.py` maps KLblend `config` values into AutoServer-style env names (`keyZP`, `keySK`, `ECadvKey`, …) before those modules import. **Scheduler:** `scheduler/autoserver_scheduler.py` starts a `BackgroundScheduler` job at **minute 0 every hour** (same cadence as the old AutoServer `app.py`); `start_autoserver_scheduler()` is invoked from `app.py` at import time (works with Gunicorn). Disable on extra workers with `AUTOSERVER_SCHEDULER_ENABLED=0`. **Run log:** append-only JSON list at `data/autoserver_run_log.json` (max 500 entries, `AUTOSERVER_RUN_LOG_MAX`), written by `BaseAutomation._wrap_run`. **API:** `GET /api/automations` (status + last run per job), `GET /api/automations/log?limit=20`, `GET /api/automations/trigger/all` and `GET /api/automations/trigger/<ClassName>` return **202** and queue work on the scheduler (or a daemon thread if the scheduler is stopped). **UI:** `/automations` (linked from the homepage Tools grid).
+
+**SK exploration optimizer:** Workbook `SK_OPTIMIZER_SHEET_ID` (defaults to the same id as `SK_TOOLS_SPREADSHEET_ID`). Tabs **`SKtrackExploration`** and **`SKtrackWL`** — headers are ensured on each hourly run; to bootstrap columns without waiting for the job, run **`python cli/setup_optimizer_sheets.py`** (also appends **`budgetReachedYesterday`** to EC **`trackExploration`** / **`trackWL`** when missing). Hourly job **`SKExplorationOptimizer`** runs `checkUnmonExploration_SK()` then `checkUnmonWL_SK()`. Exploration sheet: for each active row, aggregate **today** (UTC) clicks per `subId` from `GET .../stats/campaigns/{id}/by-publisher`; subs with **≥30 clicks** and not in the JSON **`wl`** list get **`POST .../campaigns/{id}/bid-factor` with `bidFactor: 0`** (SK has no separate blacklist array on campaign GET). Monetization: column **`monNetwork`** — `kl` (Kelkoo link API via `keyKL`), `feed1` / `feed2` (`FEED1_API_KEY` / `FEED2_API_KEY`), `feed3` / `yadore` (Yadore deeplink), `feed4` / `adexa` (Adexa link monetizer; needs `ADEXA_SITE_ID`). Column **`monUrl`** is the merchant URL to probe (optional if parsable `hp=` exists on the SK campaign `trackingUrl`). Unmonetized → `pause_campaign` + sheet status **`paused-unmon`**. WL sheet skips blacklisting. **Budget reached yesterday:** SK uses campaign **`dailyBudget`** vs sum of **`spend`** on by-publisher stats for **yesterday (UTC)**; EC uses **`daily_budget`** / **`dailybudget`** vs **`adv-stats-by-date`** `spend` — both write **`budgetReachedYesterday`** as `Yes` / `No` / `No limit` (EC columns added in `update_track_sheet` / `update_trackWLsheet`). Homepage Tools links open the two SK tabs when the spreadsheet is reachable.
 
 **Blend block (step 7):**
 
@@ -135,7 +138,7 @@ These are operational checkpoints; do not delete casually if a migration is mid-
 
 - Prefer `**--dry-run`** on migration scripts when available.
 - For bulk SK: use default resume state so completed campaigns are not PUT again.
-- Use `**--only-active**` for full-list passes if archived campaigns should be ignored at list time.
+- Use `**--only-active`** for full-list passes if archived campaigns should be ignored at list time.
 - Read `**README.md**` for full command examples (Kelkoo daily, Keitaro sync, Blend, monetization checker).
 
 ## What “success” looks like for assistants
@@ -169,7 +172,7 @@ Hardcoded in the CONFIG block at the top of the script: `ADVERTISER_KEY`, `AUTH_
   | `geo`                     | `sub_id_2`    |
   | `brand`                   | `sub_id_6`    |
   | `hp`                      | `sub_id_1`    |
-  | `ctrl_*` / `traffic_type` | DROPPED       |
+  | `ctrl_`* / `traffic_type` | DROPPED       |
 
 
 ### Safe operation

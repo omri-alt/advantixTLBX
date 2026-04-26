@@ -20,6 +20,11 @@ AUTOMATION_SPECS: List[Dict[str, str]] = [
         "schedule": "Every hour",
     },
     {
+        "class_name": "SKExplorationOptimizer",
+        "label": "SK exploration + WL optimizer (sheets)",
+        "schedule": "Every hour",
+    },
+    {
         "class_name": "KLWL",
         "label": "SK KLWL sources",
         "schedule": "Every even hour",
@@ -44,10 +49,12 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.mehilot_auto import MehilotAuto
     from automations.autoserver.pause_unmon_sk import PauseUnmonSK
     from automations.autoserver.quality_wl import QualityWL
+    from automations.autoserver.sk_exploration_optimizer import SKExplorationOptimizer
 
     register_func(MehilotAuto())
     register_func(KLFIXoptimize())
     register_func(PauseUnmonSK())
+    register_func(SKExplorationOptimizer())
     register_func(KLWL())
     register_func(QualityWL())
     register_func(CloseNipuhimAuto())

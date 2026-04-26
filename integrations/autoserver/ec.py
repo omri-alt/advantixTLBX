@@ -461,6 +461,10 @@ def update_track_sheet():
                         sheetid, 'logs', logsSheet)
                 campData = get_campaignById(campaign['id'])
                 row['explored30'] = potential[2]
+                try:
+                    row["budgetReachedYesterday"] = check_budget_reached_yesterday_EC(campaign["id"])
+                except Exception:
+                    row["budgetReachedYesterday"] = "No"
                 updated.append(row)
                 break
     gd.create_or_update_sheet_from_dicts_withId(sheetid, 'trackExploration',
@@ -487,6 +491,10 @@ def update_trackWLsheet():
                 row['yesterdayClicks'] = yesterdayClicks
                 row['todayClicks'] = todayClicks
                 row['lastUpdate'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                try:
+                    row["budgetReachedYesterday"] = check_budget_reached_yesterday_EC(campaign["id"])
+                except Exception:
+                    row["budgetReachedYesterday"] = "No"
                 updated.append(row)
     gd.create_or_update_sheet_from_dicts_withId(sheetid,'trackWL', updated)
     checkUnmonWL()
@@ -549,6 +557,41 @@ def exploration_IncreaseCPC_fromTrackSheet():
 ################################################################
 ################################################################
 # those functions are for the daily budget management *increasing and resetting
+def check_budget_reached_yesterday_EC(campaign_id):
+    """
+    EC daily cap vs yesterday spend (field names from existing EC module usage;
+    align with ``get_campaignById`` + ``get_campaigns_stats``):
+
+    - Daily cap: ``daily_budget`` on each campaign object (``get_campaignById`` → ``campaigns[0]['daily_budget']``;
+      creation payloads sometimes use ``dailybudget`` — we read both).
+    - Yesterday spend: ``get_campaigns_stats(campaign_id, y, y)`` → ``stats[0]['spend']`` when a row exists,
+      else spend treated as ``0``.
+
+    Returns ``Yes``, ``No``, or ``No limit`` (no cap / zero / missing).
+    """
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        camp_block = get_campaignById(campaign_id)
+        camp_data = (camp_block.get("campaigns") or [{}])[0]
+    except Exception:
+        return "No"
+    raw = camp_data.get("daily_budget", camp_data.get("dailybudget"))
+    try:
+        cap = float(raw) if raw is not None and str(raw).strip() != "" else 0.0
+    except (TypeError, ValueError):
+        cap = 0.0
+    if cap is None or cap <= 0:
+        return "No limit"
+    try:
+        st = get_campaigns_stats(campaign_id, yesterday, yesterday).get("stats") or []
+        spend = float(st[0]["spend"]) if st else 0.0
+    except Exception:
+        spend = 0.0
+    if spend >= cap:
+        return "Yes"
+    return "No"
+
+
 def checkDailySpend(campId,startBudget,max):
     today = datetime.now().strftime('%Y-%m-%d')
     campData = get_campaignById(campId)['campaigns'][0]

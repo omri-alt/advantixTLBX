@@ -3,6 +3,7 @@ from pathlib import Path
 
 import gspread
 from gspread.exceptions import WorksheetNotFound
+from gspread.utils import rowcol_to_a1
 from google.oauth2.service_account import Credentials
 
 scopes = [
@@ -169,6 +170,84 @@ def create_or_update_sheet_from_dicts_withId(sheetId,sheet_name, dict_data):
 
     worksheet.update(data)
     print(f"Worksheet '{sheet_name}' updated successfully.")
+
+def append_missing_headers_row1(
+    spreadsheet_id: str,
+    worksheet_title: str,
+    ordered_headers: list,
+    *,
+    create_if_missing: bool = True,
+) -> list[str]:
+    """
+    Ensure a worksheet exists with the required header names in row 1.
+
+    - Missing worksheet: if ``create_if_missing`` (default), create it and set row 1 to
+      ``ordered_headers``; otherwise raise ``WorksheetNotFound``.
+    - Empty row 1: replaced with ``ordered_headers``.
+    - Non-empty row 1: any name in ``ordered_headers`` not already present is **appended**
+      (preserves existing column order and data).
+
+    Returns the list of header names that were newly appended (empty if none).
+    """
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        ws = spreadsheet.worksheet(worksheet_title)
+    except WorksheetNotFound:
+        if not create_if_missing:
+            raise
+        cols = max(len(ordered_headers), 1)
+        ws = spreadsheet.add_worksheet(title=worksheet_title, rows="2000", cols=str(cols))
+        ws.update("A1", [ordered_headers], value_input_option="USER_ENTERED")
+        return list(ordered_headers)
+
+    row1 = ws.row_values(1)
+    while row1 and str(row1[-1]).strip() == "":
+        row1.pop()
+    def _col_count(w) -> int:
+        try:
+            return int(getattr(w, "col_count", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    if not row1 or not any(str(x).strip() for x in row1):
+        cc = max(_col_count(ws), len(ordered_headers))
+        ws.resize(rows=max(ws.row_count, 1000), cols=cc)
+        rng = f"A1:{rowcol_to_a1(1, len(ordered_headers))}"
+        ws.update(rng, [ordered_headers], value_input_option="USER_ENTERED")
+        return list(ordered_headers)
+
+    seen = set(row1)
+    merged = list(row1)
+    added: list[str] = []
+    for h in ordered_headers:
+        if h not in seen:
+            merged.append(h)
+            seen.add(h)
+            added.append(h)
+    if not added:
+        return []
+    n = len(merged)
+    ws.resize(rows=max(ws.row_count, 1000), cols=max(n, _col_count(ws)))
+    rng = f"A1:{rowcol_to_a1(1, n)}"
+    ws.update(rng, [merged], value_input_option="USER_ENTERED")
+    return added
+
+
+def ensure_worksheet_with_headers(spreadsheet_id: str, worksheet_title: str, headers: list) -> None:
+    """
+    If ``worksheet_title`` is missing, create it. If row 1 is empty, write ``headers``.
+    Does not clear existing data when headers are already present.
+    """
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        ws = spreadsheet.worksheet(worksheet_title)
+    except WorksheetNotFound:
+        cols = max(len(headers), 1)
+        ws = spreadsheet.add_worksheet(title=worksheet_title, rows="2000", cols=str(cols))
+    row1 = ws.row_values(1)
+    if not row1 or not any(str(x).strip() for x in row1):
+        ws.update("A1", [headers], value_input_option="USER_ENTERED")
+
 
 def create_or_update_sheet_from_dicts_withID(sheet_id, sheet_name, dict_data):
     spreadsheet = client.open_by_key(sheet_id)

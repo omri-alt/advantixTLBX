@@ -264,6 +264,20 @@ def update_bid_factor(camp_id, sub_id, bid):
     return
 
 
+def post_bid_factor(camp_id, sub_id, bid_factor):
+    """
+    POST /affiliate/v2/campaigns/{id}/bid-factor with JSON ``{"subId", "bidFactor"}``.
+
+    Live-verified: ``bidFactor`` may be ``0`` to stop buying from that sub-publisher
+    (API returns 200 with ``{"subId": "...", "bidFactor": 0.0}``). Values between 0
+    and the minimum effective bid can return 400 (\"Bid rate can not be lower than $0.01\").
+    """
+    endpoint = f"https://api.sourceknowledge.com/affiliate/v2/campaigns/{camp_id}/bid-factor"
+    data = {"subId": str(sub_id), "bidFactor": float(bid_factor)}
+    r = requests.post(endpoint, headers=headers_sk, json=data)
+    return r
+
+
 #21. 12.06 function uses get_fixcamp to get all active KLFIX campaigns and find_new_subs7days to find all new subs in the last 7 days and updates their bid_factor to 0.205
 def optimize_newsource_fix7days():
     fix = get_fixcamp()

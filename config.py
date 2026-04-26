@@ -383,3 +383,7 @@ SK_TOOLS_SPREADSHEET_ID = (
     os.getenv("SK_TOOLS_SPREADSHEET_ID") or "176wSQDDz9D1APmAXiYPeECwMqCQm3mvMBwgj8MKqmgk"
 ).strip()
 
+# SourceKnowledge exploration optimizer (SKtrackExploration / SKtrackWL tabs).
+# Defaults to the same workbook as ``SK_TOOLS_SPREADSHEET_ID`` when unset.
+SK_OPTIMIZER_SHEET_ID = (os.getenv("SK_OPTIMIZER_SHEET_ID") or SK_TOOLS_SPREADSHEET_ID).strip()
+
