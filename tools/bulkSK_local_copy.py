@@ -26,6 +26,8 @@ KLcampset = {
         "12",
         "13",
         "14",
+        "15",
+        "16",
     ],  # no push , native , adnetwork
     "strategyId": 3,
 }

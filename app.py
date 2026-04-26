@@ -28,6 +28,7 @@ from config import (
     EC_SECRET_KEY,
     EC_SHEETS_SPREADSHEET_ID,
     SK_OPTIMIZER_SHEET_ID,
+    SK_TOOLS_SPREADSHEET_ID,
     ECOMNIA_GLOBA_LIST_TAB,
     FEED1_API_KEY,
     FEED2_API_KEY,
@@ -175,7 +176,6 @@ _WORKFLOW_THREADS: dict[str, threading.Thread] = {}
 _DAILY_POSTBACK_THREADS_LOCK = threading.Lock()
 _DAILY_POSTBACK_THREADS: dict[str, threading.Thread] = {}
 PUBLISHERS_DB_PATH = ROOT_DIR / "runtime" / "publishers.db"
-SK_TOOLS_SPREADSHEET_ID = "176wSQDDz9D1APmAXiYPeECwMqCQm3mvMBwgj8MKqmgk"
 
 # Small in-memory cache to reduce repeated DSP API calls between page loads.
 CACHE_TTL_SECONDS = 180
@@ -930,8 +930,9 @@ def _ec_extract_brand(camp: dict[str, Any], merchants_by_mid: dict[str, str]) ->
 
 
 def _sk_optimizer_sheet_link_context() -> dict[str, Any]:
-    """Workbook id + worksheet gids for SKtrackExploration / SKtrackWL links (gspread)."""
+    """Workbook id + worksheet gids for SKtrackExploration / SKtrackWL; tools workbook + log tail."""
     sk_id = (SK_OPTIMIZER_SHEET_ID or "").strip()
+    tools_id = (SK_TOOLS_SPREADSHEET_ID or "").strip()
     expl_gid: str | None = None
     wl_gid: str | None = None
     if sk_id:
@@ -949,10 +950,20 @@ def _sk_optimizer_sheet_link_context() -> dict[str, Any]:
                 wl_gid = None
         except Exception:
             pass
+    sk_exploration_logs: list[dict[str, str]] = []
+    if tools_id:
+        try:
+            from integrations.autoserver.exploration_sheet_logs import fetch_log_tail
+
+            sk_exploration_logs = fetch_log_tail(tools_id, limit=100)
+        except Exception:
+            sk_exploration_logs = []
     return {
         "sk_optimizer_sheet_id": sk_id,
+        "sk_tools_sheet_id": tools_id,
         "sk_optimizer_expl_gid": expl_gid,
         "sk_optimizer_wl_gid": wl_gid,
+        "sk_exploration_logs": sk_exploration_logs,
     }
 
 
@@ -1145,7 +1156,9 @@ def ui_sk_bulk_open():
         tab = (request.form.get("tab") or "bulkSK-KLFIX").strip()
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         apply = mode == "apply"
-        register_exploration = bool((request.form.get("register_exploration") or "").strip())
+        register_exploration = (
+            (request.form.get("register_mode") or "").strip().lower() == "exploration"
+        )
         mon_network = (request.form.get("mon_network") or "kl").strip().lower()
 
         if prefix and alias and tab:
@@ -1428,10 +1441,19 @@ def _ecomnia_console_view_context() -> Dict[str, Any]:
     copy_derived_wl = derived_whitelist_copy_paste(derived_wl) if derived_wl else ""
     ec_ok = bool(EC_ADVERTISER_KEY and EC_AUTH_KEY and EC_SECRET_KEY)
     sheet_ok = bool(EC_SHEETS_SPREADSHEET_ID)
+    ec_exploration_logs: list[dict[str, str]] = []
+    if EC_SHEETS_SPREADSHEET_ID:
+        try:
+            from integrations.autoserver.exploration_sheet_logs import fetch_log_tail
+
+            ec_exploration_logs = fetch_log_tail(EC_SHEETS_SPREADSHEET_ID, limit=100)
+        except Exception:
+            ec_exploration_logs = []
     return {
         "ec_ok": ec_ok,
         "sheet_ok": sheet_ok,
         "spreadsheet_id": EC_SHEETS_SPREADSHEET_ID,
+        "ec_exploration_logs": ec_exploration_logs,
         "globa_tab": ECOMNIA_GLOBA_LIST_TAB,
         "geo_map": geo_map,
         "copy_all": copy_all,

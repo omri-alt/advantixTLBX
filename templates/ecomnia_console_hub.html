@@ -69,4 +69,40 @@
     {% endfor %}
   </div>
 </section>
+
+{% if ec_exploration_logs %}
+<section class="tool-section">
+  <h2>Exploration log (last 100)</h2>
+  <p class="muted">Rows from the <code>logs</code> tab on the EC workbook (exploration / monetization actions).</p>
+  <div style="overflow-x:auto; max-height: 480px; overflow-y: auto;">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Campaign ID</th>
+          <th>Name</th>
+          <th>Event</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for L in ec_exploration_logs %}
+        <tr>
+          <td>{{ L.date }}</td>
+          <td>{{ L.campId }}</td>
+          <td>{{ L.campName }}</td>
+          <td>{{ L.verify }}</td>
+          <td style="max-width: 420px; word-break: break-word; font-family: ui-monospace, monospace; font-size: 11px;">{{ L.response }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% elif sheet_ok %}
+<section class="tool-section">
+  <h2>Exploration log</h2>
+  <p class="muted">No rows in <code>logs</code> yet, or the tab could not be read.</p>
+</section>
+{% endif %}
 {% endblock %}

@@ -6,6 +6,7 @@ Create / extend Google Sheets columns for EC + SK optimizers.
   get a ``budgetReachedYesterday`` column on row 1 if missing (appended; existing data untouched).
 - SK workbook (``SK_OPTIMIZER_SHEET_ID``): tabs ``SKtrackExploration`` and ``SKtrackWL``
   are created if missing, or row 1 is extended with any missing headers from the optimizer spec.
+- EC + SK **tools** workbook: a ``logs`` tab (exploration / bulk audit) is created if missing.
 
 Requires ``GOOGLE_APPLICATION_CREDENTIALS`` or ``credentials.json`` and Sheets API access.
 
@@ -29,7 +30,8 @@ def main() -> None:
     if load_dotenv:
         load_dotenv(ROOT / ".env")
 
-    from config import EC_SHEETS_SPREADSHEET_ID, SK_OPTIMIZER_SHEET_ID
+    from config import EC_SHEETS_SPREADSHEET_ID, SK_OPTIMIZER_SHEET_ID, SK_TOOLS_SPREADSHEET_ID
+    from integrations.autoserver.exploration_sheet_logs import ensure_logs_worksheet
     from integrations.autoserver.sk_optimizer import HEADERS_EXPLORATION, HEADERS_WL
 
     try:
@@ -50,10 +52,13 @@ def main() -> None:
 
     ec_id = (EC_SHEETS_SPREADSHEET_ID or "").strip()
     sk_id = (SK_OPTIMIZER_SHEET_ID or "").strip()
+    tools_id = (SK_TOOLS_SPREADSHEET_ID or "").strip()
     if not ec_id:
         print("EC_SHEETS_SPREADSHEET_ID is not set; skipping EC tabs.")
     if not sk_id:
         print("SK_OPTIMIZER_SHEET_ID is not set; skipping SK tabs.")
+    if not tools_id:
+        print("SK_TOOLS_SPREADSHEET_ID is not set; skipping SK tools logs tab.")
 
     extra = ["budgetReachedYesterday"]
 
@@ -67,12 +72,24 @@ def main() -> None:
                 print(f"EC {tab!r}: worksheet not found — create the tab first; skipped.")
                 continue
             print(f"EC {tab!r}: appended headers {added or '(none)'}")
+        try:
+            ensure_logs_worksheet(ec_id)
+            print("EC logs: ensured tab 'logs' exists.")
+        except Exception as e:
+            print(f"EC logs tab: {e}")
 
     if sk_id:
         added_e = gd.append_missing_headers_row1(sk_id, "SKtrackExploration", HEADERS_EXPLORATION)
         print(f"SK SKtrackExploration: new/updated headers {added_e or '(already complete)'}")
         added_w = gd.append_missing_headers_row1(sk_id, "SKtrackWL", HEADERS_WL)
         print(f"SK SKtrackWL: new/updated headers {added_w or '(already complete)'}")
+
+    if tools_id:
+        try:
+            ensure_logs_worksheet(tools_id)
+            print("SK tools workbook: ensured tab 'logs' exists.")
+        except Exception as e:
+            print(f"SK tools logs tab: {e}")
 
     print("Done.")
 

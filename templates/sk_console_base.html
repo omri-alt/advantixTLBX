@@ -19,7 +19,10 @@
     .sk-nav a.active { color: var(--accent); font-weight: 600; }
     .sk-nav .sep { color: var(--line); user-select: none; }
     .sk-nav-inner { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
-    .sk-nav-tools { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+    table.log-tail { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+    table.log-tail th, table.log-tail td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+    table.log-tail th { color: var(--muted); font-weight: 600; }
+    table.log-tail td.resp { max-width: 420px; word-break: break-word; font-family: ui-monospace, monospace; font-size: 10px; }
     h1 { margin: 8px 0 6px; font-size: 1.5rem; }
     .muted { color: var(--muted); font-size: 14px; max-width: 900px; line-height: 1.55; }
     .banner { padding: 12px 14px; border-radius: 10px; margin: 12px 0; border: 1px solid var(--line); }
@@ -58,15 +61,9 @@
         <span class="sep">·</span>
         <a href="{{ url_for('ui_sk_bulk_open') }}" class="{{ 'active' if active_page == 'bulk-open' else '' }}">Bulk opener</a>
         <span class="sep">·</span>
+        <a href="{{ url_for('ui_sk_qualitywl') }}" class="{{ 'active' if active_page == 'qualitywl' else '' }}">QualityWL</a>
+        <span class="sep">·</span>
         <a href="{{ url_for('ui_help') }}#sk-console">Help</a>
-      </div>
-      <div class="sk-nav-tools">
-        {% if sk_optimizer_sheet_id %}
-        <a href="https://docs.google.com/spreadsheets/d/{{ sk_optimizer_sheet_id }}/edit{% if sk_optimizer_expl_gid %}#gid={{ sk_optimizer_expl_gid }}{% endif %}" target="_blank" rel="noopener">SKtrackExploration</a>
-        <a href="https://docs.google.com/spreadsheets/d/{{ sk_optimizer_sheet_id }}/edit{% if sk_optimizer_wl_gid %}#gid={{ sk_optimizer_wl_gid }}{% endif %}" target="_blank" rel="noopener">SKtrackWL</a>
-        {% endif %}
-        <a href="{{ url_for('ui_sk_qualitywl') }}">QualityWL</a>
-        <a href="{{ url_for('ui_sk_tools_sheet') }}">Tools sheet</a>
       </div>
     </nav>
 

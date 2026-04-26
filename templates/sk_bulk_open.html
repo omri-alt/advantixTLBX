@@ -1,6 +1,22 @@
 {% extends "sk_console_base.html" %}
 {% from "macros/page_header.html" import tool_header %}
 {% block title %}SourceKnowledge · Bulk opener{% endblock %}
+{% block extra_head %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  function syncMonRow() {
+    var expl = document.getElementById('reg_expl');
+    var row = document.getElementById('mon-network-row');
+    if (!expl || !row) return;
+    row.style.display = expl.checked ? 'block' : 'none';
+  }
+  document.querySelectorAll('input[name="register_mode"]').forEach(function (el) {
+    el.addEventListener('change', syncMonRow);
+  });
+  syncMonRow();
+});
+</script>
+{% endblock %}
 {% block tool_body %}
 {{ tool_header("Bulk opener", "Sheet rows → SK advertisers + campaigns.", "sk-console", "dry-run | apply") }}
 
@@ -18,8 +34,20 @@
       <label for="tab">Input tab</label><br>
       <input type="text" id="tab" name="tab" value="{{ request.form.get('tab', 'bulkSK-KLFIX') }}" placeholder="bulkSK-KLFIX" required>
     </div>
-    <div style="margin:8px 0;">
-      <label for="mon_network">Monetization network (for SKtrackExploration)</label><br>
+    <div style="margin:12px 0;">
+      <div class="muted" style="margin-bottom:6px">After apply — register for exploration optimizer?</div>
+      {% set rm = request.form.get('register_mode', 'bulk_only') %}
+      <label style="display:block;margin:4px 0;">
+        <input type="radio" name="register_mode" value="bulk_only" {% if rm != 'exploration' %}checked{% endif %}>
+        Standard bulk only (no <code>SKtrackExploration</code> row)
+      </label>
+      <label style="display:block;margin:4px 0;">
+        <input type="radio" name="register_mode" value="exploration" id="reg_expl" {% if rm == 'exploration' %}checked{% endif %}>
+        Add each new campaign to <strong>SKtrackExploration</strong> (needs monetization network below)
+      </label>
+    </div>
+    <div id="mon-network-row" style="margin:8px 0; display:none;">
+      <label for="mon_network">Monetization network</label><br>
       <select id="mon_network" name="mon_network">
         {% set mn = request.form.get('mon_network', 'kl') %}
         <option value="kl" {% if mn == 'kl' %}selected{% endif %}>kl (Kelkoo keyKL)</option>
@@ -35,9 +63,6 @@
         <option value="dry-run" {% if request.form.get('mode', 'dry-run') != 'apply' %}selected{% endif %}>Dry run</option>
         <option value="apply" {% if request.form.get('mode') == 'apply' %}selected{% endif %}>Apply</option>
       </select>
-    </div>
-    <div style="margin:8px 0;">
-      <label><input type="checkbox" name="register_exploration" value="1" {% if request.form.get('register_exploration') %}checked{% endif %}> After apply, add each new campaign to <strong>SKtrackExploration</strong> (optimizer)</label>
     </div>
     <button type="submit">Run</button>
   </form>

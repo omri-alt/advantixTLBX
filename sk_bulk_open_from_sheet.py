@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import SK_TOOLS_SPREADSHEET_ID, SOURCEKNOWLEDGE_API_KEY  # noqa: E402
+from integrations.autoserver.exploration_sheet_logs import append_exploration_log_row  # noqa: E402
 
 
 BASE_URL = "https://api.sourceknowledge.com/affiliate/v2"
@@ -263,6 +264,7 @@ def main() -> None:
     track_rows: List[Dict[str, Any]] = []
     if register_exploration and apply:
         from integrations.autoserver.sk_optimizer import exploration_row_from_bulk_sheet_row
+
     for idx, item in enumerate(rows, start=1):
         brand = _strip_brand_name(item["brand"])
         geo = item["geo"].lower()
@@ -282,7 +284,7 @@ def main() -> None:
             "advertiserId": None,
             "allowDeepLink": True,
             "geoTargeting": geo_target,
-            "partnerChannels": ["1", "2", "3", "5", "6", "8", "9", "12", "13", "14"],
+            "partnerChannels": ["1", "2", "3", "5", "6", "8", "9", "12", "13", "14", "15", "16"],
             "strategyId": 3,
         }
 
@@ -300,6 +302,18 @@ def main() -> None:
             created_camp += 1
             cid = camp.get("id")
             print(f"[{idx}/{len(rows)}] OK advertiser_id={adv_id} campaign_id={cid}")
+            verify_note = (
+                "SK bulk opener: OK + SKtrackExploration row queued"
+                if register_exploration
+                else "SK bulk opener: OK (standard bulk)"
+            )
+            append_exploration_log_row(
+                input_sheet_id,
+                camp_id=str(cid) if cid is not None else "",
+                camp_name=campaign_name,
+                verify=verify_note,
+                response={"advertiser_id": adv_id, "row_index": idx, "mon_network": mon_network},
+            )
             if register_exploration and cid is not None and apply:
                 track_rows.append(
                     exploration_row_from_bulk_sheet_row(item, camp, mon_network=mon_network)
@@ -308,6 +322,13 @@ def main() -> None:
         except Exception as e:
             failed += 1
             print(f"[{idx}/{len(rows)}] ERROR {advertiser_name}: {e}")
+            append_exploration_log_row(
+                input_sheet_id,
+                camp_id="",
+                camp_name=advertiser_name,
+                verify="SK bulk opener: ERROR",
+                response=str(e),
+            )
 
     print()
     print(
@@ -319,9 +340,23 @@ def main() -> None:
 
         n_added, err = append_sk_exploration_tracking_rows(track_rows)
         if err:
+            append_exploration_log_row(
+                input_sheet_id,
+                camp_id="",
+                camp_name="SKtrackExploration",
+                verify="SK bulk opener: SKtrackExploration append failed",
+                response=err,
+            )
             print(f"SKtrackExploration append error: {err}")
             sys.exit(1)
         print(f"SKtrackExploration: appended {n_added} new row(s).")
+        append_exploration_log_row(
+            input_sheet_id,
+            camp_id="",
+            camp_name="SKtrackExploration",
+            verify="SK bulk opener: appended SKtrackExploration rows",
+            response={"added": n_added},
+        )
 
     if apply and failed:
         sys.exit(1)
