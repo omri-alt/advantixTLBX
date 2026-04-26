@@ -14,5 +14,8 @@ __pycache__/
 .idea/
 .vscode/
 
+# Local extract / mirror (not part of KLblend; do not commit)
+_autoserver_extract/
+
 
 runtime/
