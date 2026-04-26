@@ -46,12 +46,14 @@ Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) fo
   python run_daily_workflow.py --skip-late-sales
   python run_daily_workflow.py --late-sales-apply
   python run_daily_workflow.py --dry-run
+  python run_daily_workflow.py --skip-blend-prune
 """
 from __future__ import annotations
 
 import logging
 import re
 import subprocess
+from collections import Counter
 from typing import Any, Dict, List, Optional, Set, Tuple
 import sys
 from datetime import datetime, timedelta, timezone
@@ -92,6 +94,10 @@ from workflows.monthly_log_monetization import (
 )
 
 SPREADSHEET_ID = KELKOO_SHEETS_SPREADSHEET_ID
+
+# Keitaro Nipuhim sync reads only the first N rows per geo from the offers sheet (``--max-offers``).
+# Keep in sync with ``generate_offers_rank_weighted_interleave`` default ``max_products_per_geo`` (100).
+KEITARO_SYNC_MAX_OFFERS_PER_GEO = 100
 
 _DAILY_SHEET_SUFFIXES = ("_fixim_1", "_fixim_2", "_offers_1", "_offers_2", "_offers_today")
 
@@ -191,6 +197,7 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
     skip_keitaro = "--skip-keitaro" in argv
     skip_blend = "--skip-blend" in argv
     skip_blend_sync = "--skip-blend-sync" in argv
+    skip_blend_prune = "--skip-blend-prune" in argv
     feed1_traffic_only = "--feed1-traffic-only" in argv
     merchants_per_geo = 1 if "--single-merchant-per-geo" in argv else 3
     include_flex_merchants = "--include-flex" in argv
@@ -235,6 +242,7 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
         "skip_keitaro": skip_keitaro,
         "skip_blend": skip_blend,
         "skip_blend_sync": skip_blend_sync,
+        "skip_blend_prune": skip_blend_prune,
         "feed1_traffic_only": feed1_traffic_only,
         "merchants_per_geo": merchants_per_geo,
         "static_only": static_only,
@@ -327,7 +335,13 @@ def run_blend_sync_from_sheet(extra_args: list[str] | None = None) -> bool:
     return subprocess.run(cmd).returncode == 0
 
 
-def run_blend_daily_steps(*, skip_keitaro: bool, skip_blend: bool, skip_blend_sync: bool) -> None:
+def run_blend_daily_steps(
+    *,
+    skip_keitaro: bool,
+    skip_blend: bool,
+    skip_blend_sync: bool,
+    skip_blend_prune: bool = False,
+) -> None:
     if skip_blend:
         return
     print("7. Blend workflow (spreadsheet + Keitaro campaign) ...")
@@ -335,6 +349,23 @@ def run_blend_daily_steps(*, skip_keitaro: bool, skip_blend: bool, skip_blend_sy
         print(f"   7a. Populate Blend from potential ({feed}, max {BLEND_DAILY_MAX_NEW_ROWS} new rows) ...")
         if not run_populate_blend_from_potential(feed=feed, max_add=BLEND_DAILY_MAX_NEW_ROWS):
             print(f"   Warning: populate_blend_from_potential ({feed}) exited non-zero.")
+    if not skip_blend_prune:
+        print("   7a½. Blend prune: detach Keitaro Blend offers not monetized in potential sheets ...")
+        try:
+            from blend_sync_from_sheet import run_blend_prune_unmonetized_keitaro
+
+            blend_svc = get_sheets_service()
+            res = run_blend_prune_unmonetized_keitaro(blend_svc, only_geo=None, dry_run=False)
+            removed = res.get("removed") or []
+            geo_set = {str(x[1]) for x in removed if len(x) > 1}
+            print(
+                f"   Removed {len(removed)} offers from Keitaro Blend flows across "
+                f"{len(geo_set)} geo(s)."
+            )
+        except Exception as e:
+            print(f"   Warning: Blend prune step failed: {e}")
+    else:
+        print("   7a½. Skipping Blend prune (--skip-blend-prune).")
     if skip_keitaro:
         print("   7b. Skipping Blend Keitaro sync (--skip-keitaro).")
         print()
@@ -464,9 +495,31 @@ def run_update_offers_from_sheet(
     cmd = [sys.executable, str(script), "--sheet", sheet_name]
     if account == 2:
         cmd.extend(["--account", "2"])
-    if extra_args:
-        cmd.extend(extra_args)
+    merged = list(extra_args or [])
+    if "--max-offers" not in merged:
+        merged.extend(["--max-offers", str(KEITARO_SYNC_MAX_OFFERS_PER_GEO)])
+    if merged:
+        cmd.extend(merged)
     return subprocess.run(cmd).returncode == 0
+
+
+def _log_pla_merchant_distribution(label: str, rows: List[Dict[str, Any]]) -> None:
+    """Log offer counts per (Country, Merchant ID) before Keitaro sheet sync."""
+    c = Counter()
+    for r in rows:
+        geo = str(r.get("Country") or "").strip().upper()
+        mid = str(r.get("Merchant ID") or "").strip()
+        if geo and mid:
+            c[(geo, mid)] += 1
+    print(f"   PLA rows for {label}: total={len(rows)} distinct (geo,merchant)={len(c)}")
+    shown = 0
+    for (geo, mid), n in sorted(c.items(), key=lambda x: (-x[1], x[0][0], x[0][1])):
+        print(f"      {geo} merchant_id={mid}: {n} offers")
+        shown += 1
+        if shown >= 48:
+            if len(c) > shown:
+                print(f"      ... ({len(c) - shown} more (geo,merchant) pairs omitted)")
+            break
 
 
 def _apply_merchant_overrides_to_chosen(
@@ -586,6 +639,7 @@ def run_pla_offers_keitaro_blend_tail(
     run_blend_steps: bool,
     run_daily_conversion_postbacks: bool,
     postback_report_date: str,
+    skip_blend_prune: bool = False,
 ) -> None:
     """Steps 3–6 (optional 4b) and optional 7: merchant selection → PLA → Keitaro → Blend."""
     offers_1 = f"{date_str}_offers_1"
@@ -601,6 +655,10 @@ def run_pla_offers_keitaro_blend_tail(
     print(
         f"3. Choosing merchants (top-{rank_depth} scan; up to {base_top_n} per geo; "
         "report rules + CPC floor) ..."
+    )
+    print(
+        f"   Config: merchants_per_geo={merchants_per_geo} "
+        "(use --single-merchant-per-geo to force 1 merchant per geo)."
     )
     ranked1 = get_top_merchants_per_geo(
         service, SPREADSHEET_ID, fixim_1, perf1, top_n=rank_depth
@@ -629,6 +687,18 @@ def run_pla_offers_keitaro_blend_tail(
         chosen2 = {k: v for k, v in chosen2.items() if k in partial_geos}
     print(f"   Feed1: {len(chosen1)} geos")
     print(f"   Feed2: {len(chosen2)} geos")
+    print("   Merchant selection detail (ranked list length vs chosen count per geo):")
+    for label, ranked, chosen in (
+        ("Feed1", ranked1, chosen1),
+        ("Feed2", ranked2, chosen2),
+    ):
+        for g in sorted(chosen.keys()):
+            rlist = ranked.get(g) or []
+            clist = chosen.get(g) or []
+            print(
+                f"   {label} geo={g}: ranked_merchants={len(rlist)} chosen_merchants={len(clist)} "
+                f"ids={clist!r} top_of_ranking={rlist[: max(5, len(clist))]!r}"
+            )
     for label, ch in (("Feed1", chosen1), ("Feed2", chosen2)):
         if "it" in ch:
             print(f"   {label} Italy: PLA will use merchant id(s) {ch['it']!r} (country=it)")
@@ -657,6 +727,9 @@ def run_pla_offers_keitaro_blend_tail(
     else:
         rows1 = rows1_new
         rows2 = rows2_new
+
+    _log_pla_merchant_distribution("feed1 (final rows before sheet + Keitaro)", rows1)
+    _log_pla_merchant_distribution("feed2 (final rows before sheet + Keitaro)", rows2)
 
     write_offers_sheet(service, SPREADSHEET_ID, offers_1, rows1)
     it1 = sum(1 for r in rows1 if str(r.get("Country", "")).strip().upper() == "IT")
@@ -697,7 +770,12 @@ def run_pla_offers_keitaro_blend_tail(
     if skip_keitaro:
         print("Skipping Keitaro sync (--skip-keitaro).")
         if run_blend_steps:
-            run_blend_daily_steps(skip_keitaro=True, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
+            run_blend_daily_steps(
+                skip_keitaro=True,
+                skip_blend=skip_blend,
+                skip_blend_sync=skip_blend_sync,
+                skip_blend_prune=skip_blend_prune,
+            )
         if run_daily_conversion_postbacks:
             run_optional_daily_conversion_postbacks(postback_report_date)
         return
@@ -707,13 +785,20 @@ def run_pla_offers_keitaro_blend_tail(
         print("   No offers generated for either feed today; skipping Keitaro sync.")
         print()
         if run_blend_steps:
-            run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
+            run_blend_daily_steps(
+                skip_keitaro=False,
+                skip_blend=skip_blend,
+                skip_blend_sync=skip_blend_sync,
+                skip_blend_prune=skip_blend_prune,
+            )
         print("Done. No offers to sync.")
         if run_daily_conversion_postbacks:
             run_optional_daily_conversion_postbacks(postback_report_date)
         return
 
-    print("6. Syncing feed1 to Keitaro ...")
+    print(
+        f"6. Syncing feed1 to Keitaro (up to {KEITARO_SYNC_MAX_OFFERS_PER_GEO} offers per geo from sheet) ..."
+    )
     feed1_extra_args = ["--traffic-feed1-only"] if feed1_traffic_only else None
 
     if not rows1:
@@ -726,7 +811,12 @@ def run_pla_offers_keitaro_blend_tail(
         print("   Feed2 traffic disabled (skipping feed2 sync).")
         print()
         if run_blend_steps:
-            run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
+            run_blend_daily_steps(
+                skip_keitaro=False,
+                skip_blend=skip_blend,
+                skip_blend_sync=skip_blend_sync,
+                skip_blend_prune=skip_blend_prune,
+            )
         print("Done. Feed1 traffic only synced to Keitaro.")
         if run_daily_conversion_postbacks:
             run_optional_daily_conversion_postbacks(postback_report_date)
@@ -740,7 +830,12 @@ def run_pla_offers_keitaro_blend_tail(
         sys.exit(1)
     print()
     if run_blend_steps:
-        run_blend_daily_steps(skip_keitaro=False, skip_blend=skip_blend, skip_blend_sync=skip_blend_sync)
+        run_blend_daily_steps(
+            skip_keitaro=False,
+            skip_blend=skip_blend,
+            skip_blend_sync=skip_blend_sync,
+            skip_blend_prune=skip_blend_prune,
+        )
     print("Done. Both feeds synced to Keitaro.")
     if run_daily_conversion_postbacks:
         run_optional_daily_conversion_postbacks(postback_report_date)
@@ -762,6 +857,7 @@ def main() -> None:
     run_daily_conversion_postbacks = pa["run_daily_conversion_postbacks"]
     offers_and_keitaro_only = pa["offers_and_keitaro_only"]
     postback_report_date = pa["postback_report_date"]
+    skip_blend_prune = bool(pa.get("skip_blend_prune"))
 
     merge_offers_tabs = bool(partial_geos)
 
@@ -862,6 +958,7 @@ def main() -> None:
             run_blend_steps=False,
             run_daily_conversion_postbacks=run_daily_conversion_postbacks,
             postback_report_date=postback_report_date,
+            skip_blend_prune=skip_blend_prune,
         )
         _run_post_pla_automation_tail(service, pa)
         return
@@ -961,6 +1058,7 @@ def main() -> None:
         run_blend_steps=True,
         run_daily_conversion_postbacks=run_daily_conversion_postbacks,
         postback_report_date=postback_report_date,
+        skip_blend_prune=skip_blend_prune,
     )
     _run_post_pla_automation_tail(service, pa)
 

@@ -4,7 +4,8 @@ Read today's offers from Google Sheet and sync Keitaro.
 
 Sequence:
   - Only geos that appear in the input sheet are processed (no other geos).
-  - For each such geo, only the first 10 offers (column A=country, D=Store Link) are taken.
+  - For each such geo, only the first N offers (column A=country, D=Store Link) are taken (default N=10;
+    ``run_daily_workflow`` passes ``--max-offers 100`` to match the PLA sheet cap).
   - Keitaro is updated: ensure N offers per geo, attach to flow, set store links; excess offers
     are removed from the flow, then the script tries delete/archive (best-effort; sync still succeeds
     if the tracker returns 404 on those endpoints — offers stay as unattached orphans).

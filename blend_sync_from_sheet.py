@@ -22,13 +22,14 @@ Behavior:
 Usage:
   python blend_sync_from_sheet.py
   python blend_sync_from_sheet.py --geo fr
+  python blend_sync_from_sheet.py --dry-run   # log Keitaro prune removals only (no stream updates from prune)
 """
 import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -53,6 +54,7 @@ from assistance import (
     get_campaign_streams,
     add_country_flow,
     flow_name_to_geo,
+    set_flow_offers,
     set_flow_offers_weighted,
 )
 from integrations.keitaro import KeitaroClient, KeitaroClientError
@@ -63,6 +65,15 @@ from workflows.kelkoo_daily import fetch_reports
 SPREADSHEET_ID = BLEND_SHEETS_SPREADSHEET_ID
 BLEND_SHEET_NAME = "Blend"
 BLEND_CAMPAIGN_ALIAS = "9Xq9dSMh"
+
+# potentialKelkoo* / Adexa / Yadore — same tab names as ``populate_blend_from_potential`` / ``blend_potential_merchants``.
+POTENTIAL_TAB_BY_FEED: Dict[str, str] = {
+    "kelkoo1": "potentialKelkoo1",
+    "kelkoo2": "potentialKelkoo2",
+    "adexa": "potentialAdexa",
+    "yadore": "potentialYadore",
+}
+KNOWN_BLEND_FEED_TAGS: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "adexa", "yadore")
 
 # Keitaro offer shells: inner URLs are percent-encoded as the ``rain`` query value.
 BLEND_ADEXA_RAIN_SHELL = "https://shopli.city/raino?rain="
@@ -500,9 +511,234 @@ def _upsert_offer(client: KeitaroClient, name: str, url: str) -> int:
     return oid
 
 
+def _blend_feed_prefix(geo: str, feed_tag: str) -> str:
+    """Keitaro offer name prefix ``blend_{geo}_{slug(feed)}_`` (must match ``BlendRow.offer_name``)."""
+    g = _normalize_geo(geo)
+    return f"blend_{g}_{_slug(feed_tag, max_len=24)}_"
+
+
+def detect_blend_feed_tag_from_offer_name(geo: str, offer_name: str) -> Optional[str]:
+    """Infer feed tag (``kelkoo1``, …) from a Keitaro Blend offer name for this flow geo."""
+    name = (offer_name or "").strip()
+    if not name.startswith("blend_"):
+        return None
+    g = _normalize_geo(geo)
+    for ft in KNOWN_BLEND_FEED_TAGS:
+        if name.startswith(_blend_feed_prefix(g, ft)):
+            return ft
+    return None
+
+
+def load_potential_monetized_offer_rows_by_feed(service) -> Tuple[Dict[str, List[Dict[str, str]]], Set[str]]:
+    """
+    Read each potential sheet; return rows per feed with ``offer_name`` matching ``BlendRow`` naming,
+    plus a set of feeds whose sheet **failed to load** (caller must not prune those feeds in Keitaro).
+    """
+    out: Dict[str, List[Dict[str, str]]] = {k: [] for k in POTENTIAL_TAB_BY_FEED}
+    failed: Set[str] = set()
+
+    for feed_tag, title in POTENTIAL_TAB_BY_FEED.items():
+        quoted = title.replace("'", "''")
+        try:
+            vals = (
+                service.values()
+                .get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A:Z")
+                .execute()
+                .get("values")
+                or []
+            )
+        except Exception as e:
+            print(
+                f"Warning: could not read potential sheet {title!r} for {feed_tag}: {e}. "
+                f"Skipping Keitaro prune for this feed (will not remove offers based on missing data)."
+            )
+            failed.add(feed_tag)
+            continue
+
+        if len(vals) < 2:
+            continue
+
+        header = [str(c or "").strip().lower() for c in vals[0]]
+
+        def col(name: str) -> int:
+            try:
+                return header.index(name)
+            except ValueError:
+                return -1
+
+        i_mid = col("merchantid")
+        i_name = col("merchant")
+        i_geo = col("geo_origin")
+        i_mon = col("kelkoo_monetization")
+        if min(i_mid, i_name, i_geo, i_mon) < 0:
+            print(
+                f"Warning: potential sheet {title!r} missing required columns "
+                f"(merchantId, merchant, geo_origin, kelkoo_monetization). Skipping prune for {feed_tag}."
+            )
+            failed.add(feed_tag)
+            continue
+
+        for row in vals[1:]:
+            monet = str(row[i_mon] if i_mon < len(row) else "").strip().lower()
+            if not monet.startswith("monetized"):
+                continue
+            geo = str(row[i_geo] if i_geo < len(row) else "").strip().lower()[:2]
+            brand = str(row[i_name] if i_name < len(row) else "").strip()
+            if len(geo) != 2 or not brand:
+                continue
+            br = BlendRow(
+                brand_name=brand,
+                offer_url="https://example.invalid/",
+                click_cap=1.0,
+                geo=geo,
+                auto_flag="v",
+                feed_tag=feed_tag,
+                merchant_id=None,
+            )
+            out[feed_tag].append({"offer_name": br.offer_name, "geo": geo, "feed": feed_tag})
+
+    return out, failed
+
+
+def prune_unmonetized_from_keitaro(
+    client: KeitaroClient,
+    campaign_id: int,
+    potential_sheets: Dict[str, List[Dict[str, str]]],
+    *,
+    feeds_sheet_load_failed: Set[str],
+    only_geo: Optional[str] = None,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Detach Blend offers from geo flows when they are absent from the current monetized potential snapshot
+    (or not ``monetized*`` in that sheet). Feeds listed in ``feeds_sheet_load_failed`` are never pruned.
+
+    Returns ``removed`` entries ``(offer_id, geo, feed, reason)``, ``errors``, ``empty_flow_geos``.
+    """
+    monetized_by_feed: Dict[str, Set[str]] = {}
+    for ft, rows in potential_sheets.items():
+        monetized_by_feed[ft] = {str(r.get("offer_name") or "").strip() for r in rows if r.get("offer_name")}
+
+    offer_names_by_id: Dict[int, str] = {}
+    try:
+        for o in client.get_offers():
+            oid = o.get("id")
+            if oid is not None:
+                offer_names_by_id[int(oid)] = (o.get("name") or "").strip()
+    except KeitaroClientError as e:
+        return {"removed": [], "errors": [f"list_offers:{e}"], "empty_flow_geos": []}
+
+    removed: List[Tuple[int, str, str, str]] = []
+    errors: List[str] = []
+    empty_flow_geos: List[str] = []
+
+    try:
+        streams = get_campaign_streams(campaign_id)
+    except Exception as e:
+        return {"removed": [], "errors": [f"get_streams:{e}"], "empty_flow_geos": []}
+
+    for stream in streams:
+        geo = flow_name_to_geo(stream.get("name") or "")
+        if not geo:
+            continue
+        if only_geo and geo != only_geo:
+            continue
+        sid = stream.get("id")
+        if sid is None:
+            continue
+        sid_i = int(sid)
+        attached = list(stream.get("offers") or [])
+        detach_ids: List[int] = []
+
+        for slot in attached:
+            oid_raw = slot.get("offer_id")
+            if oid_raw is None:
+                continue
+            oid = int(oid_raw)
+            name = offer_names_by_id.get(oid, "")
+            if not name.startswith("blend_"):
+                continue
+            ft = detect_blend_feed_tag_from_offer_name(geo, name)
+            if ft is None:
+                continue
+            if ft in feeds_sheet_load_failed:
+                continue
+            if name in (monetized_by_feed.get(ft) or set()):
+                continue
+            reason = "not monetized in potentialFeed sheet or absent from potential sheet"
+            detach_ids.append(oid)
+            removed.append((oid, geo, ft, reason))
+            msg = (
+                f"Blend prune: remove offer id={oid} geo={geo} feed={ft} "
+                f"reason={reason!r} offer_name={name!r}"
+            )
+            if dry_run:
+                print(f"[dry-run] {msg}")
+            else:
+                print(msg)
+
+        if not detach_ids:
+            continue
+
+        remaining_ids = [int(s["offer_id"]) for s in attached if s.get("offer_id") is not None]
+        remaining_ids = [x for x in remaining_ids if x not in set(detach_ids)]
+
+        if dry_run:
+            continue
+
+        try:
+            if not remaining_ids:
+                empty_flow_geos.append(geo)
+                print(
+                    f"WARNING: geo {geo} Blend flow is now empty after pruning "
+                    f"(detached {len(detach_ids)} offer(s); zeroing shares on previous slots)."
+                )
+                offers_payload = []
+                for s in attached:
+                    oidr = s.get("offer_id")
+                    if oidr is None:
+                        continue
+                    offers_payload.append({"offer_id": int(oidr), "state": "active", "share": 0})
+                client.update_stream(sid_i, {"offers": offers_payload})
+            else:
+                set_flow_offers(sid_i, remaining_ids)
+        except Exception as e:
+            err = f"geo={geo} stream_id={sid_i}: {e}"
+            errors.append(err)
+            print(f"ERROR: Blend prune failed to update stream: {err}")
+
+    return {"removed": removed, "errors": errors, "empty_flow_geos": empty_flow_geos}
+
+
+def run_blend_prune_unmonetized_keitaro(
+    service,
+    *,
+    only_geo: Optional[str] = None,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Load potential sheets + detach unmonetized / missing Blend offers from the Keitaro Blend campaign.
+    Used by ``run_daily_workflow`` (step 7a½) and at the start of ``blend_sync_from_sheet`` main.
+    """
+    potential_rows, failed = load_potential_monetized_offer_rows_by_feed(service)
+    campaign_id = _get_campaign_id_by_alias(BLEND_CAMPAIGN_ALIAS)
+    client = KeitaroClient()
+    summary = prune_unmonetized_from_keitaro(
+        client,
+        campaign_id,
+        potential_rows,
+        feeds_sheet_load_failed=failed,
+        only_geo=only_geo,
+        dry_run=dry_run,
+    )
+    summary["feeds_sheet_load_failed"] = sorted(failed)
+    return summary
+
+
 def main() -> None:
     argv = sys.argv[1:]
     only_geo: Optional[str] = None
+    dry_run = "--dry-run" in argv
     i = 0
     while i < len(argv):
         if argv[i] == "--geo" and i + 1 < len(argv):
@@ -513,6 +749,16 @@ def main() -> None:
 
     service = get_sheets_service()
     ensure_blend_sheet_headers(service)
+    print("Blend Keitaro prune: potential sheets (monetized snapshot) vs campaign flows ...")
+    pre_prune = run_blend_prune_unmonetized_keitaro(service, only_geo=only_geo, dry_run=dry_run)
+    n_pr = len(pre_prune.get("removed") or [])
+    if dry_run and n_pr:
+        print(f"Blend prune (--dry-run): would detach {n_pr} offer(s) (see [dry-run] lines above).")
+    elif n_pr:
+        print(f"Blend prune: detached {n_pr} offer(s) from Keitaro flows.")
+    if pre_prune.get("errors"):
+        print(f"Blend prune: {len(pre_prune['errors'])} stream update error(s) (see logs above).")
+
     deleted = _filter_and_delete_non_monetized_auto_rows(service, only_geo=only_geo)
     if deleted:
         print(f"Auto monetization gate: deleted {deleted} non-monetized Blend rows (auto='v').")

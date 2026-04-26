@@ -58,6 +58,9 @@ Rough order: monthly log for yesterday → optional Blend potential refresh → 
 - `--skip-late-sales` — skip the Kelkoo late-sales step after the sales report.
 - `--late-sales-apply` — late-sales step sends GET postbacks when combined with a successful diff (still suppressed if global `--dry-run` is set).
 - `--dry-run` — workflow: sales report does not write Sheets; late-sales never applies GETs.
+- `--skip-blend-prune` — skip step 7a½ (Keitaro detach for offers not monetized in potential sheets).
+
+**Nipuhim Keitaro sync:** `update_offers_from_sheet.py` only uploads the **first N** store-link rows per geo from the offers tab (default in script is 10). The daily workflow passes `--max-offers 100` so it matches the PLA generator cap (`run_daily_workflow.KEITARO_SYNC_MAX_OFFERS_PER_GEO`); otherwise multi-merchant PLA rows beyond that cap never reach Keitaro.
 - `--geo uk,fr,de` — comma-separated 2-letter geos: only those countries get fresh PLA + Keitaro sync; **existing rows for other geos stay** in `{date}_offers_*` (merge/replace per geo, not full tab wipe).
 - `--merchant-override 1:uk=15248713` — repeatable; forces feed `1` or `2`, geo `uk`, merchant id list (comma = fallback order). Manual wins over auto-pick if both are set.
 - `--merchant-auto-override 1:uk` — platform picks rank **2** for that feed+geo from fixim-ranked candidates; `1:uk:3` picks rank 3, etc.
@@ -69,6 +72,7 @@ Rough order: monthly log for yesterday → optional Blend potential refresh → 
 
 - Refreshes **potentialKelkoo*** sheets per `BLEND_POTENTIAL_FEEDS` in `.env` (default `kelkoo1,kelkoo2`; feeds without an API key are skipped).
 - Runs `populate_blend_from_potential.py` (monetized rows, dedupe, `clickCap` 50, `--max-add` daily cap).
+- **7a½ — Blend prune (Keitaro):** after potential refresh, detaches Blend-campaign offers whose names no longer match a **monetized** row on the corresponding `potentialKelkoo*` / `potentialAdexa` / `potentialYadore` sheet (same `kelkoo_monetization` column as populate). If a potential sheet **fails to load**, that feed is skipped (no removals from missing data). Implemented in `blend_sync_from_sheet.py` (`run_blend_prune_unmonetized_keitaro`, also run at the start of `blend_sync_from_sheet.py`). Use `--skip-blend-prune` on the daily workflow to bypass. `blend_sync_from_sheet.py --dry-run` logs Keitaro detachments only (no stream updates from the prune step).
 - Runs `blend_sync_from_sheet.py` — prunes bad `auto='v'` rows, syncs Keitaro Blend campaign (alias documented in `README.md`).
 
 Related: `blend_potential_merchants.py`, `populate_blend_from_potential.py`, `blend_sync_from_sheet.py` (uses `BLEND_SHEETS_SPREADSHEET_ID` from config).
