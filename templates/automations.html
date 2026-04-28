@@ -29,6 +29,21 @@
     .btn:hover { border-color: #3a4e78; background: #1d2b47; }
     .btn:disabled { opacity: 0.55; cursor: not-allowed; }
     .btn-sm { padding: 6px 10px; font-size: 13px; border-radius: 8px; }
+    .btn.loading { position: relative; padding-left: 30px; }
+    .btn.loading::before {
+      content: "";
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      width: 12px;
+      height: 12px;
+      margin-top: -6px;
+      border: 2px solid rgba(147, 197, 253, 0.35);
+      border-top-color: #93c5fd;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
     .card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 14px 16px; }
     .card h3 { margin: 0 0 6px; font-size: 1rem; }
@@ -85,6 +100,7 @@
     var apiLog = {{ url_for("api_automations_log") | tojson }};
     var trigAll = {{ url_for("api_automations_trigger_all") | tojson }};
     var trigPrefix = "/api/automations/trigger/";
+    var triggerInFlight = {};
 
     function dur(s, f) {
       if (!s || !f) return "—";
@@ -126,13 +142,23 @@
             '<div class="muted" style="margin-bottom:6px;">' + esc(a.class_name) + " · " + esc(a.schedule) + "</div>" +
             "<div><strong>Last run</strong> " + esc(ts) + " " + badge + "</div>" +
             errHtml +
-            '<p style="margin-top:10px;"><button type="button" class="btn btn-sm trigger-one" data-url="' + esc(url) + '">Trigger</button></p>' +
+            '<p style="margin-top:10px;"><button type="button" class="btn btn-sm trigger-one" data-key="' + esc(a.class_name) + '" data-url="' + esc(url) + '">Trigger</button></p>' +
           "</div>"
         );
       }).join("");
       cardsEl.querySelectorAll(".trigger-one").forEach(function(btn) {
-        btn.addEventListener("click", function() {
+        var key = btn.getAttribute("data-key");
+        if (key && triggerInFlight[key]) {
           btn.disabled = true;
+          btn.classList.add("loading");
+          btn.textContent = "Running...";
+        }
+        btn.addEventListener("click", function() {
+          var k = btn.getAttribute("data-key");
+          if (k) triggerInFlight[k] = true;
+          btn.disabled = true;
+          btn.classList.add("loading");
+          btn.textContent = "Running...";
           fetch(btn.getAttribute("data-url"), { credentials: "same-origin" })
             .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); })
             .then(function(x) {
@@ -140,7 +166,12 @@
               loadAll();
             })
             .catch(function() { alert("Request failed"); })
-            .finally(function() { btn.disabled = false; });
+            .finally(function() {
+              if (k) triggerInFlight[k] = false;
+              btn.classList.remove("loading");
+              btn.textContent = "Trigger";
+              btn.disabled = false;
+            });
         });
       });
     }
@@ -172,10 +203,16 @@
     }
 
     btnAll.addEventListener("click", function() {
+      triggerInFlight.__all__ = true;
       btnAll.disabled = true;
+      btnAll.classList.add("loading");
+      btnAll.textContent = "Running...";
       fetch(trigAll, { credentials: "same-origin" })
         .then(function(r) { return r.json(); })
         .finally(function() {
+          triggerInFlight.__all__ = false;
+          btnAll.classList.remove("loading");
+          btnAll.textContent = "Trigger all";
           btnAll.disabled = false;
           loadAll();
         });
