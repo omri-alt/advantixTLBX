@@ -343,6 +343,9 @@ def checkUnmonExploration_SK() -> None:
 
     today = _utc_today()
     changed = False
+    processed_rows = 0
+    blacklisted_ok_total = 0
+    blacklisted_fail_total = 0
     for row in rows:
         cid_raw = row.get("campaignId") or row.get("campId")
         if not str(cid_raw or "").strip():
@@ -367,6 +370,7 @@ def checkUnmonExploration_SK() -> None:
 
         row["budgetReachedYesterday"] = check_budget_reached_yesterday_SK(cid)
         changed = True
+        processed_rows += 1
 
         wl = _parse_wl(row.get("wl"))
 
@@ -383,10 +387,18 @@ def checkUnmonExploration_SK() -> None:
                 if to_block:
                     bad = _blacklist_sources_sk(cid, to_block)
                     ok = [s for s in to_block if s not in bad]
+                    blacklisted_ok_total += len(ok)
+                    blacklisted_fail_total += len(bad)
                     for s in ok:
                         msg = f"Blacklisted source {s} on campaign {cid} ({clicks_map.get(s, 0)} clicks)"
                         logger.info(msg)
                         row["logs"] = _append_logs_cell(row.get("logs", ""), msg)
+                        _sk_tools_workbook_log(
+                            cid,
+                            cname_expl,
+                            f"SK exploration: blacklisted source {s}",
+                            {"clicks_today": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
+                        )
                     row["lastBlacklisted"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                     row["lastAction"] = "blacklist"
                     did_blacklist = True
@@ -394,6 +406,13 @@ def checkUnmonExploration_SK() -> None:
                         row["logs"] = _append_logs_cell(
                             row.get("logs", ""), f"bid-factor 0 failed for: {','.join(bad)}"
                         )
+                        for s in bad:
+                            _sk_tools_workbook_log(
+                                cid,
+                                cname_expl,
+                                f"SK exploration: blacklist failed for source {s}",
+                                {"clicks_today": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
+                            )
                     _sk_tools_workbook_log(
                         cid,
                         cname_expl,
@@ -433,6 +452,17 @@ def checkUnmonExploration_SK() -> None:
 
     if changed and rows:
         gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_EXPLORATION, rows)
+    _sk_tools_workbook_log(
+        "",
+        "SKtrackExploration",
+        "SK exploration run summary",
+        {
+            "rows_processed": processed_rows,
+            "sources_blacklisted": blacklisted_ok_total,
+            "sources_blacklist_failed": blacklisted_fail_total,
+            "date_utc": today,
+        },
+    )
 
 
 def checkUnmonWL_SK() -> None:

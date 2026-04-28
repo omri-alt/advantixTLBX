@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,43 @@ def _trigger_background(fn: Callable[..., None], *args: Any) -> None:
         threading.Thread(target=lambda: fn(*args), name="autoserver-manual", daemon=True).start()
 
 
+def _parse_utc_iso(raw: str) -> Optional[datetime]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s).astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _should_schedule_startup_catchup() -> bool:
+    """
+    Run one immediate catch-up when the process starts mid-hour and no recent
+    AutoServer execution was recorded.
+
+    Without this, a deploy/restart at e.g. 09:58 leaves the dashboard on
+    "No run yet" until 10:00 even though the scheduler is healthy.
+    """
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.minute == 0:
+        return False
+    try:
+        from automations.autoserver.run_log import read_entries_newest_first
+
+        latest = read_entries_newest_first(limit=1)
+    except Exception:
+        latest = []
+    if not latest:
+        return True
+    finished = _parse_utc_iso(str((latest[0] or {}).get("finished_at") or ""))
+    if finished is None:
+        return True
+    return finished < (now_utc - timedelta(minutes=55))
+
+
 def schedule_trigger_all() -> None:
     _ensure_listeners()
     _trigger_background(_run_all_automations_job)
@@ -118,6 +155,9 @@ def start_autoserver_scheduler() -> None:
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(_hourly_signal_broadcast, trigger="cron", minute=0)
     _scheduler.start()
+    if _should_schedule_startup_catchup():
+        _scheduler.add_job(_hourly_signal_broadcast, trigger="date", run_date=datetime.now())
+        logger.info("AutoServer APScheduler scheduled startup catch-up run")
     _started = True
     logger.info("AutoServer APScheduler started (hourly at :00)")
 
