@@ -96,6 +96,7 @@ from scheduler.autoserver_scheduler import (
     scheduler_running,
     start_autoserver_scheduler,
 )
+from scheduler.kelkoo_late_sales_scheduler import start_kelkoo_late_sales_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -2432,6 +2433,11 @@ try:
     start_autoserver_scheduler()
 except Exception as e:
     logger.warning("AutoServer scheduler did not start: %s", e)
+
+try:
+    start_kelkoo_late_sales_scheduler()
+except Exception as e:
+    logger.warning("Kelkoo late-sales prep scheduler did not start: %s", e)
 
 try:
     start_daily_overview_scheduler()

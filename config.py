@@ -110,6 +110,18 @@ DAILY_CONVERSION_POSTBACK_STATE_PATH = _dcp_state or str(
     Path(__file__).resolve().parent / "runtime" / "daily_conversion_postbacks_state.json"
 )
 
+# Kelkoo late-sales prep scheduler:
+# builds yesterday daily sales tabs and the rolling ``SalesReport_7days-generated-YYYY-MM-DD`` tab.
+# Recommended with a single app worker; disable extras with ``KELKOO_LATE_SALES_SCHEDULER_ENABLED=0``.
+KELKOO_LATE_SALES_SCHEDULER_ENABLED = (
+    os.getenv("KELKOO_LATE_SALES_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+)
+try:
+    KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = int((os.getenv("KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC") or "6").strip())
+except Exception:
+    KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = 6
+KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = max(0, min(23, KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC))
+
 # Google Sheets — Blend workflow spreadsheet (Blend tab + potential sheets)
 BLEND_SHEETS_SPREADSHEET_ID = (
     os.getenv("BLEND_SHEETS_SPREADSHEET_ID") or "1h9lBPTREEJO9VVvj6wctCgCOn3YcwJBGIk_MBwXw-xY"

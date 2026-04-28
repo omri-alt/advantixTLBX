@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import csv
 import logging
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 from typing import Any, Dict, List, Sequence
 
@@ -28,6 +29,10 @@ from integrations.daily_conversion_postbacks import (
 from kelkoo_late_sales import sheet_title_a1_range
 
 logger = logging.getLogger(__name__)
+_DAILY_TAB_RE = re.compile(
+    r"^SalesReport_(?:(feed\d+)_)?(\d{4}-\d{2}-\d{2})_generated-(\d{4}-\d{2}-\d{2})$",
+    re.I,
+)
 
 
 def _utc_yesterday_iso() -> str:
@@ -143,6 +148,97 @@ def _write_sales_tab(
     ).execute()
 
 
+def _build_7day_rows_from_daily_tabs(
+    service: Any,
+    spreadsheet_id: str,
+    *,
+    gen_day: date,
+) -> List[Dict[str, Any]]:
+    """
+    Build one 7-day snapshot from existing daily ``SalesReport_*_generated-*`` tabs.
+
+    Window: sale day in [gen_day-8, gen_day-2] inclusive (7 days), matching late-sales
+    sale-date logic around the generation date.
+    """
+    lo = gen_day - timedelta(days=8)
+    hi = gen_day - timedelta(days=2)
+    meta = service.get(spreadsheetId=spreadsheet_id, fields="sheets(properties(title))").execute()
+    selected: List[tuple[date, str]] = []
+    for s in meta.get("sheets") or []:
+        title = str((s.get("properties") or {}).get("title") or "")
+        m = _DAILY_TAB_RE.match(title.strip())
+        if not m:
+            continue
+        sale_s = m.group(2)
+        try:
+            sale_d = datetime.strptime(sale_s, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if lo <= sale_d <= hi:
+            selected.append((sale_d, title))
+
+    # Prefer newer sale-day tabs when duplicate click_id appears.
+    selected.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    if not selected:
+        return []
+
+    ranges = [sheet_title_a1_range(t, "A:I") for _, t in selected]
+    body = service.values().batchGet(spreadsheetId=spreadsheet_id, ranges=ranges).execute()
+
+    headers = [
+        "merchant",
+        "date",
+        "click_id",
+        "lead_valid",
+        "sale",
+        "sale_value_usd",
+        "cpc",
+        "country",
+        "postback",
+    ]
+    by_click: Dict[str, Dict[str, Any]] = {}
+    for vr in body.get("valueRanges") or []:
+        vals = vr.get("values") or []
+        if not vals:
+            continue
+        hdr = [str(c or "").strip().lower() for c in vals[0]]
+        if "click_id" not in hdr:
+            continue
+        idx = {name: (hdr.index(name) if name in hdr else None) for name in headers}
+        for row in vals[1:]:
+            cid_i = idx.get("click_id")
+            if cid_i is None or cid_i >= len(row):
+                continue
+            click_id = str(row[cid_i] or "").strip()
+            if not click_id or click_id in by_click:
+                continue
+            item: Dict[str, Any] = {}
+            for h in headers:
+                ii = idx.get(h)
+                item[h] = str(row[ii] or "").strip() if ii is not None and ii < len(row) else ""
+            by_click[click_id] = item
+    return list(by_click.values())
+
+
+def build_or_update_7day_sales_report(
+    service: Any,
+    *,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    sid = (KELKOO_LATE_SALES_SPREADSHEET_ID or "").strip()
+    if not sid:
+        return {"ok": False, "error": "no_spreadsheet", "tab": "", "rows": 0}
+    gen_day = datetime.now(timezone.utc).date()
+    tab = f"SalesReport_7days-generated-{gen_day.isoformat()}"
+    rows = _build_7day_rows_from_daily_tabs(service, sid, gen_day=gen_day)
+    if dry_run:
+        print(f"   [dry-run] Would write {len(rows)} rows to {tab!r} (7-day snapshot).")
+        return {"ok": True, "tab": tab, "rows": len(rows), "dry_run": True}
+    _write_sales_tab(service, sid, tab, rows)
+    print(f"   7-day snapshot: {len(rows)} rows → tab {tab!r}")
+    return {"ok": True, "tab": tab, "rows": len(rows), "dry_run": False}
+
+
 def run_yesterday_sales_reports(
     service: Any,
     *,
@@ -229,4 +325,12 @@ def run_yesterday_sales_reports(
             logger.exception("Failed writing sales tab %s", tab)
             print(f"   ERROR writing tab {tab!r}: {e}")
 
-    return {"ok": True, "sale_day": sale_day, "gen_day": gen_day, "tabs": tabs, "feeds": summaries}
+    snapshot = build_or_update_7day_sales_report(service, dry_run=dry_run)
+    return {
+        "ok": True,
+        "sale_day": sale_day,
+        "gen_day": gen_day,
+        "tabs": tabs,
+        "feeds": summaries,
+        "seven_day": snapshot,
+    }
