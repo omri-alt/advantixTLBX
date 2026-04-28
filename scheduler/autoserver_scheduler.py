@@ -144,7 +144,9 @@ def start_autoserver_scheduler() -> None:
     if not AUTOSERVER_SCHEDULER_ENABLED:
         logger.info("AutoServer APScheduler disabled (AUTOSERVER_SCHEDULER_ENABLED)")
         return
-    if os.getenv("FLASK_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+    # Skip only the parent process of the Werkzeug dev reloader. In other
+    # runtimes, FLASK_DEBUG may still be set while WERKZEUG_RUN_MAIN is unset.
+    if os.getenv("FLASK_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") == "false":
         return
     if _started:
         return
