@@ -91,8 +91,8 @@ def _utc_yesterday() -> str:
 
 
 def _sk_stats_start_date() -> str:
-    """Start date for "all time" SK by-publisher checks."""
-    return "2000-01-01"
+    """Start date for SK by-publisher checks: last 90 days including today."""
+    return (datetime.now(timezone.utc).date() - timedelta(days=89)).strftime("%Y-%m-%d")
 
 
 def _append_logs_cell(existing: str, line: str, max_entries: int = 5) -> str:
@@ -384,9 +384,9 @@ def checkUnmonExploration_SK() -> None:
         if _row_active(row):
             clicks_map, err = _sk_aggregate_clicks_by_subid(cid, _sk_stats_start_date(), today)
             if err:
-                logger.warning("SK all-time stats unavailable for %s: %s", cid, err)
-                row["logs"] = _append_logs_cell(row.get("logs", ""), f"all-time stats skipped: {err}")
-                _sk_tools_workbook_log(cid, cname_expl, "SK exploration: all-time stats skipped", err)
+                logger.warning("SK 90-day stats unavailable for %s: %s", cid, err)
+                row["logs"] = _append_logs_cell(row.get("logs", ""), f"90-day stats skipped: {err}")
+                _sk_tools_workbook_log(cid, cname_expl, "SK exploration: 90-day stats skipped", err)
             else:
                 to_block = [sid for sid, c in clicks_map.items() if c >= 30 and sid not in wl]
                 if to_block:
@@ -402,7 +402,7 @@ def checkUnmonExploration_SK() -> None:
                             cid,
                             cname_expl,
                             f"SK exploration: blacklisted source {s}",
-                            {"clicks_all_time": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
+                            {"clicks_90d": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
                         )
                     row["lastBlacklisted"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                     row["lastAction"] = "blacklist"
@@ -416,7 +416,7 @@ def checkUnmonExploration_SK() -> None:
                                 cid,
                                 cname_expl,
                                 f"SK exploration: blacklist failed for source {s}",
-                                {"clicks_all_time": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
+                                {"clicks_90d": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
                             )
                     _sk_tools_workbook_log(
                         cid,
