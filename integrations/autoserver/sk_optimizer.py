@@ -90,6 +90,11 @@ def _utc_yesterday() -> str:
     return (datetime.now(timezone.utc).date() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
+def _sk_stats_start_date() -> str:
+    """Start date for "all time" SK by-publisher checks."""
+    return "2000-01-01"
+
+
 def _append_logs_cell(existing: str, line: str, max_entries: int = 5) -> str:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entry = f"{ts} {line}".strip()
@@ -377,11 +382,11 @@ def checkUnmonExploration_SK() -> None:
         did_blacklist = False
         cname_expl = str(camp_json.get("name") or "") if isinstance(camp_json, dict) else ""
         if _row_active(row):
-            clicks_map, err = _sk_aggregate_clicks_by_subid(cid, today, today)
+            clicks_map, err = _sk_aggregate_clicks_by_subid(cid, _sk_stats_start_date(), today)
             if err:
-                logger.warning("SK today stats unavailable for %s: %s", cid, err)
-                row["logs"] = _append_logs_cell(row.get("logs", ""), f"today stats skipped: {err}")
-                _sk_tools_workbook_log(cid, cname_expl, "SK exploration: today stats skipped", err)
+                logger.warning("SK all-time stats unavailable for %s: %s", cid, err)
+                row["logs"] = _append_logs_cell(row.get("logs", ""), f"all-time stats skipped: {err}")
+                _sk_tools_workbook_log(cid, cname_expl, "SK exploration: all-time stats skipped", err)
             else:
                 to_block = [sid for sid, c in clicks_map.items() if c >= 30 and sid not in wl]
                 if to_block:
@@ -397,7 +402,7 @@ def checkUnmonExploration_SK() -> None:
                             cid,
                             cname_expl,
                             f"SK exploration: blacklisted source {s}",
-                            {"clicks_today": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
+                            {"clicks_all_time": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
                         )
                     row["lastBlacklisted"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                     row["lastAction"] = "blacklist"
@@ -411,7 +416,7 @@ def checkUnmonExploration_SK() -> None:
                                 cid,
                                 cname_expl,
                                 f"SK exploration: blacklist failed for source {s}",
-                                {"clicks_today": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
+                                {"clicks_all_time": int(clicks_map.get(s, 0) or 0), "bidFactor": 0},
                             )
                     _sk_tools_workbook_log(
                         cid,
