@@ -471,16 +471,19 @@ def _yadore_click_actions(click: Dict[str, Any]) -> Optional[Tuple[str, str, boo
     """
     cid = None
     for k in (
+        # Yadore links are built with ``placementId={subid}``; this must be
+        # preferred over provider-side click ids for Keitaro postbacks.
+        "placementId",
+        "placement_id",
         "publisherClickId",
         "publisherClickID",
-        "placementClickId",
         "clickId",
         "clickID",
+        "placementClickId",
         "trackingId",
         "tracking_id",
         "subId",
         "subid",
-        "placementId",
         "id",
     ):
         v = click.get(k)
@@ -553,6 +556,7 @@ def run_flat_report_postbacks(
     session: requests.Session,
 ) -> Dict[str, Any]:
     summary: Dict[str, Any] = {"source": source_key, "report_date": report_date, "items": len(items), "sent": 0}
+    failed_postbacks = 0
 
     snap: Optional[Dict[str, Any]] = copy.deepcopy(load_state(state_path)) if dry_run else None
 
@@ -693,13 +697,18 @@ def run_flat_report_postbacks(
                 payout=str(sale_val),
                 status=DAILY_CONVERSION_POSTBACK_SALE_STATUS,
             )
-            send_postback_get(session, url_sale, dry_run=dry_run, dry_run_log=dry_run)
-            pb = int(read_flat().get("postbacks_sent") or 0) + 1
+            ss = send_postback_get(session, url_sale, dry_run=dry_run, dry_run_log=dry_run)
+            pb = int(read_flat().get("postbacks_sent") or 0)
+            if ss < 400:
+                pb += 1
+            else:
+                failed_postbacks += 1
             write_flat(
                 next_index=idx + 1,
                 row_stage=None,
                 postbacks_sent=pb,
                 status="partial" if idx + 1 < total else "done",
+                last_error=(f"sale HTTP {ss} subid={click_id[:48]}" if ss >= 400 else None),
                 completed_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if idx + 1 >= total else None,
             )
             continue
@@ -710,7 +719,7 @@ def run_flat_report_postbacks(
                 payout=str(cpc),
                 status=DAILY_CONVERSION_POSTBACK_CLICK_STATUS,
             )
-            _send_click_postback_with_retries(
+            sc = _send_click_postback_with_retries(
                 session,
                 url_click,
                 dry_run=dry_run,
@@ -720,21 +729,36 @@ def run_flat_report_postbacks(
             )
             if not dry_run:
                 time.sleep(_FLAT_CLICK_TO_SALE_DELAY_SEC)
-            pb1 = int(read_flat().get("postbacks_sent") or 0) + 1
-            write_flat(next_index=idx, row_stage="after_click", postbacks_sent=pb1, status="partial")
+            pb1 = int(read_flat().get("postbacks_sent") or 0)
+            if sc < 400:
+                pb1 += 1
+            else:
+                failed_postbacks += 1
+            write_flat(
+                next_index=idx,
+                row_stage="after_click",
+                postbacks_sent=pb1,
+                status="partial",
+                last_error=(f"click HTTP {sc} subid={click_id[:48]}" if sc >= 400 else None),
+            )
 
             url_sale = build_daily_postback_url(
                 subid=click_id,
                 payout=str(sale_val),
                 status=DAILY_CONVERSION_POSTBACK_SALE_STATUS,
             )
-            send_postback_get(session, url_sale, dry_run=dry_run, dry_run_log=dry_run)
-            pb2 = int(read_flat().get("postbacks_sent") or 0) + 1
+            ss = send_postback_get(session, url_sale, dry_run=dry_run, dry_run_log=dry_run)
+            pb2 = int(read_flat().get("postbacks_sent") or 0)
+            if ss < 400:
+                pb2 += 1
+            else:
+                failed_postbacks += 1
             write_flat(
                 next_index=idx + 1,
                 row_stage=None,
                 postbacks_sent=pb2,
                 status="partial" if idx + 1 < total else "done",
+                last_error=(f"sale HTTP {ss} subid={click_id[:48]}" if ss >= 400 else None),
                 completed_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if idx + 1 >= total else None,
             )
         else:
@@ -743,7 +767,7 @@ def run_flat_report_postbacks(
                 payout=str(cpc),
                 status=DAILY_CONVERSION_POSTBACK_CLICK_STATUS,
             )
-            _send_click_postback_with_retries(
+            sc = _send_click_postback_with_retries(
                 session,
                 url_click,
                 dry_run=dry_run,
@@ -751,12 +775,17 @@ def run_flat_report_postbacks(
                 label=source_key,
                 subid_prefix=click_id,
             )
-            pb = int(read_flat().get("postbacks_sent") or 0) + 1
+            pb = int(read_flat().get("postbacks_sent") or 0)
+            if sc < 400:
+                pb += 1
+            else:
+                failed_postbacks += 1
             write_flat(
                 next_index=idx + 1,
                 row_stage=None,
                 postbacks_sent=pb,
                 status="partial" if idx + 1 < total else "done",
+                last_error=(f"click HTTP {sc} subid={click_id[:48]}" if sc >= 400 else None),
                 completed_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if idx + 1 >= total else None,
             )
 
@@ -774,9 +803,10 @@ def run_flat_report_postbacks(
             or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
     summary["sent"] = int(read_flat().get("postbacks_sent") or 0)
+    summary["failed"] = int(failed_postbacks)
     if _healed_terminal:
         summary["state_healed"] = True
-    summary["ok"] = True
+    summary["ok"] = failed_postbacks == 0
     return summary
 
 
