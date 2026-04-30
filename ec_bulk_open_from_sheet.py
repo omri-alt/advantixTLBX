@@ -16,6 +16,7 @@ configurable Keitaro ``alias`` (trck path) and affiliation ``prefix`` (sub_id_6 
 Examples:
   python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --dry-run
   python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --tab bulk --apply
+  python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --tab bulk --bulk-type deeplink --apply
 """
 from __future__ import annotations
 
@@ -249,6 +250,7 @@ def _create_campaign(
     tracking_url: str,
     mid: str,
     prefix: str,
+    is_homepage_only: bool,
 ) -> tuple[int, Any]:
     """POST create-advertiser-campaign. Returns (http_status, json)."""
     geo_ec = geo
@@ -260,7 +262,7 @@ def _create_campaign(
     payload = {
         "traffictype": "branded",
         "excludecoupon": "false",
-        "ishomepageonly": "true",
+        "ishomepageonly": "true" if is_homepage_only else "false",
         "name": name,
         "url": tracking_url,
         "geo": f"{geo_ec.lower()}",
@@ -291,6 +293,7 @@ def main() -> None:
     prefix = ""
     alias = ""
     tab = DEFAULT_INPUT_TAB
+    bulk_type = "homepage"
     apply = False
 
     args = sys.argv[1:]
@@ -307,6 +310,10 @@ def main() -> None:
             continue
         if a == "--tab" and i + 1 < len(args):
             tab = args[i + 1].strip()
+            i += 2
+            continue
+        if a == "--bulk-type" and i + 1 < len(args):
+            bulk_type = args[i + 1].strip().lower()
             i += 2
             continue
         if a == "--apply":
@@ -326,6 +333,9 @@ def main() -> None:
         _usage_error("Missing --prefix")
     if not alias:
         _usage_error("Missing --alias")
+    if bulk_type not in ("homepage", "deeplink"):
+        _usage_error("Invalid --bulk-type (use homepage or deeplink)")
+    is_homepage_only = bulk_type == "homepage"
 
     rows = _read_input_rows(tab)
     if not rows:
@@ -338,6 +348,7 @@ def main() -> None:
     print(f"Tab: {tab}")
     print(f"Prefix: {prefix}")
     print(f"Alias: {alias}")
+    print(f"Bulk type: {bulk_type} (ishomepageonly={'true' if is_homepage_only else 'false'})")
     print(f"Rows: {len(rows)}")
     print()
 
@@ -373,6 +384,7 @@ def main() -> None:
             tracking_url=track,
             mid=mid,
             prefix=prefix,
+            is_homepage_only=is_homepage_only,
         )
         if http == 200:
             ok += 1

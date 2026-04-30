@@ -37,6 +37,13 @@
         <input type="text" name="tab" value="bulk" placeholder="bulk (or gid from URL)" required>
       </div>
       <div style="margin:8px 0;">
+        <label>Bulk type</label><br>
+        <select name="bulk_type">
+          <option value="homepage">Homepage (ishomepageonly=true)</option>
+          <option value="deeplink">Deeplink (ishomepageonly=false)</option>
+        </select>
+      </div>
+      <div style="margin:8px 0;">
         <label>Mode</label><br>
         <select name="mode">
           <option value="dry-run">Dry run</option>
@@ -48,7 +55,7 @@
     {% if bulk_open_result %}
       <hr style="border-color:#374151;">
       <div>Status: <strong>{{ bulk_open_result.status }}</strong> (exit {{ bulk_open_result.exit_code }})</div>
-      <div class="muted">prefix={{ bulk_open_result.prefix }}, alias={{ bulk_open_result.alias }}, tab={{ bulk_open_result.tab }}, mode={{ bulk_open_result.mode }}</div>
+      <div class="muted">prefix={{ bulk_open_result.prefix }}, alias={{ bulk_open_result.alias }}, tab={{ bulk_open_result.tab }}, bulk_type={{ bulk_open_result.bulk_type or 'homepage' }}, mode={{ bulk_open_result.mode }}</div>
       <pre>{{ bulk_open_result.log or "(No output)" }}</pre>
     {% endif %}
   </div>

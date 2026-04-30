@@ -1363,6 +1363,9 @@ def ui_ec():
         prefix = (request.form.get("prefix") or "").strip()
         alias = (request.form.get("alias") or "").strip()
         tab = (request.form.get("tab") or "bulk").strip()
+        bulk_type = (request.form.get("bulk_type") or "homepage").strip().lower()
+        if bulk_type not in ("homepage", "deeplink"):
+            bulk_type = "homepage"
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         apply = mode == "apply"
 
@@ -1377,6 +1380,8 @@ def ui_ec():
                 alias,
                 "--tab",
                 tab,
+                "--bulk-type",
+                bulk_type,
                 "--apply" if apply else "--dry-run",
             ]
             proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
@@ -1388,6 +1393,7 @@ def ui_ec():
                 "prefix": prefix,
                 "alias": alias,
                 "tab": tab,
+                "bulk_type": bulk_type,
                 "mode": "apply" if apply else "dry-run",
             }
             _cache_clear("ec:")
