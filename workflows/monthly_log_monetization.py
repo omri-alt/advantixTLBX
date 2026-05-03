@@ -7,15 +7,18 @@ and ``run_daily_workflow.py`` (yesterday snapshot before daily tabs are deleted)
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import date
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from config import FEED2_MERCHANTS_GEOS
 from integrations.kelkoo_search import format_kelkoo_monetization_status, kelkoo_merchant_link_check
 from workflows.kelkoo_daily import build_merchant_id_to_name_from_feed, download_merchants_feed
 
 logger = logging.getLogger(__name__)
+
+_RUN_DATE_CELL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
 LOG_HEADERS_5 = [
     "Run date",
@@ -155,8 +158,72 @@ def read_sheet_values_raw(
             or []
         )
     except Exception as e:
-        logger.warning("read_sheet %s: %s", sheet_name, e)
+        logger.warning("read_sheet %s range=%s: %s", sheet_name, range_a1, e)
         return []
+
+
+def read_monthly_log_values_with_retries(
+    service: Any,
+    spreadsheet_id: str,
+    sheet_name: str,
+    *,
+    attempts: int = 4,
+    initial_delay_sec: float = 0.4,
+) -> List[List[Any]]:
+    """
+    Read log tab ``A:Z`` with retries. Transient Sheets/API failures used to return [],
+    after which ``upsert_run_merchants_into_monthly_log`` would clear the tab and rewrite only
+    the current run — wiping earlier dates in the month.
+    """
+    best: List[List[Any]] = []
+    delay = initial_delay_sec
+    for attempt in range(attempts):
+        raw = read_sheet_values_raw(service, spreadsheet_id, sheet_name, "A:Z")
+        if len(raw) >= 2:
+            return raw
+        if len(raw) > len(best):
+            best = raw
+        if attempt + 1 < attempts:
+            logger.warning(
+                "read_monthly_log retry %s/%s for %s (got %s rows)",
+                attempt + 1,
+                attempts,
+                sheet_name,
+                len(raw),
+            )
+            time.sleep(delay)
+            delay = min(delay * 2.0, 3.0)
+    return best
+
+
+def month_log_column_a_has_run_dates(
+    service: Any,
+    spreadsheet_id: str,
+    sheet_name: str,
+    *,
+    max_rows: int = 30000,
+) -> bool:
+    """True if column A (from row 2) contains at least one YYYY-MM-DD run date."""
+    quoted = sheet_name.replace("'", "''")
+    end = max_rows + 1
+    try:
+        v = (
+            service.values()
+            .get(spreadsheetId=spreadsheet_id, range=f"'{quoted}'!A2:A{end}")
+            .execute()
+            .get("values")
+            or []
+        )
+    except Exception as e:
+        logger.warning("month_log_column_a scan %s: %s", sheet_name, e)
+        return False
+    for row in v:
+        if not row:
+            continue
+        cell = str(row[0] or "").strip()
+        if _RUN_DATE_CELL_RE.match(cell):
+            return True
+    return False
 
 
 def ensure_month_log_sheet_exists(service: Any, spreadsheet_id: str, sheet_name: str) -> None:
@@ -170,6 +237,10 @@ def ensure_month_log_sheet_exists(service: Any, spreadsheet_id: str, sheet_name:
 
 
 def write_full_log_sheet(service: Any, spreadsheet_id: str, sheet_name: str, rows: List[List[Any]]) -> None:
+    """
+    Replace the log tab contents. Callers must pass the **full** row set (header + all days in the month);
+    this clears a large fixed range first so stale rows below the new tail do not linger.
+    """
     ensure_month_log_sheet_exists(service, spreadsheet_id, sheet_name)
     quoted = sheet_name.replace("'", "''")
     service.values().clear(spreadsheetId=spreadsheet_id, range=f"'{quoted}'!A1:Z50000").execute()
@@ -180,6 +251,7 @@ def write_full_log_sheet(service: Any, spreadsheet_id: str, sheet_name: str, row
             valueInputOption="USER_ENTERED",
             body={"values": rows},
         ).execute()
+    logger.info("write_full_log_sheet %s: wrote %s rows (incl. header)", sheet_name, len(rows))
 
 
 def enrich_log_rows_monetization(
@@ -322,8 +394,18 @@ def upsert_run_merchants_into_monthly_log(
         if check_monetization:
             by_geo_id, by_id = build_merchant_geo_url_lookup(api_key, merchants_geos)
 
-    raw = read_sheet_values_raw(service, spreadsheet_id, log_name, "A:Z")
+    raw = read_monthly_log_values_with_retries(service, spreadsheet_id, log_name)
+    if len(raw) < 2 and pairs and month_log_column_a_has_run_dates(service, spreadsheet_id, log_name):
+        msg = (
+            f"Refusing monthly log upsert for {log_name!r}: full-range read returned no data rows "
+            f"but column A still contains run dates (likely transient Sheets read failure). "
+            f"Re-run after a moment; no changes were written."
+        )
+        logger.error(msg)
+        raise RuntimeError(msg)
+
     body: List[List[Any]] = normalize_log_rows_to_five_cols(raw[1:]) if raw else []
+    rows_before_merge = len(body)
 
     # Index: (run_date, country, mid) -> row index in body (0-based)
     index: Dict[Tuple[str, str, str], int] = {}
@@ -370,6 +452,14 @@ def upsert_run_merchants_into_monthly_log(
                 row[4] = status
         else:
             body.append([run_date_str, country, mid, mname, status])
+
+    if len(body) < rows_before_merge:
+        msg = (
+            f"Internal error: monthly log body shrank from {rows_before_merge} to {len(body)} "
+            f"rows for {log_name!r}; refusing write."
+        )
+        logger.error(msg)
+        raise RuntimeError(msg)
 
     body.sort(key=lambda r: (str(r[0]), str(r[1]), str(r[2])))
     write_full_log_sheet(service, spreadsheet_id, log_name, [LOG_HEADERS_5] + body)

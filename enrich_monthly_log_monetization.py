@@ -30,8 +30,9 @@ from workflows.monthly_log_monetization import (
     build_merchant_geo_url_lookup,
     count_enrich_candidates,
     enrich_log_rows_monetization,
+    month_log_column_a_has_run_dates,
     month_log_sheet_title,
-    read_sheet_values_raw,
+    read_monthly_log_values_with_retries,
     write_full_log_sheet,
 )
 
@@ -91,7 +92,14 @@ def main() -> None:
             print(f"Feed {feed}: skipped (no API key)")
             continue
         log_name = month_log_sheet_title(year, month, feed)
-        rows = read_sheet_values_raw(service, KELKOO_SHEETS_SPREADSHEET_ID, log_name, "A:Z")
+        rows = read_monthly_log_values_with_retries(service, KELKOO_SHEETS_SPREADSHEET_ID, log_name)
+        if len(rows) < 2 and month_log_column_a_has_run_dates(service, KELKOO_SHEETS_SPREADSHEET_ID, log_name):
+            print(
+                f"Feed {feed}: tab {log_name!r} — read failed but column A has run dates; "
+                f"skipping enrich to avoid wiping the log. Retry later.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if not rows:
             print(f"Feed {feed}: tab {log_name!r} missing or empty — nothing to enrich.")
             continue

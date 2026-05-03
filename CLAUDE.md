@@ -53,6 +53,8 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
 
 Rough order: monthly log for yesterday → optional Blend potential refresh → delete previous day’s dated tabs → download feeds → reports/color fixim → pick merchants (default **top 3** per geo, rank-weighted PLA interleave) → PLA offers → combined sheet → Keitaro sync for both feeds → Blend block → **yesterday sales report** tabs on the late-sales workbook → **Kelkoo late-sales** diff (dry-run unless `--late-sales-apply`).
 
+Monthly log upserts (`workflows/monthly_log_monetization.py`) **clear the tab then rewrite the full month**; if a Sheets read returns empty while the tab still has run dates in column A, the job now **refuses to write** (retries first) so earlier days in the month are not wiped.
+
 **Flags (non-exhaustive):**
 
 - `--skip-keitaro` — skips Nipuhim Keitaro sync and Blend Keitaro sync; still can run Blend sheet populate unless `--skip-blend`.
