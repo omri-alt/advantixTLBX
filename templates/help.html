@@ -111,6 +111,7 @@
                 <tr><td><code>--geo</code></td><td>Comma 2-letter geos; only those get fresh PLA + Keitaro; others unchanged in offers tabs.</td><td><code>--geo uk,fr,de</code></td></tr>
                 <tr><td><code>--merchant-override</code></td><td>Repeatable <code>1:uk=id</code> or comma ids for fallback order.</td><td><code>--merchant-override 1:uk=15248713</code></td></tr>
                 <tr><td><code>--merchant-auto-override</code></td><td>Platform rank for feed+geo; <code>1:uk:3</code> = 3rd rank.</td><td><code>--merchant-auto-override 1:uk</code></td></tr>
+                <tr><td><code>--merchant-skip-replace</code></td><td>After picks: replace <code>old</code> with <code>new</code> in that geo’s merchant list for that feed, then PLA as usual. Repeatable. With <code>--offers-and-keitaro-only</code>, geo in the flag is merged into offers tabs without needing <code>--geo</code>.</td><td><code>--offers-and-keitaro-only --merchant-skip-replace 1:es:111=222</code></td></tr>
                 <tr><td><code>--offers-and-keitaro-only</code></td><td>Skips monthly log 0a, Blend potential 0b, tab delete 0; no fresh feed fixim download; steps 3–6 only.</td><td></td></tr>
                 <tr><td><code>--date</code></td><td>Run for a specific date tab context when supported.</td><td><code>--date 2026-03-08</code></td></tr>
               </tbody>
@@ -120,6 +121,12 @@
             <p><strong>Blend feed dropdown:</strong> controls which potential sheets are refreshed (<code>kelkoo1</code>, <code>kelkoo2</code>, <code>adexa</code>, <code>yadore</code>). Blend tab column <code>feed</code> must match.</p>
             {% elif key == "blend-keitaro-sync" %}
             <p>Optional <strong>Country</strong> field appends <code>--geo</code>. Does not refresh potentialKelkoo* tabs.</p>
+            {% elif key == "keitaro-detach-merchant" %}
+            <p>
+              <strong>Skip merchant (Keitaro):</strong> form sets <code>--geo</code>, <code>--merchant-ids</code>, optional <code>--dry-run</code>.
+              Detaches offers on that country flow whose Kelkoo URL contains <code>merchantId=</code> / <code>websiteId=</code> matching an id you enter.
+              Does not change Sheets; use <code>--delete-detached</code> in extra args to remove detached offers from Keitaro after detach.
+            </p>
             {% endif %}
           </div>
         </details>

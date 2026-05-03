@@ -38,6 +38,7 @@ Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) fo
   python run_daily_workflow.py --geo uk --merchant-override 1:uk=15248713
   python run_daily_workflow.py --geo uk --merchant-auto-override 1:uk
   python run_daily_workflow.py --geo de --merchant-auto-override 2:de:3
+  python run_daily_workflow.py --offers-and-keitaro-only --geo es --merchant-skip-replace 1:es:111111=222222
   python run_daily_workflow.py --offers-and-keitaro-only --date 2026-04-15 --geo de
   python run_daily_workflow.py --include-flex
   python run_daily_workflow.py --run-daily-conversion-postbacks
@@ -103,6 +104,7 @@ _DAILY_SHEET_SUFFIXES = ("_fixim_1", "_fixim_2", "_offers_1", "_offers_2", "_off
 
 _MERCHANT_OVERRIDE_RE = re.compile(r"^([12]):([a-z]{2})=(.+)$", re.I)
 _MERCHANT_AUTO_OVERRIDE_RE = re.compile(r"^([12]):([a-z]{2})(?::(\d+))?$", re.I)
+_MERCHANT_SKIP_REPLACE_RE = re.compile(r"^([12]):([a-z]{2}):(\d+)=(\d+)$", re.I)
 
 
 def _parse_geo_list_csv(s: str) -> Set[str]:
@@ -171,6 +173,39 @@ def _parse_merchant_auto_override_arg(spec: str) -> Optional[Tuple[int, str, int
     return feed, geo, rank
 
 
+def _parse_merchant_skip_replace_arg(spec: str) -> Optional[Tuple[int, str, str, str]]:
+    """
+    One swap: ``1:es:15248713=99887766`` → feed 1, geo es, replace merchant id 15248713 with 99887766
+    in the chosen merchant list (same slot / list order; dedupe if the substitute already appears).
+    """
+    m = _MERCHANT_SKIP_REPLACE_RE.match((spec or "").strip())
+    if not m:
+        return None
+    feed = int(m.group(1))
+    geo = m.group(2).lower()[:2]
+    old_id = _normalize_merchant_id_from_sheet(m.group(3))
+    new_id = _normalize_merchant_id_from_sheet(m.group(4))
+    if len(geo) != 2 or not old_id or not new_id or old_id == new_id:
+        return None
+    return feed, geo, old_id, new_id
+
+
+def _collect_merchant_skip_replaces(argv: List[str]) -> Dict[int, List[Tuple[str, str, str]]]:
+    """feed -> list of (geo, old_merchant_id, new_merchant_id), in argv order."""
+    out: Dict[int, List[Tuple[str, str, str]]] = {1: [], 2: []}
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--merchant-skip-replace" and i + 1 < len(argv):
+            parsed = _parse_merchant_skip_replace_arg(argv[i + 1])
+            if parsed:
+                feed, geo, old_id, new_id = parsed
+                out[feed].append((geo, old_id, new_id))
+            i += 2
+            continue
+        i += 1
+    return out
+
+
 def _collect_merchant_auto_overrides(
     argv: List[str],
 ) -> Tuple[Dict[int, Dict[str, int]], Set[str]]:
@@ -212,6 +247,7 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
     workflow_dry_run = "--dry-run" in argv
     merchant_overrides, implied_geos_manual = _collect_merchant_overrides(argv)
     merchant_auto_overrides, implied_geos_auto = _collect_merchant_auto_overrides(argv)
+    merchant_skip_replaces = _collect_merchant_skip_replaces(argv)
 
     i = 0
     while i < len(argv):
@@ -236,6 +272,13 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
         partial_geos |= only_geos
     partial_geos |= implied_geos_manual
     partial_geos |= implied_geos_auto
+    # Fast rerun: swap applies to named geos; merge those tabs only (no need to also pass --geo).
+    if offers_and_keitaro_only:
+        for flist in merchant_skip_replaces.values():
+            for geo, _old, _new in flist:
+                g = (geo or "").strip().lower()[:2]
+                if len(g) == 2:
+                    partial_geos.add(g)
 
     return {
         "date_str": date_str,
@@ -250,6 +293,7 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
         "partial_geos": frozenset(partial_geos),
         "merchant_overrides": merchant_overrides,
         "merchant_auto_overrides": merchant_auto_overrides,
+        "merchant_skip_replaces": merchant_skip_replaces,
         "run_daily_conversion_postbacks": run_daily_conversion_postbacks,
         "offers_and_keitaro_only": offers_and_keitaro_only,
         "postback_report_date": postback_report_date,
@@ -568,6 +612,54 @@ def _apply_platform_auto_overrides_to_chosen(
     return ch
 
 
+def _apply_merchant_skip_replaces(
+    chosen: Dict[str, List[str]],
+    feed_num: int,
+    swaps_by_feed: Dict[int, List[Tuple[str, str, str]]],
+) -> Dict[str, List[str]]:
+    """
+    Replace one merchant id with another in the chosen list for a geo (PLA source list).
+    Runs after manual/auto overrides. If ``old`` is not in the list for that geo, logs and skips.
+    """
+    swaps = swaps_by_feed.get(feed_num) or []
+    if not swaps:
+        return chosen
+    ch = dict(chosen)
+    for geo, old_id, new_id in swaps:
+        g = (geo or "").strip().lower()[:2]
+        if len(g) != 2:
+            continue
+        cur = [str(x).strip() for x in (ch.get(g) or []) if str(x).strip()]
+        if not cur:
+            print(
+                f"   Feed{feed_num} merchant-skip-replace {g}: no merchants in selection; "
+                f"cannot apply {old_id}→{new_id}"
+            )
+            continue
+        norm_cur = [_normalize_merchant_id_from_sheet(x) for x in cur]
+        if old_id not in norm_cur:
+            print(
+                f"   Feed{feed_num} merchant-skip-replace {g}: merchant {old_id} not in chosen {cur!r}; "
+                f"skipping {old_id}→{new_id}"
+            )
+            continue
+        replaced = [_normalize_merchant_id_from_sheet(x) for x in cur]
+        replaced = [new_id if x == old_id else x for x in replaced]
+        # Drop duplicate ids while keeping order (e.g. swap onto an id already in the list).
+        seen: Set[str] = set()
+        deduped: List[str] = []
+        for x in replaced:
+            if not x:
+                continue
+            if x in seen:
+                continue
+            seen.add(x)
+            deduped.append(x)
+        ch[g] = deduped
+        print(f"   Feed{feed_num} merchant-skip-replace {g}: {old_id}→{new_id} merchants now {deduped!r} (was {cur!r})")
+    return ch
+
+
 def _run_post_pla_automation_tail(service: Any, pa: dict) -> None:
     """Sales report (late-sales workbook) then Kelkoo late-sales flow; errors are logged, non-fatal."""
     dry = bool(pa.get("workflow_dry_run"))
@@ -630,6 +722,7 @@ def run_pla_offers_keitaro_blend_tail(
     partial_geos: frozenset[str],
     merchant_overrides: Dict[int, Dict[str, List[str]]],
     merchant_auto_overrides: Dict[int, Dict[str, int]],
+    merchant_skip_replaces: Dict[int, List[Tuple[str, str, str]]],
     merge_offers_tabs: bool,
     run_monthly_log_today: bool,
     skip_keitaro: bool,
@@ -682,6 +775,8 @@ def run_pla_offers_keitaro_blend_tail(
     )
     chosen1 = _apply_merchant_overrides_to_chosen(chosen1, 1, merchant_overrides)
     chosen2 = _apply_merchant_overrides_to_chosen(chosen2, 2, merchant_overrides)
+    chosen1 = _apply_merchant_skip_replaces(chosen1, 1, merchant_skip_replaces)
+    chosen2 = _apply_merchant_skip_replaces(chosen2, 2, merchant_skip_replaces)
     if partial_geos:
         chosen1 = {k: v for k, v in chosen1.items() if k in partial_geos}
         chosen2 = {k: v for k, v in chosen2.items() if k in partial_geos}
@@ -854,6 +949,7 @@ def main() -> None:
     partial_geos: frozenset[str] = pa["partial_geos"]
     merchant_overrides: Dict[int, Dict[str, List[str]]] = pa["merchant_overrides"]
     merchant_auto_overrides: Dict[int, Dict[str, int]] = pa["merchant_auto_overrides"]
+    merchant_skip_replaces: Dict[int, List[Tuple[str, str, str]]] = pa["merchant_skip_replaces"]
     run_daily_conversion_postbacks = pa["run_daily_conversion_postbacks"]
     offers_and_keitaro_only = pa["offers_and_keitaro_only"]
     postback_report_date = pa["postback_report_date"]
@@ -886,6 +982,11 @@ def main() -> None:
         print(
             f"Platform auto-overrides: feed1={merchant_auto_overrides.get(1)!r} "
             f"feed2={merchant_auto_overrides.get(2)!r}"
+        )
+    if merchant_skip_replaces.get(1) or merchant_skip_replaces.get(2):
+        print(
+            f"Merchant skip→replace (PLA): feed1={merchant_skip_replaces.get(1)!r} "
+            f"feed2={merchant_skip_replaces.get(2)!r}"
         )
     print(f"Reports: {start_str} to {end_str} (month to yesterday)")
     _lk = logging.getLogger("workflows.kelkoo_daily")
@@ -949,6 +1050,7 @@ def main() -> None:
             partial_geos=partial_geos,
             merchant_overrides=merchant_overrides,
             merchant_auto_overrides=merchant_auto_overrides,
+            merchant_skip_replaces=merchant_skip_replaces,
             merge_offers_tabs=merge_offers_tabs,
             run_monthly_log_today=False,
             skip_keitaro=skip_keitaro,
@@ -1049,6 +1151,7 @@ def main() -> None:
         partial_geos=partial_geos,
         merchant_overrides=merchant_overrides,
         merchant_auto_overrides=merchant_auto_overrides,
+        merchant_skip_replaces=merchant_skip_replaces,
         merge_offers_tabs=merge_offers_tabs,
         run_monthly_log_today=True,
         skip_keitaro=skip_keitaro,

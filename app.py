@@ -489,6 +489,10 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             {"label": "Merchant override (example)", "value": "--geo uk --merchant-override 1:uk=15248713"},
             {"label": "Platform picks next best (example)", "value": "--geo uk --merchant-auto-override 1:uk"},
             {"label": "Offers + Keitaro only (fast)", "value": "--offers-and-keitaro-only --geo uk"},
+            {
+                "label": "Replace merchant PLA (offers-only, example)",
+                "value": "--offers-and-keitaro-only --merchant-skip-replace 1:es:11111111=22222222",
+            },
             {"label": "Date + Skip Keitaro (example)", "value": "--date 2026-03-08 --skip-keitaro"},
             {"label": "Date only (example)", "value": "--date 2026-03-08"},
         ],
@@ -502,6 +506,20 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "args_templates": [
             {"label": "Default (today)", "value": ""},
             {"label": "Date only (example)", "value": "--date 2026-03-08"},
+        ],
+    },
+    "keitaro-detach-merchant": {
+        "title": "Skip merchant (Keitaro flow)",
+        "script": "detach_keitaro_merchant_offers.py",
+        "description": (
+            "Detach offers whose Kelkoo URLs reference the given merchant id(s) from that country's "
+            "Nipuhim stream (same campaign as daily Keitaro). Optional dry-run; see Help daily flags."
+        ),
+        "group": "daily-automations",
+        "args_hint": "Optional: --delete-detached (after detach)",
+        "args_templates": [
+            {"label": "Dry run (no API writes)", "value": "--dry-run"},
+            {"label": "Also delete detached offers", "value": "--delete-detached"},
         ],
     },
     "blend": {
@@ -2026,6 +2044,22 @@ def ui_workflow(workflow_key: str):
             extra_args = " ".join(extra_args.split())
             if len(bg) == 2:
                 extra_args = f"--geo {bg} {extra_args}".strip()
+        if workflow_key == "keitaro-detach-merchant":
+            g = (request.form.get("detach_geo") or "").strip().lower()[:2]
+            mids = (request.form.get("detach_merchant_ids") or "").strip().replace(" ", "")
+            dry_on = (request.form.get("detach_dry_run") or "").strip().lower() in ("1", "true", "on", "yes")
+            extra_args = re.sub(r"--geo\s+[a-zA-Z]{2}\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--merchant-ids\s+\S+", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--dry-run\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = " ".join(extra_args.split())
+            parts: list[str] = []
+            if len(g) == 2:
+                parts.append(f"--geo {g}")
+            if mids:
+                parts.append(f"--merchant-ids {mids}")
+            if dry_on:
+                parts.append("--dry-run")
+            extra_args = " ".join(parts + ([extra_args] if extra_args else [])).strip()
         if workflow_key == "daily":
             dg = (request.form.get("daily_geo") or "").strip()
             # Remove a manually-typed --geo; the dedicated control wins when set.
@@ -2068,6 +2102,20 @@ def ui_workflow(workflow_key: str):
                     pr = 2
                 if pf in ("1", "2") and len(pg) == 2:
                     extra_args = f"--merchant-auto-override {pf}:{pg}:{pr} {extra_args}".strip()
+
+            extra_args = re.sub(r"--merchant-skip-replace\s+\S+", "", extra_args, flags=re.IGNORECASE)
+            extra_args = " ".join(extra_args.split())
+            swap_on = (request.form.get("daily_merchant_swap") or "").strip().lower() in ("1", "on", "yes", "true")
+            swap_feed = (request.form.get("daily_swap_feed") or "1").strip()
+            swap_geo = (request.form.get("daily_swap_geo") or "").strip().lower()[:2]
+            swap_old = re.sub(r"\D", "", (request.form.get("daily_swap_old_merchant") or "").strip())
+            swap_new = re.sub(r"\D", "", (request.form.get("daily_swap_new_merchant") or "").strip())
+            if swap_on:
+                if swap_feed in ("1", "2") and len(swap_geo) == 2 and swap_old and swap_new and swap_old != swap_new:
+                    extra_args = re.sub(r"--offers-and-keitaro-only\b", "", extra_args, flags=re.IGNORECASE)
+                    extra_args = " ".join(extra_args.split())
+                    spec = f"{swap_feed}:{swap_geo}:{swap_old}={swap_new}"
+                    extra_args = f"--offers-and-keitaro-only --merchant-skip-replace {spec} {extra_args}".strip()
         # Run workflow pages in background to avoid nginx/gateway timeout on long jobs.
         current_run = _run_workflow_in_background(workflow_key, extra_args)
     last_run = current_run or _load_last_run(workflow_key)

@@ -31,6 +31,8 @@
     {{ tool_header(workflow.title, "Blend sheet, potential refresh, populate.", "blend", "e.g. --geo fr --skip-potential") }}
   {% elif workflow_key == "blend-keitaro-sync" %}
     {{ tool_header(workflow.title, "Prune + rebuild Blend Keitaro campaign from sheet.", "blend-keitaro-sync", "e.g. --geo fr") }}
+  {% elif workflow_key == "keitaro-detach-merchant" %}
+    {{ tool_header(workflow.title, "Detach merchant offers from the country flow (Nipuhim campaign).", "daily-automations", "optional --delete-detached") }}
   {% elif workflow_key == "monetization-check" %}
     {{ tool_header(workflow.title, "Sheet URLs vs Kelkoo/Yadore → Matches tab.", "monetization-check", "e.g. --max-rows 20") }}
   {% elif workflow_key == "blend-stop-closed" %}
@@ -64,6 +66,16 @@
     <div style="height: 12px;"></div>
     <label for="blend_sync_geo">Country (optional)</label><br>
     <input id="blend_sync_geo" name="blend_sync_geo" type="text" placeholder="e.g. uk, fr — blank = all geos" style="width: 320px;">
+    {% endif %}
+    {% if workflow_key == 'keitaro-detach-merchant' %}
+    <div style="height: 12px;"></div>
+    <label for="detach_geo">Country (required, 2 letters)</label><br>
+    <input id="detach_geo" name="detach_geo" type="text" placeholder="e.g. es" style="width: 120px;" maxlength="2" autocomplete="off">
+    <div style="height: 12px;"></div>
+    <label for="detach_merchant_ids">Kelkoo merchant id(s)</label><br>
+    <input id="detach_merchant_ids" name="detach_merchant_ids" type="text" placeholder="e.g. 15248713 or 15248713,99887766" style="width: 520px; max-width: 100%;">
+    <div style="height: 10px;"></div>
+    <label><input type="checkbox" name="detach_dry_run" value="on"> Dry run (no Keitaro writes)</label>
     {% endif %}
     {% if workflow_key == 'daily' %}
     <div style="height: 12px;"></div>
@@ -116,6 +128,26 @@
         <option value="4">4</option>
         <option value="5">5</option>
       </select>
+    </div>
+
+    <div style="height: 14px;"></div>
+    <label><input type="checkbox" name="daily_merchant_swap" value="on"> Replace one merchant for PLA (fast path: offers + Keitaro only)</label>
+    <p class="muted" style="margin:6px 0 0;font-size:12px;">Swaps the skipped id for the substitute in the picked list, refetches PLA, merges that country into today’s offers tabs, then syncs Keitaro. Feed/geo must match where the bad merchant was chosen.</p>
+    <div id="daily_swap_fields" style="margin-top:10px;">
+      <label for="daily_swap_feed">Feed</label><br>
+      <select id="daily_swap_feed" name="daily_swap_feed" style="width: 220px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+        <option value="1" selected>Feed 1</option>
+        <option value="2">Feed 2</option>
+      </select>
+      <div style="height: 8px;"></div>
+      <label for="daily_swap_geo">Country (2 letters)</label><br>
+      <input id="daily_swap_geo" name="daily_swap_geo" type="text" placeholder="e.g. es" style="width: 120px;" maxlength="2" autocomplete="off">
+      <div style="height: 8px;"></div>
+      <label for="daily_swap_old_merchant">Merchant id to skip (remove from selection)</label><br>
+      <input id="daily_swap_old_merchant" name="daily_swap_old_merchant" type="text" placeholder="e.g. 15248713" style="width: 220px;">
+      <div style="height: 8px;"></div>
+      <label for="daily_swap_new_merchant">Replacement merchant id (PLA for this id)</label><br>
+      <input id="daily_swap_new_merchant" name="daily_swap_new_merchant" type="text" placeholder="e.g. 99887766" style="width: 220px;">
     </div>
     {% endif %}
     <div style="height: 8px;"></div>
