@@ -68,6 +68,7 @@ load_dotenv()
 from config import (
     ADEXA_API_KEY,
     ADEXA_SITE_ID,
+    BLEND_POPULATE_MAX_ADD,
     BLEND_POTENTIAL_FEEDS,
     FEED1_API_KEY,
     FEED2_API_KEY,
@@ -303,7 +304,7 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
         "workflow_dry_run": workflow_dry_run,
     }
 
-BLEND_DAILY_MAX_NEW_ROWS = 50
+BLEND_DAILY_MAX_NEW_ROWS = BLEND_POPULATE_MAX_ADD
 
 
 def _blend_potential_feeds_for_run() -> tuple[str, ...]:

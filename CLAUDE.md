@@ -81,7 +81,7 @@ Rough order: monthly log for yesterday → optional Blend potential refresh → 
 **Blend block (step 7):**
 
 - Refreshes **potentialKelkoo*** sheets per `BLEND_POTENTIAL_FEEDS` in `.env` (default `kelkoo1,kelkoo2`; feeds without an API key are skipped).
-- Runs `populate_blend_from_potential.py` (monetized rows, dedupe, `clickCap` 50, `--max-add` daily cap).
+- Runs `populate_blend_from_potential.py` (monetized rows from each potential sheet, dedupe by geo+merchantId+`feed`, `clickCap` 50). Daily cap **`BLEND_POPULATE_MAX_ADD`** (default **5000**, max 20000) is only a safety limit — intent is that merchants who already passed conversion rules on a given feed’s potential sheet can be appended to the Blend tab for that same `feed` (kelkoo1 vs kelkoo2 vs adexa vs yadore are separate columns/tabs). Optional CLI `--prioritize-brand` / `--prioritize-merchant-id` reorders one-off runs. Diagnose: `python tools/diagnose_blend_potential_merchant.py --feed kelkoo2 --brand …`.
 - **7a½ — Blend prune (Keitaro):** after potential refresh, detaches Blend-campaign offers whose names no longer match a **monetized** row on the corresponding `potentialKelkoo*` / `potentialAdexa` / `potentialYadore` sheet (same `kelkoo_monetization` column as populate). If a potential sheet **fails to load**, that feed is skipped (no removals from missing data). Implemented in `blend_sync_from_sheet.py` (`run_blend_prune_unmonetized_keitaro`, also run at the start of `blend_sync_from_sheet.py`). Use `--skip-blend-prune` on the daily workflow to bypass. `blend_sync_from_sheet.py --dry-run` logs Keitaro detachments only (no stream updates from the prune step).
 - Runs `blend_sync_from_sheet.py` — prunes bad `auto='v'` rows, syncs Keitaro Blend campaign (alias documented in `README.md`).
 

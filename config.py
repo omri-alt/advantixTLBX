@@ -143,6 +143,14 @@ def _parse_blend_potential_feeds() -> tuple[str, ...]:
 
 BLEND_POTENTIAL_FEEDS: tuple[str, ...] = _parse_blend_potential_feeds()
 
+try:
+    # Default high so daily populate does not silently skip monetized merchants that passed
+    # blend_potential CR rules; lower BLEND_POPULATE_MAX_ADD only if you need a safety ceiling.
+    BLEND_POPULATE_MAX_ADD = int((os.getenv("BLEND_POPULATE_MAX_ADD") or "5000").strip())
+except Exception:
+    BLEND_POPULATE_MAX_ADD = 5000
+BLEND_POPULATE_MAX_ADD = max(1, min(20000, BLEND_POPULATE_MAX_ADD))
+
 # Kelkoo
 FEED1_API_KEY = (os.getenv("FEED1_API_KEY") or "").strip()
 FEED2_API_KEY = (os.getenv("FEED2_API_KEY") or "").strip()

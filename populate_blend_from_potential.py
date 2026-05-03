@@ -15,11 +15,15 @@ Rules:
       auto = v
       feed = kelkoo1 / kelkoo2 / adexa / yadore (based on --feed)
   - avoids duplicates by (geo, merchantId, feed)
+  - ``--max-add`` is a safety ceiling on **new** rows per run (daily uses env ``BLEND_POPULATE_MAX_ADD``,
+    default large so monetized merchants from the potential sheet are not dropped arbitrarily).
+    Use ``--prioritize-brand`` / ``--prioritize-merchant-id`` only for targeted one-offs.
 
 Usage:
   python populate_blend_from_potential.py --feed kelkoo1
   python populate_blend_from_potential.py --feed adexa
-  python populate_blend_from_potential.py --feed kelkoo1 --max-add 50
+  python populate_blend_from_potential.py --feed kelkoo1 --max-add 200
+  python populate_blend_from_potential.py --feed kelkoo2 --prioritize-brand cocooncenter --max-add 5
 """
 from __future__ import annotations
 
@@ -90,10 +94,50 @@ def ensure_blend_headers(service) -> List[str]:
     return header
 
 
+def _reorder_potential_body_rows(
+    body_rows: List[List[Any]],
+    *,
+    i_name: int,
+    i_mid: int,
+    brand_sub: str,
+    merchant_id: str,
+) -> List[List[Any]]:
+    """Move rows matching brand substring (case-insensitive) or exact merchantId to the front."""
+    bs = (brand_sub or "").strip().lower()
+    mid = (merchant_id or "").strip()
+    if not bs and not mid:
+        return body_rows
+    head: List[List[Any]] = []
+    tail: List[List[Any]] = []
+    for row in body_rows:
+        name = str(row[i_name] if i_name < len(row) else "").strip().lower()
+        m = str(row[i_mid] if i_mid < len(row) else "").strip()
+        if (bs and bs in name) or (mid and m == mid):
+            head.append(row)
+        else:
+            tail.append(row)
+    return head + tail
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Upsert monetized potential merchants into Blend sheet.")
     p.add_argument("--feed", required=True, choices=["kelkoo1", "kelkoo2", "adexa", "yadore"])
-    p.add_argument("--max-add", type=int, default=200, help="Max new rows to add this run")
+    p.add_argument(
+        "--max-add",
+        type=int,
+        default=200,
+        help="Max new rows to add this run (daily workflow passes BLEND_POPULATE_MAX_ADD from config)",
+    )
+    p.add_argument(
+        "--prioritize-brand",
+        default="",
+        help="Substring of merchant name; matching potential rows are processed first (case-insensitive)",
+    )
+    p.add_argument(
+        "--prioritize-merchant-id",
+        default="",
+        help="Exact merchantId; that row is processed first if present",
+    )
     args = p.parse_args()
 
     potential_sheet = {
@@ -129,6 +173,14 @@ def main() -> None:
         print(f"Potential sheet header missing required columns: {pot_vals[0]}")
         return
 
+    body_rows = _reorder_potential_body_rows(
+        list(pot_vals[1:]),
+        i_name=i_name,
+        i_mid=i_mid,
+        brand_sub=args.prioritize_brand,
+        merchant_id=args.prioritize_merchant_id,
+    )
+
     # Index for blend sheet columns
     blend_header = [str(c or "").strip() for c in (blend_vals[0] if blend_vals else header_blend)]
     idx_blend = {h.strip().lower(): i for i, h in enumerate(blend_header)}
@@ -149,13 +201,13 @@ def main() -> None:
             if geo and mid and feed:
                 existing.add((geo, mid, feed))
 
-    # Build rows to append
-    to_append: List[List[Any]] = []
+    # Build all new rows (then cap by max_add) so we can report how many were left out.
+    candidates: List[List[Any]] = []
     total_potential = max(len(pot_vals) - 1, 0)
     monetized_rows = 0
     eligible_rows = 0
     dup_rows = 0
-    for row in pot_vals[1:]:
+    for row in body_rows:
         monet = str(row[i_monet] or "").strip().lower()
         if not monet.startswith("monetized"):
             continue
@@ -181,17 +233,18 @@ def main() -> None:
         new_row[b_i("merchantid")] = mid
         new_row[b_i("auto")] = "v"
         new_row[b_i("feed")] = args.feed
-        to_append.append(new_row[: len(blend_header)])
+        candidates.append(new_row[: len(blend_header)])
         existing.add(key)
-        if len(to_append) >= args.max_add:
-            break
+
+    omitted_by_cap = max(0, len(candidates) - args.max_add)
+    to_append = candidates[: args.max_add]
 
     if not to_append:
         print(
             "Nothing new to add into Blend for this run. "
             f"(potential rows={total_potential}, monetized={monetized_rows}, "
             f"eligible={eligible_rows}, duplicates_skipped={dup_rows}, "
-            f"max_add={args.max_add})"
+            f"new_merchants_ready={len(candidates)}, max_add={args.max_add})"
         )
         return
 
@@ -200,7 +253,8 @@ def main() -> None:
         f"populate_blend_from_potential summary (feed={args.feed}): "
         f"potential rows={total_potential}, monetized={monetized_rows}, "
         f"eligible={eligible_rows}, duplicates_skipped={dup_rows}, "
-        f"added={len(to_append)}, max_add={args.max_add}"
+        f"new_merchants_ready={len(candidates)}, added={len(to_append)}, "
+        f"omitted_by_max_add_cap={omitted_by_cap}, max_add={args.max_add}"
     )
     quoted = BLEND_SHEET.replace("'", "''")
     start_row = (len(blend_vals) + 1) if blend_vals else 2
