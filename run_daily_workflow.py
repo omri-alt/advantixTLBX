@@ -974,7 +974,7 @@ def main() -> None:
     if merchants_per_geo == 1:
         print("Merchants per geo: 1 (--single-merchant-per-geo).")
     if offers_and_keitaro_only:
-        print("Mode: --offers-and-keitaro-only (skips monthly log, Blend potential, tab delete, feed→fixim download; re-colors fixim from reports)")
+        print("Mode: --offers-and-keitaro-only (skips monthly log, Blend potential, tab delete, feed->fixim download; re-colors fixim from reports)")
     if partial_geos:
         print(f"Partial geo scope (merge into existing offers tabs): {', '.join(sorted(partial_geos))}")
     if merchant_overrides.get(1) or merchant_overrides.get(2):

@@ -39,10 +39,16 @@ AUTOMATION_SPECS: List[Dict[str, str]] = [
         "label": "Close Nipuhim (Zeropark)",
         "schedule": "Hour 23 only",
     },
+    {
+        "class_name": "BlendSync2h",
+        "label": "Blend sheet → Keitaro sync (monetization + weights)",
+        "schedule": "Every 2 hours (even hours)",
+    },
 ]
 
 
 def setup_automations(register_func: Callable[[Any], None]) -> None:
+    from automations.autoserver.blend_sync_2h import BlendSync2h
     from automations.autoserver.close_nipuhim import CloseNipuhimAuto
     from automations.autoserver.klfix_optimize import KLFIXoptimize
     from automations.autoserver.klwl import KLWL
@@ -58,3 +64,4 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     register_func(KLWL())
     register_func(QualityWL())
     register_func(CloseNipuhimAuto())
+    register_func(BlendSync2h())

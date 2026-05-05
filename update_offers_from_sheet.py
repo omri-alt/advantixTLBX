@@ -11,6 +11,11 @@ Sequence:
     if the tracker returns 404 on those endpoints — offers stay as unattached orphans).
   - Writes 'live' and upload timestamp to columns G and H for updated rows.
 
+Traffic split (Nipuhim):
+  - ``--traffic-feed1-only`` / ``--traffic-feed2-only``: single-feed flows, equal share within the feed.
+  - default ("both"): feed1 offers aggregate to ``FEED1_TRAFFIC_PCT`` (80%) of the flow's traffic and
+    feed2 offers aggregate to ``FEED2_TRAFFIC_PCT`` (20%); each feed's offers split their bucket equally.
+
   python update_offers_from_sheet.py
   python update_offers_from_sheet.py --sheet "2026-03-10_offers"
   python update_offers_from_sheet.py --sheet "2026-03-10_offers" --max-offers 5
@@ -45,6 +50,7 @@ from assistance import (
     update_offer_action_payload,
     create_next_geo_offers,
     set_flow_offers,
+    set_flow_offers_two_feed_split,
     flow_name_to_geo,
     get_campaign_streams_by_alias,
     remove_offer_best_effort,
@@ -56,6 +62,14 @@ from integrations.keitaro import KeitaroClientError
 SPREADSHEET_ID = "1XUkQoWqnNRqaSEnFVRAV36-oi9ENrNWtH5Ct8M4vNuU"
 DEFAULT_SHEET_NAME = "2026-03-09_offers"
 MAX_OFFERS_PER_GEO = 10
+
+# Nipuhim 'both' mode traffic split (feed1 dominant). Sum must equal 100.
+# When traffic_mode == "both", flow offers are attached with weighted shares
+# such that all feed1 offers together get FEED1_TRAFFIC_PCT% of traffic and
+# all feed2 offers together get FEED2_TRAFFIC_PCT%. Per-feed offers split
+# their feed's bucket equally.
+FEED1_TRAFFIC_PCT = 80
+FEED2_TRAFFIC_PCT = 20
 COL_COUNTRY = 0   # A
 COL_STORE_LINK = 3  # D
 # Columns we write back: G = live, H = offerUpload timestamp
@@ -197,16 +211,62 @@ def main():
     print(f"Geos in sheet: {list(by_geo.keys())}")
     print()
 
-    def flow_offer_ids_for_geo(geo: str):
-        """Offer IDs for this geo based on requested traffic mode."""
+    def feed_offer_ids_for_geo(geo: str):
+        """Return (feed1_ids, feed2_ids) for this geo, filtered by traffic_mode.
+        For modes that exclude a feed, that feed's list comes back empty.
+        """
         o1 = get_geo_offers_sorted(geo, feed_prefix="feed1")
         o2 = get_geo_offers_sorted(geo, feed_prefix="feed2")
+        ids1 = [int(o["id"]) for o in o1]
+        ids2 = [int(o["id"]) for o in o2]
         if traffic_mode == "feed1-only":
-            return [o["id"] for o in o1]
+            return ids1, []
         if traffic_mode == "feed2-only":
-            return [o["id"] for o in o2]
-        # "both": feed1 offers first, then feed2.
-        return [o["id"] for o in o1] + [o["id"] for o in o2]
+            return [], ids2
+        return ids1, ids2
+
+    def flow_offer_ids_for_geo(geo: str):
+        """Combined offer ID list for this geo (feed1 first, then feed2).
+        Used for new-flow creation where exact share is not yet meaningful.
+        """
+        ids1, ids2 = feed_offer_ids_for_geo(geo)
+        return ids1 + ids2
+
+    def apply_flow_offers(stream_id: int, feed1_ids, feed2_ids) -> None:
+        """Attach feed1+feed2 offers to a flow with the right weighting.
+
+        - "feed1-only" / "feed2-only": equal share among the single feed's offers.
+        - "both": weighted shares so feed1 aggregate = FEED1_TRAFFIC_PCT,
+          feed2 aggregate = FEED2_TRAFFIC_PCT. Per-feed offers split their
+          feed's bucket equally.
+        """
+        n1, n2 = len(feed1_ids), len(feed2_ids)
+        if traffic_mode == "feed1-only":
+            if n1:
+                set_flow_offers(stream_id, feed1_ids)
+            return
+        if traffic_mode == "feed2-only":
+            if n2:
+                set_flow_offers(stream_id, feed2_ids)
+            return
+        # "both": fall back to equal share if one feed is empty (no 80/20 to apply).
+        if n1 == 0 and n2 == 0:
+            return
+        if n1 == 0:
+            set_flow_offers(stream_id, feed2_ids)
+            return
+        if n2 == 0:
+            set_flow_offers(stream_id, feed1_ids)
+            return
+        # Use a per-feed bucket split so aggregate feed1=80% / feed2=20% holds
+        # exactly, regardless of how many offers each feed contributes.
+        set_flow_offers_two_feed_split(
+            stream_id,
+            [int(o) for o in feed1_ids],
+            [int(o) for o in feed2_ids],
+            FEED1_TRAFFIC_PCT,
+            FEED2_TRAFFIC_PCT,
+        )
 
     # Resolve flows by geo so we can attach new offers when we create them
     campaign_alias = KEITARO_CAMPAIGN_ALIAS or "HrQBXp"
@@ -277,27 +337,34 @@ def main():
                 offers = get_geo_offers_sorted(geo, feed_prefix=feed_prefix)
                 stream = stream_by_geo.get(geo)
                 if stream:
-                    # Set flow to both feed1 and feed2 offers for this geo (equalized traffic)
-                    offer_ids = flow_offer_ids_for_geo(geo)
-                    set_flow_offers(stream["id"], offer_ids)
+                    # Set flow to feed1 / feed2 offers for this geo per traffic_mode.
+                    # In "both" mode this applies the FEED1/FEED2 80/20 weighted split.
+                    ids1, ids2 = feed_offer_ids_for_geo(geo)
+                    apply_flow_offers(int(stream["id"]), ids1, ids2)
+                    total = len(ids1) + len(ids2)
                     if traffic_mode == "both":
-                        print(f"  {geo}: flow id={stream['id']} now has {len(offer_ids)} offers (feed1+feed2)")
+                        print(
+                            f"  {geo}: flow id={stream['id']} now has {total} offers "
+                            f"(feed1={len(ids1)} @ {FEED1_TRAFFIC_PCT}% / feed2={len(ids2)} @ {FEED2_TRAFFIC_PCT}%)"
+                        )
                     else:
-                        print(f"  {geo}: flow id={stream['id']} now has {len(offer_ids)} offers ({traffic_mode})")
+                        print(f"  {geo}: flow id={stream['id']} now has {total} offers ({traffic_mode})")
                 else:
                     ensure_country_stream(geo)
                     stream = stream_by_geo.get(geo)
                     if stream:
-                        offer_ids = flow_offer_ids_for_geo(geo)
-                        if offer_ids:
-                            set_flow_offers(stream["id"], offer_ids)
+                        ids1, ids2 = feed_offer_ids_for_geo(geo)
+                        if ids1 or ids2:
+                            apply_flow_offers(int(stream["id"]), ids1, ids2)
+                            total = len(ids1) + len(ids2)
                             if traffic_mode == "both":
                                 print(
-                                    f"  {geo}: flow id={stream['id']} now has {len(offer_ids)} offers (feed1+feed2)"
+                                    f"  {geo}: flow id={stream['id']} now has {total} offers "
+                                    f"(feed1={len(ids1)} @ {FEED1_TRAFFIC_PCT}% / feed2={len(ids2)} @ {FEED2_TRAFFIC_PCT}%)"
                                 )
                             else:
                                 print(
-                                    f"  {geo}: flow id={stream['id']} now has {len(offer_ids)} offers ({traffic_mode})"
+                                    f"  {geo}: flow id={stream['id']} now has {total} offers ({traffic_mode})"
                                 )
             except KeitaroClientError as e:
                 print(f"  {geo}: ERROR creating/attaching offers: {e}")
@@ -319,14 +386,24 @@ def main():
                     if traffic_mode == "both":
                         if feed_prefix == "feed1":
                             other = get_geo_offers_sorted(geo, feed_prefix="feed2")
-                            new_flow_ids = keep_ids + [int(o["id"]) for o in other]
+                            ids1 = keep_ids
+                            ids2 = [int(o["id"]) for o in other]
                         else:
                             other = get_geo_offers_sorted(geo, feed_prefix="feed1")
-                            new_flow_ids = [int(o["id"]) for o in other] + keep_ids
+                            ids1 = [int(o["id"]) for o in other]
+                            ids2 = keep_ids
+                        apply_flow_offers(int(stream["id"]), ids1, ids2)
+                        total = len(ids1) + len(ids2)
+                        print(
+                            f"  {geo}: flow id={stream['id']} now has {total} offers "
+                            f"(feed1={len(ids1)} @ {FEED1_TRAFFIC_PCT}% / feed2={len(ids2)} @ {FEED2_TRAFFIC_PCT}%)"
+                        )
                     else:
-                        new_flow_ids = keep_ids
-                    set_flow_offers(int(stream["id"]), new_flow_ids)
-                    print(f"  {geo}: flow id={stream['id']} now has {len(new_flow_ids)} offers")
+                        if feed_prefix == "feed1":
+                            apply_flow_offers(int(stream["id"]), keep_ids, [])
+                        else:
+                            apply_flow_offers(int(stream["id"]), [], keep_ids)
+                        print(f"  {geo}: flow id={stream['id']} now has {len(keep_ids)} offers")
                 for offer in remove_offers:
                     oid = int(offer["id"])
                     if remove_offer_best_effort(oid):
@@ -343,12 +420,13 @@ def main():
                 sys.exit(1)
             offers = keep_offers
         ensure_country_stream(geo)
-        # Ensure flow has the requested offer set for this geo.
+        # Ensure flow has the requested offer set for this geo, with the
+        # configured traffic_mode weighting (80/20 in "both" mode).
         stream = stream_by_geo.get(geo)
         if stream:
-            offer_ids = flow_offer_ids_for_geo(geo)
-            if offer_ids:
-                set_flow_offers(stream["id"], offer_ids)
+            ids1, ids2 = feed_offer_ids_for_geo(geo)
+            if ids1 or ids2:
+                apply_flow_offers(int(stream["id"]), ids1, ids2)
         if not offers:
             print(f"  {geo}: no Keitaro offers found, skip")
             continue

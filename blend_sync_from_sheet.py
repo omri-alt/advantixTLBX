@@ -56,6 +56,7 @@ from assistance import (
     flow_name_to_geo,
     set_flow_offers,
     set_flow_offers_weighted,
+    set_flow_offers_weighted_keep_zeros,
 )
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
@@ -610,10 +611,14 @@ def prune_unmonetized_from_keitaro(
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     """
-    Detach Blend offers from geo flows when they are absent from the current monetized potential snapshot
-    (or not ``monetized*`` in that sheet). Feeds listed in ``feeds_sheet_load_failed`` are never pruned.
+    For Blend offers that are absent from the current monetized potential snapshot
+    (or not ``monetized*`` in that sheet), set their share to 0 in the geo flow but
+    keep them attached so operators can re-enable them later.
+    Feeds listed in ``feeds_sheet_load_failed`` are never modified.
 
-    Returns ``removed`` entries ``(offer_id, geo, feed, reason)``, ``errors``, ``empty_flow_geos``.
+    Returns ``removed`` entries ``(offer_id, geo, feed, reason)`` (kept name for
+    backward compatibility — these offers are zeroed, not detached), ``errors``,
+    ``empty_flow_geos``.
     """
     monetized_by_feed: Dict[str, Set[str]] = {}
     for ft, rows in potential_sheets.items():
@@ -648,7 +653,7 @@ def prune_unmonetized_from_keitaro(
             continue
         sid_i = int(sid)
         attached = list(stream.get("offers") or [])
-        detach_ids: List[int] = []
+        zero_ids: List[int] = []
 
         for slot in attached:
             oid_raw = slot.get("offer_id")
@@ -666,42 +671,51 @@ def prune_unmonetized_from_keitaro(
             if name in (monetized_by_feed.get(ft) or set()):
                 continue
             reason = "not monetized in potentialFeed sheet or absent from potential sheet"
-            detach_ids.append(oid)
+            zero_ids.append(oid)
             removed.append((oid, geo, ft, reason))
             msg = (
-                f"Blend prune: remove offer id={oid} geo={geo} feed={ft} "
-                f"reason={reason!r} offer_name={name!r}"
+                f"Blend prune: zero share for offer id={oid} geo={geo} feed={ft} "
+                f"reason={reason!r} offer_name={name!r} (kept attached)"
             )
             if dry_run:
                 print(f"[dry-run] {msg}")
             else:
                 print(msg)
 
-        if not detach_ids:
+        if not zero_ids:
             continue
-
-        remaining_ids = [int(s["offer_id"]) for s in attached if s.get("offer_id") is not None]
-        remaining_ids = [x for x in remaining_ids if x not in set(detach_ids)]
 
         if dry_run:
             continue
 
-        try:
-            if not remaining_ids:
-                empty_flow_geos.append(geo)
-                print(
-                    f"WARNING: geo {geo} Blend flow is now empty after pruning "
-                    f"(detached {len(detach_ids)} offer(s); zeroing shares on previous slots)."
-                )
-                offers_payload = []
-                for s in attached:
-                    oidr = s.get("offer_id")
-                    if oidr is None:
-                        continue
-                    offers_payload.append({"offer_id": int(oidr), "state": "active", "share": 0})
-                client.update_stream(sid_i, {"offers": offers_payload})
+        # Build a payload that keeps every currently-attached offer, but forces
+        # share=0 for the unmonetized ones. Other offers preserve their existing share.
+        zero_set = set(zero_ids)
+        offers_payload: List[Dict[str, Any]] = []
+        non_zero_total = 0
+        for s in attached:
+            oidr = s.get("offer_id")
+            if oidr is None:
+                continue
+            oidi = int(oidr)
+            if oidi in zero_set:
+                share = 0
             else:
-                set_flow_offers(sid_i, remaining_ids)
+                share = int(s.get("share") or 0)
+                non_zero_total += share
+            offers_payload.append({"offer_id": oidi, "state": "active", "share": share})
+
+        # If zeroing leaves the flow with no positive shares, log a warning so we
+        # notice (Keitaro will accept all-zero, but no traffic will be routed).
+        if non_zero_total <= 0:
+            empty_flow_geos.append(geo)
+            print(
+                f"WARNING: geo {geo} Blend flow has no positive shares after zeroing "
+                f"{len(zero_ids)} unmonetized offer(s)."
+            )
+
+        try:
+            client.update_stream(sid_i, {"offers": offers_payload})
         except Exception as e:
             err = f"geo={geo} stream_id={sid_i}: {e}"
             errors.append(err)
@@ -787,6 +801,18 @@ def main() -> None:
     updated_offers = 0
     created_flows = 0
 
+    # Build a quick lookup of all offer names → ids so we can identify
+    # currently-attached "blend_" offers that aren't in the sheet (those should
+    # remain attached with share=0 instead of being detached).
+    all_offers_by_id: Dict[int, str] = {}
+    try:
+        for o in client.get_offers():
+            oid = o.get("id")
+            if oid is not None:
+                all_offers_by_id[int(oid)] = (o.get("name") or "").strip()
+    except KeitaroClientError as e:
+        print(f"Warning: could not list offers for share-0 keep-alive logic: {e}")
+
     for geo, geo_rows in sorted(rows_by_geo.items()):
         # 1) Ensure offers exist
         offer_id_to_weight: Dict[int, float] = {}
@@ -815,10 +841,36 @@ def main() -> None:
             stream = created
             streams_by_geo[geo] = stream
 
-        # 3) Set weighted shares on flow
+        # 3) Determine "keep with share=0" set: currently-attached blend_ offers
+        # for this geo's flow that aren't in offer_id_to_weight.
+        active_ids = set(offer_id_to_weight.keys())
+        existing_attached_ids: Set[int] = set()
+        for slot in (stream.get("offers") or []):
+            oidr = slot.get("offer_id")
+            if oidr is None:
+                continue
+            existing_attached_ids.add(int(oidr))
+        zero_keep_ids: List[int] = []
+        for oid in existing_attached_ids:
+            if oid in active_ids:
+                continue
+            name = all_offers_by_id.get(oid, "")
+            # Only carry forward Blend-managed offers; leave anything else for
+            # operators to handle manually.
+            if name.startswith("blend_"):
+                zero_keep_ids.append(oid)
+
+        # 4) Set weighted shares on flow, preserving demonetized blend_ offers at share=0
         sid = int(stream["id"])
-        set_flow_offers_weighted(sid, offer_id_to_weight)
-        print(f"  {geo}: {len(offer_id_to_weight)} offers attached (weighted by clickCap)")
+        if zero_keep_ids:
+            set_flow_offers_weighted_keep_zeros(sid, offer_id_to_weight, zero_keep_ids)
+            print(
+                f"  {geo}: {len(offer_id_to_weight)} offers attached (weighted by clickCap); "
+                f"+{len(zero_keep_ids)} demonetized kept with share=0"
+            )
+        else:
+            set_flow_offers_weighted(sid, offer_id_to_weight)
+            print(f"  {geo}: {len(offer_id_to_weight)} offers attached (weighted by clickCap)")
 
     # If after auto-deletion a geo has no remaining rows in the sheet,
     # disable all currently attached offers for that geo so we don't keep traffic alive.

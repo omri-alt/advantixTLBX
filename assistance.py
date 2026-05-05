@@ -604,6 +604,105 @@ def set_flow_offers_weighted(
     return client.update_stream(stream_id, {"offers": offers})
 
 
+def set_flow_offers_two_feed_split(
+    stream_id: int,
+    feed1_offer_ids: List[int],
+    feed2_offer_ids: List[int],
+    feed1_pct: int,
+    feed2_pct: int,
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Set a flow's offers so feed1 offers aggregate to ``feed1_pct`` and feed2 offers
+    to ``feed2_pct`` (must sum to 100). Offers within each feed split that feed's
+    bucket as evenly as possible (largest-remainder on integer shares).
+
+    This is the Nipuhim-style 80/20 split. Unlike ``set_flow_offers_weighted``,
+    aggregate per-feed totals are exact regardless of how many offers each feed
+    contributes, so the split survives even with many offers per feed.
+    """
+    if feed1_pct + feed2_pct != 100:
+        raise ValueError(
+            f"feed1_pct + feed2_pct must equal 100, got {feed1_pct}+{feed2_pct}"
+        )
+    n1 = len(feed1_offer_ids)
+    n2 = len(feed2_offer_ids)
+    if n1 == 0 and n2 == 0:
+        raise ValueError("No offers to attach")
+
+    def _split_evenly(pct: int, n: int) -> List[int]:
+        if n <= 0 or pct <= 0:
+            return [0] * n
+        base = pct // n
+        rem = pct - base * n
+        # Distribute the remainder by giving 1 extra share to the first ``rem`` offers.
+        return [base + (1 if i < rem else 0) for i in range(n)]
+
+    if n1 == 0:
+        shares2 = _split_evenly(100, n2)
+        offers = [
+            {"offer_id": int(oid), "state": "active", "share": s}
+            for oid, s in zip(feed2_offer_ids, shares2)
+        ]
+    elif n2 == 0:
+        shares1 = _split_evenly(100, n1)
+        offers = [
+            {"offer_id": int(oid), "state": "active", "share": s}
+            for oid, s in zip(feed1_offer_ids, shares1)
+        ]
+    else:
+        shares1 = _split_evenly(feed1_pct, n1)
+        shares2 = _split_evenly(feed2_pct, n2)
+        offers = [
+            {"offer_id": int(oid), "state": "active", "share": s}
+            for oid, s in zip(feed1_offer_ids, shares1)
+        ] + [
+            {"offer_id": int(oid), "state": "active", "share": s}
+            for oid, s in zip(feed2_offer_ids, shares2)
+        ]
+    client = KeitaroClient(base_url=base_url, api_key=api_key)
+    return client.update_stream(stream_id, {"offers": offers})
+
+
+def set_flow_offers_weighted_keep_zeros(
+    stream_id: int,
+    offer_id_to_weight: Dict[int, float],
+    zero_offer_ids: Optional[List[int]] = None,
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Like ``set_flow_offers_weighted``, but also keeps a list of additional offer IDs
+    attached to the flow with ``share=0`` (no traffic, but still attached).
+
+    Useful for "demonetized but kept in flow" cases — operators can re-enable an
+    offer by giving it a clickCap again on the next sync, without re-attaching.
+
+    ``zero_offer_ids`` entries that are already present in ``offer_id_to_weight`` are
+    ignored (the weighted share takes precedence).
+    """
+    client = KeitaroClient(base_url=base_url, api_key=api_key)
+    items = [(int(oid), float(w)) for oid, w in offer_id_to_weight.items() if oid is not None]
+    items.sort(key=lambda x: x[0])
+    weighted_ids = {oid for oid, _ in items}
+    extra_zero_ids = [int(oid) for oid in (zero_offer_ids or []) if oid is not None and int(oid) not in weighted_ids]
+    if not items and not extra_zero_ids:
+        raise ValueError("No offers to attach")
+    offers: List[Dict[str, Any]] = []
+    if items:
+        weights = [w for _, w in items]
+        shares = _shares_from_weights(weights)
+        offer_ids = [oid for oid, _ in items]
+        for oid, share in zip(offer_ids, shares):
+            offers.append({"offer_id": oid, "state": "active", "share": share})
+    for oid in sorted(set(extra_zero_ids)):
+        offers.append({"offer_id": oid, "state": "active", "share": 0})
+    return client.update_stream(stream_id, {"offers": offers})
+
+
 def flow_name_to_geo(flow_name: str) -> Optional[str]:
     """Return geo code for a flow name (e.g. Spain -> es, or es -> es). Uses GEO_LABELS."""
     try:
@@ -647,3 +746,4 @@ if __name__ == "__main__":
     else:
         campaigns = get_campaigns_data()
         print(json.dumps({"campaigns": campaigns, "count": len(campaigns)}, indent=2))
+

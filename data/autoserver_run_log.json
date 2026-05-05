@@ -1,0 +1,10 @@
+[
+  {
+    "automation": "BlendSync2h",
+    "triggered_by": "manual",
+    "started_at": "2026-05-05T09:40:22Z",
+    "finished_at": "2026-05-05T09:41:39Z",
+    "status": "success",
+    "error": null
+  }
+]
