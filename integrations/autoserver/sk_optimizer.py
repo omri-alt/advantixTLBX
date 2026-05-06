@@ -27,6 +27,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
@@ -80,6 +81,8 @@ HEADERS_WL = [
     "lastAction",
     "logs",
 ]
+
+_BID_DECAY_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_bidfactor_decay_state.json"
 
 
 def _utc_today() -> str:
@@ -258,6 +261,183 @@ def _sk_aggregate_clicks_by_subid(campaign_id: int, d0: str, d1: str) -> Tuple[D
     return clicks, None
 
 
+def _to_float(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_100_winrate(v: Any) -> bool:
+    """
+    Accept common formats from SK stats:
+      - 100 / 100.0
+      - 1 / 1.0
+      - "100", "100%", "1", "1.0"
+    """
+    if isinstance(v, str):
+        s = v.strip().replace("%", "")
+        f = _to_float(s, default=-1.0)
+    else:
+        f = _to_float(v, default=-1.0)
+    if f < 0:
+        return False
+    return abs(f - 100.0) < 1e-9 or abs(f - 1.0) < 1e-9
+
+
+def _load_bid_decay_state() -> Dict[str, str]:
+    p = _BID_DECAY_STATE_PATH
+    try:
+        if not p.exists():
+            return {}
+        data = json.loads(p.read_text(encoding="utf-8") or "{}")
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items()}
+    except Exception as e:
+        logger.warning("SK bid-decay state read failed: %s", e)
+    return {}
+
+
+def _save_bid_decay_state(state: Dict[str, str]) -> None:
+    # Keep only recent days to avoid unbounded growth.
+    keep_after = (datetime.now(timezone.utc).date() - timedelta(days=21)).strftime("%Y-%m-%d")
+    pruned: Dict[str, str] = {}
+    for k, v in state.items():
+        parts = str(k).split("|", 2)
+        if len(parts) != 3:
+            continue
+        d = parts[0]
+        if d >= keep_after:
+            pruned[k] = v
+    p = _BID_DECAY_STATE_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(pruned, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _stats_items_by_subid_today(campaign_id: int, d0: str, d1: str) -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
+    """
+    Aggregate clicks and keep latest bidFactor / winRate for each subId in [d0..d1].
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    page = 1
+    while True:
+        data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
+        if err:
+            return {}, err
+        if not isinstance(data, dict):
+            return {}, "bad json"
+        items = data.get("items") or []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            sid = str(it.get("subId") or "").strip()
+            if not sid:
+                continue
+            clicks = int(_to_float(it.get("clicks"), default=0.0))
+            prev = out.get(sid) or {"clicks": 0, "winRate": None, "bidFactor": None}
+            prev["clicks"] = int(prev.get("clicks") or 0) + max(0, clicks)
+            if it.get("winRate") is not None:
+                prev["winRate"] = it.get("winRate")
+            if it.get("bidFactor") is not None:
+                prev["bidFactor"] = _to_float(it.get("bidFactor"), default=1.0)
+            out[sid] = prev
+        if not data.get("hasMore"):
+            break
+        page += 1
+        if page > 500:
+            logger.warning("SK stats pagination cap hit for campaign %s", campaign_id)
+            break
+    return out, None
+
+
+def _apply_slow_exploration_bid_decay_once_daily(
+    campaign_id: int,
+    wl: List[str],
+    today: str,
+    campaign_name: str,
+) -> Tuple[int, int]:
+    """
+    For non-WL sources with today's clicks, <30 clicks, 100% winRate:
+    reduce bidFactor to (current_bidFactor * 0.5), once per source per campaign per day.
+    Returns (updated_ok, failed_updates).
+    """
+    per_sub, err = _stats_items_by_subid_today(campaign_id, today, today)
+    if err:
+        logger.warning("SK exploration bid-decay stats unavailable for %s: %s", campaign_id, err)
+        _sk_tools_workbook_log(
+            campaign_id,
+            campaign_name,
+            "SK exploration: bid-decay stats skipped",
+            {"error": err, "from": today, "to": today},
+        )
+        return 0, 0
+
+    state = _load_bid_decay_state()
+    ok = 0
+    failed = 0
+    for sid, info in per_sub.items():
+        clicks = int(info.get("clicks") or 0)
+        if clicks <= 0 or clicks >= 30:
+            continue
+        if sid in wl:
+            continue
+        if not _is_100_winrate(info.get("winRate")):
+            continue
+
+        lock_key = f"{today}|{campaign_id}|{sid}"
+        if lock_key in state:
+            continue
+
+        cur_bf = _to_float(info.get("bidFactor"), default=1.0)
+        if cur_bf <= 0:
+            continue
+        new_bf = round(cur_bf * 0.5, 4)
+        if new_bf <= 0:
+            continue
+
+        try:
+            r = sk.post_bid_factor(campaign_id, sid, new_bf)
+            if r.status_code == 200:
+                state[lock_key] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                ok += 1
+                _sk_tools_workbook_log(
+                    campaign_id,
+                    campaign_name,
+                    f"SK exploration: bid-decay source {sid}",
+                    {
+                        "clicks_today": clicks,
+                        "winRate_today": info.get("winRate"),
+                        "old_bidFactor": cur_bf,
+                        "new_bidFactor": new_bf,
+                    },
+                )
+            else:
+                failed += 1
+                _sk_tools_workbook_log(
+                    campaign_id,
+                    campaign_name,
+                    f"SK exploration: bid-decay failed for source {sid}",
+                    {
+                        "status_code": r.status_code,
+                        "response": (r.text or "")[:300],
+                        "old_bidFactor": cur_bf,
+                        "new_bidFactor": new_bf,
+                    },
+                )
+        except Exception as e:
+            failed += 1
+            logger.exception("SK bid-decay exception %s %s: %s", campaign_id, sid, e)
+            _sk_tools_workbook_log(
+                campaign_id,
+                campaign_name,
+                f"SK exploration: bid-decay exception for source {sid}",
+                str(e),
+            )
+
+    _save_bid_decay_state(state)
+    return ok, failed
+
+
 def _sk_yesterday_spend_total(campaign_id: int) -> Tuple[float, Optional[str]]:
     y = _utc_yesterday()
     total = 0.0
@@ -377,6 +557,8 @@ def checkUnmonExploration_SK() -> None:
     processed_rows = 0
     blacklisted_ok_total = 0
     blacklisted_fail_total = 0
+    bid_decay_ok_total = 0
+    bid_decay_fail_total = 0
     for row in rows:
         cid_raw = row.get("campaignId") or row.get("campId")
         if not str(cid_raw or "").strip():
@@ -408,6 +590,23 @@ def checkUnmonExploration_SK() -> None:
         did_blacklist = False
         cname_expl = str(camp_json.get("name") or "") if isinstance(camp_json, dict) else ""
         if _row_active(row):
+            dec_ok, dec_fail = _apply_slow_exploration_bid_decay_once_daily(cid, wl, today, cname_expl)
+            if dec_ok or dec_fail:
+                bid_decay_ok_total += dec_ok
+                bid_decay_fail_total += dec_fail
+                changed = True
+                if dec_ok:
+                    row["lastAction"] = "bid-decay"
+                    row["logs"] = _append_logs_cell(
+                        row.get("logs", ""),
+                        f"bid-decay applied to {dec_ok} source(s) today (100% winRate, <30 clicks, non-WL)",
+                    )
+                if dec_fail:
+                    row["logs"] = _append_logs_cell(
+                        row.get("logs", ""),
+                        f"bid-decay failed for {dec_fail} source(s)",
+                    )
+
             stats_start = _sk_stats_start_date(camp_json)
             clicks_map, err = _sk_aggregate_clicks_by_subid(cid, stats_start, today)
             if err:
@@ -495,6 +694,8 @@ def checkUnmonExploration_SK() -> None:
         "SK exploration run summary",
         {
             "rows_processed": processed_rows,
+            "sources_bid_decayed": bid_decay_ok_total,
+            "sources_bid_decay_failed": bid_decay_fail_total,
             "sources_blacklisted": blacklisted_ok_total,
             "sources_blacklist_failed": blacklisted_fail_total,
             "date_utc": today,
