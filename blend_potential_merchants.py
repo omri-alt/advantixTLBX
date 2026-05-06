@@ -41,6 +41,7 @@ from config import (
 )
 from workflows.kelkoo_daily import download_merchants_feed, REPORTS_AGGREGATED_URL, _headers
 from integrations.kelkoo_search import kelkoo_merchant_link_check, format_kelkoo_monetization_status
+from integrations.monetization_geo import geo_for_yadore
 
 BLEND_SPREADSHEET_ID = BLEND_SHEETS_SPREADSHEET_ID
 
@@ -289,6 +290,31 @@ def run_potential_yadore(
         parse_conversion_detail_merchant_rows,
     )
 
+    def _is_yadore_monetized_probe(resp: Dict[str, Any]) -> bool:
+        """
+        Yadore can signal monetization in different fields depending on endpoint version.
+        Treat as monetized when any positive signal is present.
+        """
+        if not isinstance(resp, dict):
+            return False
+        if bool(resp.get("found")) or bool(resp.get("root_found")):
+            return True
+        if str(resp.get("clickUrl") or "").strip():
+            return True
+        return False
+
+    def _domain_fallback_from_name(name: str) -> str:
+        """
+        Yadore conversion/detail/merchant may omit merchant URL.
+        If merchant_name looks like a bare domain, use it as probe target.
+        """
+        n = (name or "").strip().lower()
+        if not n or " " in n or "/" in n:
+            return ""
+        if "." not in n:
+            return ""
+        return n
+
     markets = [str(m).strip().lower()[:2] for m in (YADORE_REPORT_DETAIL_MARKETS or []) if str(m).strip()]
     merged: List[Dict[str, Any]] = []
     try:
@@ -345,6 +371,8 @@ def run_potential_yadore(
             continue
         name = (rec.get("name") or "").strip() or mid
         domain = (rec.get("url") or "").strip()
+        if not domain:
+            domain = _domain_fallback_from_name(name)
         tier = "Flex"
         if not domain:
             monetization = "no_merchant_url"
@@ -352,8 +380,9 @@ def run_potential_yadore(
             checked += 1
             url_norm = domain if domain.lower().startswith("http") else f"https://{domain.lstrip('/')}"
             try:
-                d = deeplink(url_norm, geo)
-                monetization = "monetized_yadore" if d.get("found") else "not_monetized_yadore"
+                market = geo_for_yadore(geo)
+                d = deeplink(url_norm, market)
+                monetization = "monetized_yadore" if _is_yadore_monetized_probe(d) else "not_monetized_yadore"
             except YadoreClientError as e:
                 monetization = f"not_monetized_yadore:{e}"
         is_monetized = monetization.startswith("monetized")

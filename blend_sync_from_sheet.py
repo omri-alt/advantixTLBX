@@ -383,8 +383,11 @@ def _filter_and_delete_non_monetized_auto_rows(
 
         brand = get_cell(row, "brandName")
         url = get_cell(row, "offerUrl")
-        feed_tag = (get_cell(row, "feed") or "kelkoo1").strip().lower()
+        feed_tag = (get_cell(row, "feed") or "").strip().lower()
         if not brand or not url:
+            continue
+        if not feed_tag:
+            # Safety: do not run a default Kelkoo gate when feed is unspecified.
             continue
 
         api_key = _kelkoo_api_key_for_feed_tag(feed_tag)
