@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -83,6 +84,7 @@ HEADERS_WL = [
 ]
 
 _BID_DECAY_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_bidfactor_decay_state.json"
+_SK_TOOLS_LOG_DISABLED_UNTIL: Optional[datetime] = None
 
 
 def _utc_today() -> str:
@@ -375,6 +377,8 @@ def _apply_slow_exploration_bid_decay_once_daily(
     state = _load_bid_decay_state()
     ok = 0
     failed = 0
+    changed_sources: List[str] = []
+    failed_sources: List[str] = []
     for sid, info in per_sub.items():
         clicks = int(info.get("clicks") or 0)
         if clicks <= 0 or clicks >= 30:
@@ -396,45 +400,45 @@ def _apply_slow_exploration_bid_decay_once_daily(
             continue
 
         try:
-            r = sk.post_bid_factor(campaign_id, sid, new_bf)
-            if r.status_code == 200:
+            wait_s = 0.7
+            r = None
+            for _attempt in range(4):
+                r = sk.post_bid_factor(campaign_id, sid, new_bf)
+                if r.status_code == 200:
+                    break
+                if r.status_code == 429:
+                    time.sleep(wait_s)
+                    wait_s = min(wait_s * 2.0, 6.0)
+                    continue
+                break
+            if r is not None and r.status_code == 200:
                 state[lock_key] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 ok += 1
-                _sk_tools_workbook_log(
-                    campaign_id,
-                    campaign_name,
-                    f"SK exploration: bid-decay source {sid}",
-                    {
-                        "clicks_today": clicks,
-                        "winRate_today": info.get("winRate"),
-                        "old_bidFactor": cur_bf,
-                        "new_bidFactor": new_bf,
-                    },
-                )
+                if len(changed_sources) < 20:
+                    changed_sources.append(sid)
             else:
                 failed += 1
-                _sk_tools_workbook_log(
-                    campaign_id,
-                    campaign_name,
-                    f"SK exploration: bid-decay failed for source {sid}",
-                    {
-                        "status_code": r.status_code,
-                        "response": (r.text or "")[:300],
-                        "old_bidFactor": cur_bf,
-                        "new_bidFactor": new_bf,
-                    },
-                )
+                if len(failed_sources) < 20:
+                    failed_sources.append(sid)
         except Exception as e:
             failed += 1
             logger.exception("SK bid-decay exception %s %s: %s", campaign_id, sid, e)
-            _sk_tools_workbook_log(
-                campaign_id,
-                campaign_name,
-                f"SK exploration: bid-decay exception for source {sid}",
-                str(e),
-            )
+            if len(failed_sources) < 20:
+                failed_sources.append(sid)
 
     _save_bid_decay_state(state)
+    if ok or failed:
+        _sk_tools_workbook_log(
+            campaign_id,
+            campaign_name,
+            "SK exploration: bid-decay summary",
+            {
+                "updated_ok": ok,
+                "failed_updates": failed,
+                "updated_sample_subIds": changed_sources,
+                "failed_sample_subIds": failed_sources,
+            },
+        )
     return ok, failed
 
 
@@ -509,16 +513,25 @@ def _sk_tools_workbook_log(
     response: Any = "",
 ) -> None:
     """Append one row to the SK tools workbook ``logs`` tab (shared with bulk opener)."""
+    global _SK_TOOLS_LOG_DISABLED_UNTIL
     sid = (SK_TOOLS_SPREADSHEET_ID or "").strip()
     if not sid:
         return
-    append_exploration_log_row(
-        sid,
-        camp_id=str(camp_id or ""),
-        camp_name=str(camp_name or ""),
-        verify=str(verify or "")[:4000],
-        response=response,
-    )
+    now = datetime.now(timezone.utc)
+    if _SK_TOOLS_LOG_DISABLED_UNTIL and now < _SK_TOOLS_LOG_DISABLED_UNTIL:
+        return
+    try:
+        append_exploration_log_row(
+            sid,
+            camp_id=str(camp_id or ""),
+            camp_name=str(camp_name or ""),
+            verify=str(verify or "")[:4000],
+            response=response,
+        )
+    except Exception as e:
+        msg = str(e)
+        if "429" in msg or "Quota exceeded" in msg or "Rate Limit" in msg:
+            _SK_TOOLS_LOG_DISABLED_UNTIL = now + timedelta(minutes=2)
 
 
 def _blacklist_sources_sk(campaign_id: int, sub_ids: List[str]) -> List[str]:
@@ -526,9 +539,24 @@ def _blacklist_sources_sk(campaign_id: int, sub_ids: List[str]) -> List[str]:
     failed: List[str] = []
     for sid in sub_ids:
         try:
-            r = sk.post_bid_factor(campaign_id, sid, 0.0)
-            if r.status_code != 200:
-                logger.error("SK bid-factor 0 failed %s %s: %s %s", campaign_id, sid, r.status_code, (r.text or "")[:200])
+            wait_s = 0.7
+            ok = False
+            last_status = None
+            last_body = ""
+            for _attempt in range(4):
+                r = sk.post_bid_factor(campaign_id, sid, 0.0)
+                last_status = r.status_code
+                last_body = (r.text or "")[:200]
+                if r.status_code == 200:
+                    ok = True
+                    break
+                if r.status_code == 429:
+                    time.sleep(wait_s)
+                    wait_s = min(wait_s * 2.0, 6.0)
+                    continue
+                break
+            if not ok:
+                logger.error("SK bid-factor 0 failed %s %s: %s %s", campaign_id, sid, last_status, last_body)
                 failed.append(sid)
         except Exception as e:
             logger.exception("SK bid-factor exception %s %s: %s", campaign_id, sid, e)

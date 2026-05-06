@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from integrations.autoserver import gdocs_as as gd
 
 logger = logging.getLogger(__name__)
+_ENSURED_LOG_TABS: set[str] = set()
+_LOG_WRITE_DISABLED_UNTIL: Dict[str, float] = {}
 
 LOG_TAB = "logs"
 LOG_HEADERS = ["campId", "campName", "verify", "date", "response"]
@@ -45,30 +48,48 @@ def append_exploration_log_row(
     verify: str,
     response: Any = "",
 ) -> None:
-    """Append one row to ``logs`` (creates tab + headers if missing)."""
+    """Append one row to ``logs`` (creates tab + headers if missing).
+
+    Durable mode: append directly (no full-sheet read + rewrite) with light retry on
+    transient quota/rate failures.
+    """
     sid = (spreadsheet_id or "").strip()
     if not sid:
         return
     try:
-        ensure_logs_worksheet(sid)
-        rows = gd.read_sheet_withID(sid, LOG_TAB)
+        if sid not in _ENSURED_LOG_TABS:
+            ensure_logs_worksheet(sid)
+            _ENSURED_LOG_TABS.add(sid)
     except Exception as e:
         logger.warning("exploration logs read failed (%s): %s", sid[:12], e)
         return
     date_s = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    rows.append(
-        {
-            "campId": str(camp_id or ""),
-            "campName": str(camp_name or ""),
-            "verify": str(verify or "")[:4000],
-            "date": date_s,
-            "response": _fmt_response(response),
-        }
-    )
-    try:
-        gd.create_or_update_sheet_from_dicts_withID(sid, LOG_TAB, rows)
-    except Exception as e:
-        logger.warning("exploration logs write failed (%s): %s", sid[:12], e)
+    row = [
+        str(camp_id or ""),
+        str(camp_name or ""),
+        str(verify or "")[:4000],
+        date_s,
+        _fmt_response(response),
+    ]
+    now_ts = time.time()
+    if _LOG_WRITE_DISABLED_UNTIL.get(sid, 0.0) > now_ts:
+        return
+    wait_s = 0.6
+    for attempt in range(3):
+        try:
+            ws = gd.client.open_by_key(sid).worksheet(LOG_TAB)
+            ws.append_row(row, value_input_option="USER_ENTERED")
+            return
+        except Exception as e:
+            msg = str(e)
+            if ("429" in msg or "Quota exceeded" in msg or "Rate Limit" in msg) and attempt < 2:
+                time.sleep(wait_s)
+                wait_s *= 2.0
+                continue
+            if "429" in msg or "Quota exceeded" in msg or "Rate Limit" in msg:
+                _LOG_WRITE_DISABLED_UNTIL[sid] = time.time() + 120.0
+            logger.warning("exploration logs write failed (%s): %s", sid[:12], e)
+            return
 
 
 def fetch_log_tail(spreadsheet_id: str, *, limit: int = 100) -> List[Dict[str, str]]:
