@@ -22,5 +22,13 @@
     "finished_at": "2026-05-06T13:12:52Z",
     "status": "success",
     "error": null
+  },
+  {
+    "automation": "NipuhimUnmonRepair",
+    "triggered_by": "manual",
+    "started_at": "2026-05-06T16:44:01Z",
+    "finished_at": "2026-05-06T16:44:39Z",
+    "status": "success",
+    "error": null
   }
 ]

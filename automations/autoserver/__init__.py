@@ -44,6 +44,11 @@ AUTOMATION_SPECS: List[Dict[str, str]] = [
         "label": "Blend sheet → Keitaro sync (monetization + weights)",
         "schedule": "Every 2 hours (even hours)",
     },
+    {
+        "class_name": "NipuhimUnmonRepair",
+        "label": "Nipuhim monetization repair (PLA + Keitaro)",
+        "schedule": "Every 2 hours (odd hours)",
+    },
 ]
 
 
@@ -53,6 +58,7 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.klfix_optimize import KLFIXoptimize
     from automations.autoserver.klwl import KLWL
     from automations.autoserver.mehilot_auto import MehilotAuto
+    from automations.autoserver.nipuhim_unmon_repair import NipuhimUnmonRepair
     from automations.autoserver.pause_unmon_sk import PauseUnmonSK
     from automations.autoserver.quality_wl import QualityWL
     from automations.autoserver.sk_exploration_optimizer import SKExplorationOptimizer
@@ -65,3 +71,4 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     register_func(QualityWL())
     register_func(CloseNipuhimAuto())
     register_func(BlendSync2h())
+    register_func(NipuhimUnmonRepair())
