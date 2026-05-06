@@ -208,7 +208,45 @@ def main():
         print("No data found in sheet (columns A = country, D = Store Link).")
         sys.exit(0)
 
+    def _paired_sheet_name_for_split(current_sheet: str) -> str:
+        """
+        Best-effort mirror tab name for the other feed on the same date.
+        Examples:
+          2026-05-06_offers_1 <-> 2026-05-06_offers_2
+          2026-05-06_offers_2 <-> 2026-05-06_offers_1
+        """
+        s = (current_sheet or "").strip()
+        if s.endswith("_offers_1"):
+            return s[:-1] + "2"
+        if s.endswith("_offers_2"):
+            return s[:-1] + "1"
+        return ""
+
+    # In "both" mode, only split traffic on geos that are present on BOTH feeds today.
+    # This prevents stale historic offers from the other feed from stealing 20% traffic
+    # on geos where today's run produced rows for one feed only.
+    split_geos_both: set[str] = set()
+    if traffic_mode == "both":
+        peer_sheet = _paired_sheet_name_for_split(sheet_name)
+        if peer_sheet:
+            try:
+                peer_by_geo, _ = read_sheet_today_offers(peer_sheet, max_per_geo=max_offers)
+                split_geos_both = {g.lower()[:2] for g in peer_by_geo.keys() if len((g or "").strip()) >= 2}
+            except Exception as e:
+                print(f"Warning: could not read paired offers sheet {peer_sheet!r} for split geos: {e}")
+                split_geos_both = set()
+        else:
+            print(
+                "Warning: could not infer paired offers sheet name for feed split; "
+                "defaulting to feed-only routing on geos without explicit peer rows."
+            )
+
     print(f"Geos in sheet: {list(by_geo.keys())}")
+    if traffic_mode == "both":
+        if split_geos_both:
+            print(f"Both-feed split geos from paired sheet: {sorted(split_geos_both)}")
+        else:
+            print("Both-feed split geos from paired sheet: none (single-feed routing for all geos in this run)")
     print()
 
     def feed_offer_ids_for_geo(geo: str):
@@ -222,6 +260,12 @@ def main():
         if traffic_mode == "feed1-only":
             return ids1, []
         if traffic_mode == "feed2-only":
+            return [], ids2
+        # "both": only split where the paired sheet has this geo in today's rows.
+        g = (geo or "").strip().lower()[:2]
+        if g not in split_geos_both:
+            if account == 1:
+                return ids1, []
             return [], ids2
         return ids1, ids2
 
