@@ -32,16 +32,40 @@ def campaign_details(id):
   return r.json()
 
 
+def _campaigns_data_domain(interval: str, page_size: int = 100) -> list:
+  """
+  Fetch Zeropark campaign-domain stats with pagination.
+  Old code read only page=0 (first 100 rows), so some geos/campaigns (e.g. UK/GB)
+  were never seen by pause automations.
+  """
+  out = []
+  page = 0
+  while True:
+    endpoint = (
+        "https://panel.zeropark.com/api/stats/campaign/domain"
+        f"?interval={interval}&page={page}&limit={page_size}&tagIdsFilter=ANY_OF"
+    )
+    r = requests.get(endpoint, headers=headers, timeout=45)
+    if r.status_code != 200:
+      raise RuntimeError(f"ZP stats API {r.status_code} for interval={interval} page={page}: {r.text[:300]}")
+    payload = r.json() if r.text else {}
+    elems = payload.get('elements') or []
+    if not elems:
+      break
+    out.extend(elems)
+    # Stop when we got less than page size; otherwise next page.
+    if len(elems) < page_size:
+      break
+    page += 1
+  return out
+
+
 def campaigns_data_domainYest():
-  endpoint2 = "https://panel.zeropark.com/api/stats/campaign/domain?interval=YESTERDAY&page=0&limit=100&tagIdsFilter=ANY_OF"
-  r = requests.get(endpoint2, headers=headers)
-  return r.json()['elements']
+  return _campaigns_data_domain("YESTERDAY")
 
 
 def campaigns_data_domainToday():
-  endpoint2 = "https://panel.zeropark.com/api/stats/campaign/domain?interval=TODAY&page=0&limit=100&tagIdsFilter=ANY_OF"
-  r = requests.get(endpoint2, headers=headers)
-  return r.json()['elements']
+  return _campaigns_data_domain("TODAY")
 
 
 #13.07 campaign_details('f43bb1d0-4da9-11f0-aa2b-12df15f19bdf')
@@ -797,10 +821,14 @@ def pause_generalMehila():
   data = campaigns_data_domainToday()
   #generalMehilas = [ ]
   for element in data:
-    if element['details']['name'].split('-')[0] == 'generalMehila':
-      pause_campaign(element['details']['id'])
-      #generalMehilas.append(element['details'])
-      print(f"paused campaign {element['details']['name']}")
+    try:
+      name = str(element['details']['name'])
+      if name.split('-')[0] == 'generalMehila':
+        pause_campaign(element['details']['id'])
+        #generalMehilas.append(element['details'])
+        print(f"paused campaign {name}")
+    except Exception as e:
+      print(f"warning: skip campaign row during pause_generalMehila: {e}")
 # 4/11/25 - function pauses all generalMehila campaigns that passed 1500 redirects today running every hour with mehilot dashboard
 def pause_generalMehila2k():
   data = campaigns_data_domainToday()
