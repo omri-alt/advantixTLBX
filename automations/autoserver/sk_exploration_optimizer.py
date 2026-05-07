@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -26,5 +27,39 @@ class SKExplorationOptimizer(BaseAutomation):
 
     def _execute(self) -> None:
         logger.info("Executing SKExplorationOptimizer")
-        sk_optimizer.checkUnmonExploration_SK()
-        sk_optimizer.checkUnmonWL_SK()
+        errors: list[str] = []
+
+        def _run_with_retry(label: str, fn) -> None:
+            wait_s = 2.0
+            for attempt in range(3):
+                try:
+                    fn()
+                    return
+                except Exception as e:
+                    msg = str(e)
+                    transient = (
+                        "429" in msg
+                        or "Quota exceeded" in msg
+                        or "Rate Limit" in msg
+                        or "timeout" in msg.lower()
+                    )
+                    if transient and attempt < 2:
+                        logger.warning(
+                            "SKExplorationOptimizer %s transient failure (attempt %s/3): %s",
+                            label,
+                            attempt + 1,
+                            e,
+                        )
+                        time.sleep(wait_s)
+                        wait_s *= 2.0
+                        continue
+                    logger.error("SKExplorationOptimizer %s failed: %s", label, e)
+                    errors.append(f"{label}: {e}")
+                    return
+
+        _run_with_retry("exploration", sk_optimizer.checkUnmonExploration_SK)
+        _run_with_retry("wl", sk_optimizer.checkUnmonWL_SK)
+
+        if errors:
+            # Keep scheduler run green for partial progress; details stay in app logs.
+            logger.warning("SKExplorationOptimizer completed with non-fatal errors: %s", " | ".join(errors))

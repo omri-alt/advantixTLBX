@@ -9,9 +9,14 @@ def pause_Unmonetized_KL():
   completed = []
   paused = []
   for adv in raw_adv_list[0:]:  #for each advertiser in the list
-    namelst = adv['name'].split('-')  #split the name of each advertiser to a list
+    name_raw = str(adv.get('name') or '')
+    namelst = name_raw.split('-')  #split the name of each advertiser to a list
+    if len(namelst) < 2:
+      continue
     geo = namelst[-2].lower()  #extract the geo out of the adv name
-    advid = adv['id']  #extract the SK adv id
+    advid = adv.get('id')  #extract the SK adv id
+    if not advid:
+      continue
     campaigns = sk.get_campaignsByAdvid(advid)  #get all campaigns out of the adv    
     cond = ['KL', 'KLFIX']  #condition defenition
     if len(campaigns) > 0 and (namelst[-1] in cond):  #if the adv have campaigns and aff in condition
@@ -31,6 +36,7 @@ def pause_Unmonetized_KL():
               hpIndEnd = data['trackingUrl'][hpind:].find('&')
             except:
               print("stil error!!!!!!!!")
+              continue
           if hpIndEnd == -1:
             hpIndEnd = len(data['trackingUrl'][hpind:])
           hp = data['trackingUrl'][hpind:hpind + hpIndEnd]  #extract hp (starts from the first index, and stops at the hpIndEnd indeX (which is comparded to the hpind index)
