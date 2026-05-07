@@ -2,7 +2,7 @@
 Traffic-source spend for the overview dashboard (Zeropark, SourceKnowledge, Ecomnia).
 
 Uses account-level APIs for Zeropark / Ecomnia; SourceKnowledge falls back to per-campaign
-``by-publisher`` only when no aggregate URL is configured — **inactive** list rows are skipped.
+``by-publisher`` only when no aggregate URL is configured.
 
 Each public ``fetch_*`` returns::
 
@@ -250,8 +250,9 @@ def _sk_get_aggregate_spend(api_key: str, d0: str, d1: str) -> Optional[float]:
 
 def _sk_list_campaign_ids_paginated(api_key: str) -> List[int]:
     """
-    Active campaigns only: skip ``active: false`` (paused / inactive in list API) and any IDs
-    listed in ``runtime/sk_overview_skip_campaign_ids.json`` when present.
+    Campaign IDs from list API pages (active + inactive). We include paused/inactive campaigns
+    because they may have spend inside the selected date range.
+    IDs explicitly listed in ``runtime/sk_overview_skip_campaign_ids.json`` are still excluded.
     """
     headers = _sk_headers(api_key)
     extra_skip = _sk_skip_ids_from_file()
@@ -283,8 +284,6 @@ def _sk_list_campaign_ids_paginated(api_key: str) -> List[int]:
             break
         for it in items:
             if not isinstance(it, dict) or it.get("id") is None:
-                continue
-            if it.get("active") is False:
                 continue
             try:
                 cid = int(it["id"])
@@ -346,8 +345,8 @@ def _sk_apply_campaign_cap(cids: List[int]) -> tuple[List[int], Optional[str]]:
     if cap <= 0 or len(cids) <= cap:
         return cids, None
     msg = (
-        f"SK spend sampled from {cap} of {len(cids)} active campaigns "
-        "(inactive/archived are skipped; set SK_OVERVIEW_MAX_CAMPAIGNS=0 for no cap, or SK_ACCOUNT_STATS_URL)."
+        f"SK spend sampled from {cap} of {len(cids)} campaigns "
+        "(set SK_OVERVIEW_MAX_CAMPAIGNS=0 for no cap, or SK_ACCOUNT_STATS_URL)."
     )
     return cids[:cap], msg
 
