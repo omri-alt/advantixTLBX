@@ -62,6 +62,7 @@ HEADERS_EXPLORATION = [
     "geo",
     "monUrl",
     "monNetwork",
+    "skipUnmon",
     "wl",
     "status",
     "budgetReachedYesterday",
@@ -77,6 +78,7 @@ HEADERS_WL = [
     "geo",
     "monUrl",
     "monNetwork",
+    "skipUnmon",
     "status",
     "budgetReachedYesterday",
     "lastMonCheck",
@@ -570,6 +572,22 @@ def _row_active(row: Dict[str, Any]) -> bool:
     return str(row.get("status") or "").strip().lower() == "active"
 
 
+def _is_truthy_cell(v: Any) -> bool:
+    s = str(v or "").strip().lower()
+    return s in ("1", "true", "yes", "y", "on")
+
+
+def _row_skip_unmon(row: Dict[str, Any]) -> bool:
+    """
+    Per-row operator override from sheet. Accept common header variants.
+    """
+    return (
+        _is_truthy_cell(row.get("skipUnmon"))
+        or _is_truthy_cell(row.get("skip_unmon"))
+        or _is_truthy_cell(row.get("skip unmon"))
+    )
+
+
 def checkUnmonExploration_SK() -> None:
     sheet_id = (SK_OPTIMIZER_SHEET_ID or "").strip()
     if not sheet_id:
@@ -615,11 +633,11 @@ def checkUnmonExploration_SK() -> None:
         changed = True
         processed_rows += 1
 
-        skip_unmon_pause = cid in _SK_UNMON_SKIP_CAMPAIGN_ID_SET
+        skip_unmon_pause = (cid in _SK_UNMON_SKIP_CAMPAIGN_ID_SET) or _row_skip_unmon(row)
         if skip_unmon_pause:
             row["logs"] = _append_logs_cell(
                 row.get("logs", ""),
-                f"unmon pause skipped by config for campaign {cid}",
+                f"unmon pause skipped (skipUnmon/config) for campaign {cid}",
             )
             row["lastAction"] = "unmon-skip-config"
             changed = True
@@ -783,11 +801,11 @@ def checkUnmonWL_SK() -> None:
         if not _row_active(row):
             continue
 
-        skip_unmon_pause = cid in _SK_UNMON_SKIP_CAMPAIGN_ID_SET
+        skip_unmon_pause = (cid in _SK_UNMON_SKIP_CAMPAIGN_ID_SET) or _row_skip_unmon(row)
         if skip_unmon_pause:
             row["logs"] = _append_logs_cell(
                 row.get("logs", ""),
-                f"unmon pause skipped by config for campaign {cid}",
+                f"unmon pause skipped (skipUnmon/config) for campaign {cid}",
             )
             row["lastAction"] = "unmon-skip-config"
             changed = True
