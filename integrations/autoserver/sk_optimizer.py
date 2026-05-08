@@ -39,6 +39,7 @@ from config import (
     FEED1_API_KEY,
     FEED2_API_KEY,
     SK_OPTIMIZER_SHEET_ID,
+    SK_UNMON_SKIP_CAMPAIGN_IDS,
     SK_TOOLS_SPREADSHEET_ID,
 )
 from integrations.adexa import AdexaClientError, links_merchant_check
@@ -85,6 +86,7 @@ HEADERS_WL = [
 
 _BID_DECAY_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_bidfactor_decay_state.json"
 _SK_TOOLS_LOG_DISABLED_UNTIL: Optional[datetime] = None
+_SK_UNMON_SKIP_CAMPAIGN_ID_SET = {int(x) for x in (SK_UNMON_SKIP_CAMPAIGN_IDS or ())}
 
 
 def _utc_today() -> str:
@@ -613,6 +615,15 @@ def checkUnmonExploration_SK() -> None:
         changed = True
         processed_rows += 1
 
+        skip_unmon_pause = cid in _SK_UNMON_SKIP_CAMPAIGN_ID_SET
+        if skip_unmon_pause:
+            row["logs"] = _append_logs_cell(
+                row.get("logs", ""),
+                f"unmon pause skipped by config for campaign {cid}",
+            )
+            row["lastAction"] = "unmon-skip-config"
+            changed = True
+
         wl = _parse_wl(row.get("wl"))
 
         did_blacklist = False
@@ -685,34 +696,35 @@ def checkUnmonExploration_SK() -> None:
                     )
                     changed = True
 
-            mon_url = _resolve_mon_url(row, camp_json if isinstance(camp_json, dict) else None)
-            geo = str(row.get("geo") or "").strip()
-            net = row.get("monNetwork") or ""
-            mon_ok, err_t = _monetization_for_network(str(net), mon_url, geo)
-            row["lastMonCheck"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            changed = True
-            if err_t == "error":
-                logger.warning("SK monetization inconclusive; not pausing %s", cid)
-                row["logs"] = _append_logs_cell(row.get("logs", ""), "mon check inconclusive (network error)")
-                row["lastAction"] = "mon-skip"
-                _sk_tools_workbook_log(
-                    cid, cname_expl, "SK exploration: monetization check inconclusive", f"net={net}"
-                )
-            elif mon_ok is False:
-                try:
-                    sk.pause_campaign(cid)
-                    row["status"] = "paused-unmon"
-                    msg = f"Paused SK campaign {cid} (unmonetized, monNetwork={net})"
-                    logger.info(msg)
-                    row["logs"] = _append_logs_cell(row.get("logs", ""), msg)
-                    row["lastAction"] = "pause-unmon"
-                    _sk_tools_workbook_log(cid, cname_expl, "SK exploration: paused (unmonetized)", msg)
-                except Exception as e:
-                    logger.error("pause_campaign %s: %s", cid, e)
-                    row["logs"] = _append_logs_cell(row.get("logs", ""), f"pause error: {e}")
-                    _sk_tools_workbook_log(cid, cname_expl, "SK exploration: pause error", str(e))
-            elif not did_blacklist:
-                row["lastAction"] = "ok"
+            if not skip_unmon_pause:
+                mon_url = _resolve_mon_url(row, camp_json if isinstance(camp_json, dict) else None)
+                geo = str(row.get("geo") or "").strip()
+                net = row.get("monNetwork") or ""
+                mon_ok, err_t = _monetization_for_network(str(net), mon_url, geo)
+                row["lastMonCheck"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                changed = True
+                if err_t == "error":
+                    logger.warning("SK monetization inconclusive; not pausing %s", cid)
+                    row["logs"] = _append_logs_cell(row.get("logs", ""), "mon check inconclusive (network error)")
+                    row["lastAction"] = "mon-skip"
+                    _sk_tools_workbook_log(
+                        cid, cname_expl, "SK exploration: monetization check inconclusive", f"net={net}"
+                    )
+                elif mon_ok is False:
+                    try:
+                        sk.pause_campaign(cid)
+                        row["status"] = "paused-unmon"
+                        msg = f"Paused SK campaign {cid} (unmonetized, monNetwork={net})"
+                        logger.info(msg)
+                        row["logs"] = _append_logs_cell(row.get("logs", ""), msg)
+                        row["lastAction"] = "pause-unmon"
+                        _sk_tools_workbook_log(cid, cname_expl, "SK exploration: paused (unmonetized)", msg)
+                    except Exception as e:
+                        logger.error("pause_campaign %s: %s", cid, e)
+                        row["logs"] = _append_logs_cell(row.get("logs", ""), f"pause error: {e}")
+                        _sk_tools_workbook_log(cid, cname_expl, "SK exploration: pause error", str(e))
+                elif not did_blacklist:
+                    row["lastAction"] = "ok"
 
     if changed and rows:
         gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_EXPLORATION, rows)
@@ -769,6 +781,16 @@ def checkUnmonWL_SK() -> None:
         changed = True
 
         if not _row_active(row):
+            continue
+
+        skip_unmon_pause = cid in _SK_UNMON_SKIP_CAMPAIGN_ID_SET
+        if skip_unmon_pause:
+            row["logs"] = _append_logs_cell(
+                row.get("logs", ""),
+                f"unmon pause skipped by config for campaign {cid}",
+            )
+            row["lastAction"] = "unmon-skip-config"
+            changed = True
             continue
 
         cname_wl = str(camp_json.get("name") or "") if isinstance(camp_json, dict) else ""

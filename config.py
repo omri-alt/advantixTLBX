@@ -407,3 +407,31 @@ SK_TOOLS_SPREADSHEET_ID = (
 # Defaults to the same workbook as ``SK_TOOLS_SPREADSHEET_ID`` when unset.
 SK_OPTIMIZER_SHEET_ID = (os.getenv("SK_OPTIMIZER_SHEET_ID") or SK_TOOLS_SPREADSHEET_ID).strip()
 
+
+def _parse_sk_unmon_skip_campaign_ids() -> tuple[int, ...]:
+    """
+    Optional comma-separated SK campaign ids to bypass unmon pause checks in
+    SK exploration / WL optimizer.
+    Example: ``SK_UNMON_SKIP_CAMPAIGN_IDS=380809,381111``
+    """
+    raw = (os.getenv("SK_UNMON_SKIP_CAMPAIGN_IDS") or "").strip()
+    if not raw:
+        return ()
+    out: list[int] = []
+    seen: set[int] = set()
+    for part in raw.split(","):
+        p = part.strip()
+        if not p:
+            continue
+        try:
+            cid = int(p)
+        except ValueError:
+            continue
+        if cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+    return tuple(out)
+
+
+SK_UNMON_SKIP_CAMPAIGN_IDS: tuple[int, ...] = _parse_sk_unmon_skip_campaign_ids()
+
