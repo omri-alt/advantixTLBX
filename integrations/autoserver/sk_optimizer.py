@@ -62,7 +62,6 @@ HEADERS_EXPLORATION = [
     "geo",
     "monUrl",
     "monNetwork",
-    "skipUnmon",
     "wl",
     "status",
     "budgetReachedYesterday",
@@ -70,6 +69,7 @@ HEADERS_EXPLORATION = [
     "lastMonCheck",
     "lastAction",
     "logs",
+    "skipUnmon",
 ]
 HEADERS_WL = [
     "campaignId",
