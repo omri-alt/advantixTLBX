@@ -16,7 +16,10 @@ Behavior:
   1) Ensure a country flow exists for each geo present in the sheet (name = geo).
   2) Create/update offers per (geo, brandName) using name `blend_{geo}_{feed}_{slug(brandName)}`.
      Kelkoo: offerUrl wrapped like Nipuhim. Adexa: shopli ``raino`` → LinksMerchant (country + encoded URL).
-     Yadore: shopli ``rainotest`` → ``/v2/d`` (market + encoded URL, projectId from env).
+     Yadore: shopli ``rainotest`` → ``/v2/d`` (projectId from env). Default: sheet merchant URL + market
+     in ``url=`` / ``market=`` with ``placementId={subid}`` (Keitaro macros preserved in ``rain=``).
+     Set ``BLEND_YADORE_OFFER_USE_SUB_MACROS=1`` for ``url={sub_id_3}&market={sub_id_2}&placementId={subid}``
+     (campaign must pass those subs).
   3) Attach offers to the geo flow with weighted shares proportional to clickCap.
 
 Usage:
@@ -39,6 +42,7 @@ load_dotenv()
 from config import (
     ADEXA_SITE_ID,
     BLEND_SHEETS_SPREADSHEET_ID,
+    BLEND_YADORE_OFFER_USE_SUB_MACROS,
     FEED1_API_KEY,
     FEED2_API_KEY,
     FEED1_KELKOO_ACCOUNT_ID,
@@ -257,22 +261,34 @@ def _blend_adexa_action_payload(geo: str, merchant_url: str) -> str:
 
 def _blend_yadore_action_payload(geo: str, merchant_url: str) -> str:
     """
-    shopli ``rainotest`` → Yadore ``/v2/d`` with URL-encoded merchant URL, Yadore market,
-    ``placementId={{subid}}``, project id; values for url/market are baked from the sheet row.
+    shopli ``rainotest`` → Yadore ``/v2/d`` with ``placementId={{subid}}`` (and optional
+    ``url={{sub_id_3}}`` / ``market={{sub_id_2}}`` when ``BLEND_YADORE_OFFER_USE_SUB_MACROS``).
+
+    The ``rain`` query value must not use ``quote(..., safe="")``: that encodes ``{`` / ``}`` and
+    breaks Keitaro macros (Yadore then never sees the real placement id → report vs Keitaro mismatch).
     """
+    pid = (YADORE_PROJECT_ID or "").strip() or BLEND_YADORE_DEEPLINK_PROJECT_FALLBACK
+    pid_q = quote(str(pid), safe="")
+
+    if BLEND_YADORE_OFFER_USE_SUB_MACROS:
+        inner = (
+            "https://api.yadore.com/v2/d"
+            f"?url={{sub_id_3}}&market={{sub_id_2}}"
+            f"&placementId={{subid}}&projectId={pid_q}&isCouponing=false"
+        )
+        return BLEND_YADORE_RAIN_SHELL + quote(inner, safe=":/?&={}")
+
     g = _normalize_geo(geo)
     if len(g) != 2:
         raise ValueError(f"Invalid geo for Yadore offer: {geo!r}")
-    # Lowercase market; maps gb → uk like other Yadore calls.
     market = geo_for_yadore(g)
     m_enc = quote(_blend_merchant_url_https(merchant_url), safe="")
-    pid = (YADORE_PROJECT_ID or "").strip() or BLEND_YADORE_DEEPLINK_PROJECT_FALLBACK
     inner = (
         "https://api.yadore.com/v2/d"
         f"?url={m_enc}&market={quote(str(market), safe='')}"
-        f"&placementId={{subid}}&projectId={quote(str(pid), safe='')}&isCouponing=false"
+        f"&placementId={{subid}}&projectId={pid_q}&isCouponing=false"
     )
-    return BLEND_YADORE_RAIN_SHELL + quote(inner, safe="")
+    return BLEND_YADORE_RAIN_SHELL + quote(inner, safe=":/?&={}%")
 
 
 def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> str:

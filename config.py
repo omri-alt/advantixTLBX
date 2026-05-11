@@ -363,6 +363,11 @@ if not YADORE_PROJECT_ID:
     YADORE_PROJECT_ID = _read_env_fallback("YADORE_PROJECT_ID")
 YADORE_PROJECT_ID = (YADORE_PROJECT_ID or "").strip().lstrip("= ").strip().strip('"').strip("'")
 
+# Blend → Keitaro (``blend_sync_from_sheet``): Yadore offer URL uses ``{sub_id_3}`` / ``{sub_id_2}`` / ``{subid}``
+# (rain inner) when true; otherwise merchant + market from the Blend sheet row are embedded in ``url=`` / ``market=``.
+_yad_blend_sub = (os.getenv("BLEND_YADORE_OFFER_USE_SUB_MACROS") or "").strip().lower()
+BLEND_YADORE_OFFER_USE_SUB_MACROS = _yad_blend_sub in ("1", "true", "yes", "on")
+
 # Yadore GET /v2/report/detail — comma-separated markets (e.g. de,uk,fr). Multi-market accounts must list each market.
 _yad_rd_m = (os.getenv("YADORE_REPORT_DETAIL_MARKETS") or "").strip()
 if not _yad_rd_m:
