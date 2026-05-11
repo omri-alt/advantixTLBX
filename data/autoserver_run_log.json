@@ -46,5 +46,13 @@
     "finished_at": "2026-05-07T14:04:19Z",
     "status": "success",
     "error": null
+  },
+  {
+    "automation": "SKExplorationOptimizer",
+    "triggered_by": "manual",
+    "started_at": "2026-05-11T09:20:54Z",
+    "finished_at": "2026-05-11T09:27:48Z",
+    "status": "success",
+    "error": null
   }
 ]
