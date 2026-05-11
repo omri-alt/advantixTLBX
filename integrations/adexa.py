@@ -14,6 +14,7 @@ Adexa API helpers (feed4) — Link Monetizer + merchant list.
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -283,6 +284,24 @@ ADEXA_STATS_RAW_BASE = "https://api.adexad.com/v1/StatsRaw"
 ADEXA_SHOPPING_SEARCH_STATS_BASE = "https://api.adexad.com/v1/GetShoppingSearchStats"
 
 
+def _adexa_get_with_retry(url: str, *, timeout: int, max_attempts: int = 8) -> requests.Response:
+    """
+    GET with backoff on rate limit / transient overload (429 / 503).
+    """
+    wait_s = 2.0
+    last: Optional[requests.Response] = None
+    for attempt in range(max(1, max_attempts)):
+        r = requests.get(url, timeout=timeout, headers={"Accept": "application/json"})
+        last = r
+        if r.status_code in (429, 503) and attempt < max_attempts - 1:
+            time.sleep(wait_s)
+            wait_s = min(wait_s * 2.0, 45.0)
+            continue
+        return r
+    assert last is not None
+    return last
+
+
 def fetch_shopping_search_stats(
     start: str,
     end: str,
@@ -312,7 +331,7 @@ def fetch_shopping_search_stats(
             f"{ADEXA_SHOPPING_SEARCH_STATS_BASE}/siteID={sid}&apiKey={key}&start={start}&end={end}"
             f"&nb_page={nb_page}&page={page_idx}&format=json"
         )
-        r = requests.get(endpoint, timeout=timeout, headers={"Accept": "application/json"})
+        r = _adexa_get_with_retry(endpoint, timeout=timeout)
         if r.status_code != 200:
             raise AdexaClientError(
                 f"GetShoppingSearchStats HTTP {r.status_code}",
@@ -376,7 +395,7 @@ def fetch_stats_raw(
             f"{ADEXA_STATS_RAW_BASE}/siteID={sid}&apiKey={key}&start={start}&end={end}"
             f"&nb_page={nb_page}&page={page_idx}&format=json"
         )
-        r = requests.get(endpoint, timeout=timeout, headers={"Accept": "application/json"})
+        r = _adexa_get_with_retry(endpoint, timeout=timeout)
         if r.status_code != 200:
             raise AdexaClientError(
                 f"StatsRaw HTTP {r.status_code}",
