@@ -1,8 +1,8 @@
 """
 Persisted overview dashboard data (``/api/overview`` reads from disk; rebuild is expensive).
 
-- **Manual / scheduled rebuild:** ``queue_overview_refresh()`` (``POST /api/overview/refresh``) runs in a
-  background thread so Gunicorn/proxy timeouts do not abort the job mid-flight.
+- **Manual / scheduled rebuild:** ``queue_overview_refresh()`` spawns ``cli/refresh_overview_snapshot.py``
+  in a separate process (Gunicorn worker timeouts must not kill the rebuild).
 - **Daily fire:** background thread sleeps until next ``OVERVIEW_SNAPSHOT_HOUR`` in ``OVERVIEW_SNAPSHOT_TZ``.
 
 For multi-worker deployments, set ``OVERVIEW_SCHEDULER_ENABLED=0`` on all but one worker and use cron +
@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -22,10 +24,6 @@ from typing import Any, Dict, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
-
-# Cross-process lock (Gunicorn workers). In-process guard avoids duplicate threads per worker.
-_REFRESH_THREAD_LOCK = threading.Lock()
-_REFRESH_THREAD: Optional[threading.Thread] = None
 
 _STALE_RUNNING_SEC = 45 * 60
 _STALE_LOCK_SEC = 45 * 60
@@ -145,14 +143,28 @@ def refresh_overview_snapshot() -> Tuple[Dict[str, Any], str]:
     return data, saved_utc
 
 
-def _refresh_worker(*, reason: str) -> None:
-    global _REFRESH_THREAD
+def run_overview_refresh_job(*, reason: str, started_utc: Optional[str] = None) -> None:
+    """
+    Acquire lock, rebuild snapshot, update ``overview_refresh_state.json``.
+
+    Intended to run in a **subprocess** (``cli/refresh_overview_snapshot.py``), not inside a Gunicorn worker.
+    """
+    started = (started_utc or "").strip() or _utc_now()
     if not _try_acquire_file_lock():
-        logger.info("Overview refresh skipped (%s): another process holds the lock", reason)
-        with _REFRESH_THREAD_LOCK:
-            _REFRESH_THREAD = None
+        msg = "Overview refresh already running (lock held by another process)"
+        logger.warning("%s (reason=%s)", msg, reason)
+        write_refresh_state(
+            {
+                "status": "error",
+                "reason": reason,
+                "started_utc": started,
+                "finished_utc": _utc_now(),
+                "saved_utc": None,
+                "error": msg,
+            }
+        )
         return
-    started = _utc_now()
+
     write_refresh_state(
         {
             "status": "running",
@@ -164,7 +176,7 @@ def _refresh_worker(*, reason: str) -> None:
         }
     )
     try:
-        logger.info("Overview snapshot refresh started (reason=%s)", reason)
+        logger.info("Overview snapshot refresh started (reason=%s pid=%s)", reason, os.getpid())
         _, saved = refresh_overview_snapshot()
         write_refresh_state(
             {
@@ -191,52 +203,90 @@ def _refresh_worker(*, reason: str) -> None:
         )
     finally:
         _release_file_lock()
-        with _REFRESH_THREAD_LOCK:
-            _REFRESH_THREAD = None
+
+
+def _spawn_refresh_subprocess(*, reason: str, started_utc: str) -> None:
+    script = ROOT / "cli" / "refresh_overview_snapshot.py"
+    cmd = [
+        sys.executable,
+        str(script),
+        "--reason",
+        reason,
+        "--started-utc",
+        started_utc,
+    ]
+    log_path = snapshot_path().parent / "overview_refresh_last.log"
+    try:
+        log_f = open(log_path, "a", encoding="utf-8")
+        log_f.write(f"\n--- spawn {_utc_now()} reason={reason} pid_parent={os.getpid()} ---\n")
+        log_f.flush()
+    except OSError:
+        log_f = subprocess.DEVNULL  # type: ignore[assignment]
+
+    kwargs: Dict[str, Any] = {
+        "cwd": str(ROOT),
+        "stdout": log_f,
+        "stderr": subprocess.STDOUT,
+        "close_fds": os.name != "nt",
+    }
+    if os.name != "nt":
+        kwargs["start_new_session"] = True
+    subprocess.Popen(cmd, **kwargs)
 
 
 def queue_overview_refresh(*, reason: str = "manual") -> Dict[str, Any]:
     """
-    Start a background refresh if none is running (same worker + cross-worker lock).
+    Queue a subprocess refresh if none is running (cross-worker lock + state file).
 
     Returns current refresh state (``status`` may be ``running``, ``done``, ``error``, ``idle``).
     """
-    global _REFRESH_THREAD
-
     state = read_refresh_state()
     if state.get("status") == "running" and not _running_is_stale(state):
-        with _REFRESH_THREAD_LOCK:
-            if _REFRESH_THREAD is not None and _REFRESH_THREAD.is_alive():
-                return {**state, "queued": False}
         if refresh_lock_path().is_file() and not _lock_is_stale():
             return {**state, "queued": False}
-        logger.warning("Overview refresh state=running but no active thread; treating as stale")
-        write_refresh_state({**state, "status": "error", "error": "stale running state cleared"})
+        logger.warning("Overview refresh state=running but lock missing/stale; clearing")
+        write_refresh_state(
+            {
+                **state,
+                "status": "error",
+                "error": "stale running state cleared",
+                "finished_utc": _utc_now(),
+            }
+        )
 
-    with _REFRESH_THREAD_LOCK:
-        if _REFRESH_THREAD is not None and _REFRESH_THREAD.is_alive():
-            st = read_refresh_state()
-            return {**st, "queued": False}
-
-        started = _utc_now()
-        pending = {
+    if refresh_lock_path().is_file() and not _lock_is_stale():
+        st = read_refresh_state()
+        return {
+            **st,
             "status": "running",
-            "reason": reason,
-            "started_utc": started,
-            "finished_utc": None,
-            "saved_utc": None,
-            "error": None,
-            "queued": True,
+            "queued": False,
+            "error": st.get("error") or "refresh already running",
+        }
+
+    started = _utc_now()
+    pending: Dict[str, Any] = {
+        "status": "running",
+        "reason": reason,
+        "started_utc": started,
+        "finished_utc": None,
+        "saved_utc": None,
+        "error": None,
+        "queued": True,
+    }
+    write_refresh_state(pending)
+    try:
+        _spawn_refresh_subprocess(reason=reason, started_utc=started)
+    except Exception as e:
+        logger.exception("Could not spawn overview refresh subprocess")
+        pending = {
+            **pending,
+            "status": "error",
+            "finished_utc": _utc_now(),
+            "error": f"spawn failed: {e}",
+            "queued": False,
         }
         write_refresh_state(pending)
-        _REFRESH_THREAD = threading.Thread(
-            target=_refresh_worker,
-            kwargs={"reason": reason},
-            name="overview-snapshot-refresh",
-            daemon=True,
-        )
-        _REFRESH_THREAD.start()
-        return dict(pending)
+    return pending
 
 
 def read_snapshot_for_api() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:

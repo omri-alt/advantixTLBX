@@ -333,13 +333,8 @@
         .then(renderFromSnapshot);
     }
 
-    loadSnapshotFromDisk().catch(function(e) {
-      failEl.style.display = "block";
-      failEl.textContent = "Overview snapshot could not load: " + (e && e.message ? e.message : String(e));
-    });
-
-    function pollRefreshUntilDone() {
-      var started = Date.now();
+    function pollRefreshUntilDone(sessionStartedUtc) {
+      var pollStarted = Date.now();
       var maxMs = 900000;
       function tick() {
         return fetch(refreshStatusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
@@ -349,11 +344,29 @@
           })
           .then(function(st) {
             var status = (st && st.status) || "";
+            var stStarted = (st && st.started_utc) || "";
+            if (sessionStartedUtc && stStarted && stStarted !== sessionStartedUtc) {
+              if (status === "running") {
+                throw new Error(
+                  "Another overview refresh is already running (started " + stStarted + "). Wait for it to finish."
+                );
+              }
+              if (status === "done") {
+                if (Date.now() - pollStarted > maxMs) {
+                  throw new Error("Refresh timed out waiting for this session to complete");
+                }
+                return new Promise(function(resolve) {
+                  setTimeout(function() { resolve(tick()); }, 2500);
+                });
+              }
+            }
             if (status === "running") {
-              var hint = st.started_utc ? "Started " + st.started_utc + " · " : "";
+              var hint = stStarted ? "Started " + stStarted + " · " : "";
               rangesEl.textContent = hint + "Refreshing snapshot from APIs (background, may take 5–15+ min)…";
-              if (Date.now() - started > maxMs) {
-                throw new Error("Refresh still running after 15 minutes — check server logs or try again later");
+              if (Date.now() - pollStarted > maxMs) {
+                throw new Error(
+                  "Refresh still running after 15 minutes — check runtime/overview_refresh_last.log on the server"
+                );
               }
               return new Promise(function(resolve) {
                 setTimeout(function() { resolve(tick()); }, 2500);
@@ -362,11 +375,58 @@
             if (status === "error") {
               throw new Error(st.error || "Overview refresh failed");
             }
-            return loadSnapshotFromDisk();
+            if (status === "done") {
+              if (sessionStartedUtc && stStarted && stStarted !== sessionStartedUtc) {
+                if (Date.now() - pollStarted > maxMs) {
+                  throw new Error("Refresh timed out waiting for matching completion");
+                }
+                return new Promise(function(resolve) {
+                  setTimeout(function() { resolve(tick()); }, 2500);
+                });
+              }
+              return loadSnapshotFromDisk();
+            }
+            if (status === "idle" || !status) {
+              if (Date.now() - pollStarted > maxMs) {
+                throw new Error("Refresh did not start (status idle). Check server logs.");
+              }
+              rangesEl.textContent = "Waiting for refresh worker to start…";
+              return new Promise(function(resolve) {
+                setTimeout(function() { resolve(tick()); }, 1500);
+              });
+            }
+            throw new Error("Unknown refresh status: " + status);
           });
       }
       return tick();
     }
+
+    function maybeResumeRefreshPoll() {
+      return fetch(refreshStatusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function(r) {
+          if (!r.ok) return null;
+          return r.json();
+        })
+        .then(function(st) {
+          if (!st || st.status !== "running" || !st.started_utc) return null;
+          rangesEl.textContent = "Resuming in-progress refresh (started " + st.started_utc + ")…";
+          setTilesLoading();
+          return pollRefreshUntilDone(st.started_utc);
+        })
+        .catch(function() {
+          return null;
+        });
+    }
+
+    maybeResumeRefreshPoll()
+      .then(function(resumed) {
+        if (resumed) return resumed;
+        return loadSnapshotFromDisk();
+      })
+      .catch(function(e) {
+        failEl.style.display = "block";
+        failEl.textContent = "Overview snapshot could not load: " + (e && e.message ? e.message : String(e));
+      });
 
     if (refreshBtn) {
       refreshBtn.addEventListener("click", function() {
@@ -392,7 +452,18 @@
             if (st && st.status === "error") {
               throw new Error(st.error || "Could not queue refresh");
             }
-            return pollRefreshUntilDone();
+            if (st && st.queued === false && st.status === "running") {
+              throw new Error(
+                "A refresh is already running" +
+                  (st.started_utc ? " (started " + st.started_utc + ")" : "") +
+                  ". Wait for it to finish."
+              );
+            }
+            var sessionStarted = (st && st.started_utc) || "";
+            if (!sessionStarted) {
+              throw new Error("Refresh was not queued (missing started_utc in response)");
+            }
+            return pollRefreshUntilDone(sessionStarted);
           })
           .catch(function(e) {
             failEl.style.display = "block";
