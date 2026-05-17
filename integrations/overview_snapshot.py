@@ -1,10 +1,12 @@
 """
 Persisted overview dashboard data (``/api/overview`` reads from disk; rebuild is expensive).
 
-- **Manual / scheduled rebuild:** ``refresh_overview_snapshot()`` (also ``POST /api/overview/refresh``).
-- **Daily fire:** background thread sleeps until next ``OVERVIEW_SNAPSHOT_HOUR`` in ``OVERVIEW_SNAPSHOT_TZ`` (default 08:00 UTC).
+- **Manual / scheduled rebuild:** ``queue_overview_refresh()`` (``POST /api/overview/refresh``) runs in a
+  background thread so Gunicorn/proxy timeouts do not abort the job mid-flight.
+- **Daily fire:** background thread sleeps until next ``OVERVIEW_SNAPSHOT_HOUR`` in ``OVERVIEW_SNAPSHOT_TZ``.
 
-For multi-worker deployments, set ``OVERVIEW_SCHEDULER_ENABLED=0`` on all but one worker and use cron + ``python cli/refresh_overview_snapshot.py`` instead.
+For multi-worker deployments, set ``OVERVIEW_SCHEDULER_ENABLED=0`` on all but one worker and use cron +
+``python cli/refresh_overview_snapshot.py`` instead.
 """
 from __future__ import annotations
 
@@ -21,6 +23,17 @@ logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Cross-process lock (Gunicorn workers). In-process guard avoids duplicate threads per worker.
+_REFRESH_THREAD_LOCK = threading.Lock()
+_REFRESH_THREAD: Optional[threading.Thread] = None
+
+_STALE_RUNNING_SEC = 45 * 60
+_STALE_LOCK_SEC = 45 * 60
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 def snapshot_path() -> Path:
     from config import OVERVIEW_SNAPSHOT_PATH
@@ -31,12 +44,98 @@ def snapshot_path() -> Path:
     return ROOT / "runtime" / "overview_snapshot.json"
 
 
+def refresh_state_path() -> Path:
+    return snapshot_path().parent / "overview_refresh_state.json"
+
+
+def refresh_lock_path() -> Path:
+    return snapshot_path().parent / "overview_refresh.lock"
+
+
+def read_refresh_state() -> Dict[str, Any]:
+    path = refresh_state_path()
+    if not path.is_file():
+        return {"status": "idle"}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {"status": "idle"}
+    except Exception as e:
+        logger.warning("Overview refresh state read failed: %s", e)
+        return {"status": "idle", "error": str(e)}
+
+
+def write_refresh_state(state: Dict[str, Any]) -> None:
+    path = refresh_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _parse_utc_ts(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        return datetime.strptime(str(s).strip(), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _running_is_stale(state: Dict[str, Any]) -> bool:
+    if state.get("status") != "running":
+        return False
+    started = _parse_utc_ts(state.get("started_utc"))
+    if started is None:
+        return True
+    return (datetime.now(timezone.utc) - started).total_seconds() > _STALE_RUNNING_SEC
+
+
+def _lock_is_stale() -> bool:
+    path = refresh_lock_path()
+    if not path.is_file():
+        return False
+    try:
+        age = time.time() - path.stat().st_mtime
+        return age > _STALE_LOCK_SEC
+    except OSError:
+        return True
+
+
+def _try_acquire_file_lock() -> bool:
+    path = refresh_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file() and _lock_is_stale():
+        try:
+            path.unlink()
+            logger.warning("Removed stale overview refresh lock: %s", path)
+        except OSError as e:
+            logger.warning("Could not remove stale overview lock: %s", e)
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        try:
+            os.write(fd, f"{os.getpid()} {_utc_now()}\n".encode("utf-8"))
+        finally:
+            os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+
+
+def _release_file_lock() -> None:
+    path = refresh_lock_path()
+    try:
+        if path.is_file():
+            path.unlink()
+    except OSError as e:
+        logger.warning("Could not release overview refresh lock: %s", e)
+
+
 def refresh_overview_snapshot() -> Tuple[Dict[str, Any], str]:
     """Run ``build_overview_json`` and atomically write the snapshot file."""
     from integrations.overview import build_overview_json
 
     data = build_overview_json()
-    saved_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    saved_utc = _utc_now()
     path = snapshot_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -44,6 +143,100 @@ def refresh_overview_snapshot() -> Tuple[Dict[str, Any], str]:
     tmp.write_text(json.dumps(wrapped, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
     return data, saved_utc
+
+
+def _refresh_worker(*, reason: str) -> None:
+    global _REFRESH_THREAD
+    if not _try_acquire_file_lock():
+        logger.info("Overview refresh skipped (%s): another process holds the lock", reason)
+        with _REFRESH_THREAD_LOCK:
+            _REFRESH_THREAD = None
+        return
+    started = _utc_now()
+    write_refresh_state(
+        {
+            "status": "running",
+            "reason": reason,
+            "started_utc": started,
+            "finished_utc": None,
+            "saved_utc": None,
+            "error": None,
+        }
+    )
+    try:
+        logger.info("Overview snapshot refresh started (reason=%s)", reason)
+        _, saved = refresh_overview_snapshot()
+        write_refresh_state(
+            {
+                "status": "done",
+                "reason": reason,
+                "started_utc": started,
+                "finished_utc": _utc_now(),
+                "saved_utc": saved,
+                "error": None,
+            }
+        )
+        logger.info("Overview snapshot refresh completed (saved_utc=%s)", saved)
+    except Exception as e:
+        logger.exception("Overview snapshot refresh failed (reason=%s)", reason)
+        write_refresh_state(
+            {
+                "status": "error",
+                "reason": reason,
+                "started_utc": started,
+                "finished_utc": _utc_now(),
+                "saved_utc": None,
+                "error": str(e),
+            }
+        )
+    finally:
+        _release_file_lock()
+        with _REFRESH_THREAD_LOCK:
+            _REFRESH_THREAD = None
+
+
+def queue_overview_refresh(*, reason: str = "manual") -> Dict[str, Any]:
+    """
+    Start a background refresh if none is running (same worker + cross-worker lock).
+
+    Returns current refresh state (``status`` may be ``running``, ``done``, ``error``, ``idle``).
+    """
+    global _REFRESH_THREAD
+
+    state = read_refresh_state()
+    if state.get("status") == "running" and not _running_is_stale(state):
+        with _REFRESH_THREAD_LOCK:
+            if _REFRESH_THREAD is not None and _REFRESH_THREAD.is_alive():
+                return {**state, "queued": False}
+        if refresh_lock_path().is_file() and not _lock_is_stale():
+            return {**state, "queued": False}
+        logger.warning("Overview refresh state=running but no active thread; treating as stale")
+        write_refresh_state({**state, "status": "error", "error": "stale running state cleared"})
+
+    with _REFRESH_THREAD_LOCK:
+        if _REFRESH_THREAD is not None and _REFRESH_THREAD.is_alive():
+            st = read_refresh_state()
+            return {**st, "queued": False}
+
+        started = _utc_now()
+        pending = {
+            "status": "running",
+            "reason": reason,
+            "started_utc": started,
+            "finished_utc": None,
+            "saved_utc": None,
+            "error": None,
+            "queued": True,
+        }
+        write_refresh_state(pending)
+        _REFRESH_THREAD = threading.Thread(
+            target=_refresh_worker,
+            kwargs={"reason": reason},
+            name="overview-snapshot-refresh",
+            daemon=True,
+        )
+        _REFRESH_THREAD.start()
+        return dict(pending)
 
 
 def read_snapshot_for_api() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -89,8 +282,8 @@ def _scheduler_loop() -> None:
             delay = _seconds_until_scheduled_fire()
             logger.info("Overview snapshot scheduler: sleeping %.0fs until next run", delay)
             time.sleep(delay)
-            _, saved = refresh_overview_snapshot()
-            logger.info("Overview snapshot refreshed on schedule (saved_utc=%s)", saved)
+            state = queue_overview_refresh(reason="schedule")
+            logger.info("Overview snapshot scheduled refresh queued: %s", state.get("status"))
         except Exception:
             logger.exception("Overview snapshot scheduled refresh failed")
             time.sleep(60)
@@ -98,7 +291,7 @@ def _scheduler_loop() -> None:
 
 def start_overview_snapshot_bootstrap() -> None:
     """
-    Optionally run one ``refresh_overview_snapshot()`` shortly after startup (background).
+    Optionally queue one refresh shortly after startup (background).
 
     Controlled by ``OVERVIEW_SNAPSHOT_BOOTSTRAP`` (``missing`` | ``always`` | ``off``).
     """
@@ -121,11 +314,8 @@ def start_overview_snapshot_bootstrap() -> None:
             logger.warning("Unknown OVERVIEW_SNAPSHOT_BOOTSTRAP %r; treating as missing", mode)
             if path.exists():
                 return
-        try:
-            _, saved = refresh_overview_snapshot()
-            logger.info("Overview snapshot bootstrap completed (saved_utc=%s)", saved)
-        except Exception:
-            logger.exception("Overview snapshot bootstrap failed")
+        queue_overview_refresh(reason="bootstrap")
+        logger.info("Overview snapshot bootstrap refresh queued")
 
     threading.Thread(target=run, name="overview-snapshot-bootstrap", daemon=True).start()
     logger.info("Overview snapshot bootstrap thread scheduled (mode=%s)", mode)
@@ -141,7 +331,6 @@ def start_daily_overview_scheduler() -> None:
     if not OVERVIEW_SCHEDULER_ENABLED:
         logger.info("Overview snapshot scheduler disabled (OVERVIEW_SCHEDULER_ENABLED)")
         return
-    # Avoid double thread with Flask reloader parent process.
     if os.getenv("FLASK_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         return
     threading.Thread(target=_scheduler_loop, name="overview-snapshot-scheduler", daemon=True).start()

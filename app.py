@@ -61,8 +61,9 @@ from integrations.overview import (
     slice_zeropark,
 )
 from integrations.overview_snapshot import (
+    queue_overview_refresh,
+    read_refresh_state,
     read_snapshot_for_api,
-    refresh_overview_snapshot,
     start_daily_overview_scheduler,
     start_overview_snapshot_bootstrap,
 )
@@ -2157,18 +2158,26 @@ def _overview_missing_payload() -> Dict[str, Any]:
     }
 
 
+@app.route("/api/overview/refresh/status", methods=["GET"])
+def api_overview_refresh_status():
+    """Background overview rebuild progress (poll after ``POST /api/overview/refresh``)."""
+    return jsonify(read_refresh_state())
+
+
 @app.route("/api/overview/refresh", methods=["POST"])
 def api_overview_refresh():
-    """Rebuild the overview snapshot from live APIs (can take several minutes). Same UI auth as other routes."""
+    """
+    Queue a snapshot rebuild from live APIs (often 5–15+ minutes for SK spend).
+
+    Returns 202 immediately; poll ``GET /api/overview/refresh/status`` then ``GET /api/overview``.
+    """
     try:
-        data, saved = refresh_overview_snapshot()
+        state = queue_overview_refresh(reason="api")
     except Exception as e:
         logger.exception("POST /api/overview/refresh failed")
-        return jsonify({"error": str(e)}), 500
-    out: Dict[str, Any] = dict(data)
-    out["snapshot_status"] = "ready"
-    out["snapshot_saved_utc"] = saved
-    return jsonify(out)
+        return jsonify({"error": str(e), "status": "error"}), 500
+    code = 202 if state.get("status") == "running" else 200
+    return jsonify(state), code
 
 
 @app.route("/api/overview", methods=["GET"])

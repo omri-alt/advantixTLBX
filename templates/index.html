@@ -112,7 +112,7 @@
 
     <section class="overview" id="overview-widget" aria-live="polite">
       <h2 class="section-title">Performance overview</h2>
-      <p class="muted" style="margin:0 0 10px;font-size:13px;max-height:2.6em;overflow:hidden;">Snapshot tiles (fast). <strong>Refresh</strong> = full API rebuild. <a href="{{ url_for('ui_help') }}#overview" style="color:#6b7280;font-size:12px;">?</a></p>
+      <p class="muted" style="margin:0 0 10px;font-size:13px;max-height:2.6em;overflow:hidden;">Snapshot tiles (fast). <strong>Refresh</strong> queues a background API rebuild (often 5–15+ min); this page polls until done. <a href="{{ url_for('ui_help') }}#overview" style="color:#6b7280;font-size:12px;">?</a></p>
       <div class="ov-actions">
         <button type="button" class="btn btn-sm" id="overview-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh from APIs</button>
         <span class="muted" id="overview-snap-hint"></span>
@@ -230,6 +230,7 @@
     var ovHr = {{ overview_snapshot_hour | int }};
     var overviewUrl = {{ url_for("api_overview") | tojson }};
     var refreshUrl = {{ url_for("api_overview_refresh") | tojson }};
+    var refreshStatusUrl = {{ url_for("api_overview_refresh_status") | tojson }};
 
     var TILE_KEYS = ["revenue", "zeropark", "sourceknowledge", "ecomnia"];
     var TITLES = {
@@ -337,23 +338,62 @@
       failEl.textContent = "Overview snapshot could not load: " + (e && e.message ? e.message : String(e));
     });
 
+    function pollRefreshUntilDone() {
+      var started = Date.now();
+      var maxMs = 900000;
+      function tick() {
+        return fetch(refreshStatusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+          .then(function(r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.json();
+          })
+          .then(function(st) {
+            var status = (st && st.status) || "";
+            if (status === "running") {
+              var hint = st.started_utc ? "Started " + st.started_utc + " · " : "";
+              rangesEl.textContent = hint + "Refreshing snapshot from APIs (background, may take 5–15+ min)…";
+              if (Date.now() - started > maxMs) {
+                throw new Error("Refresh still running after 15 minutes — check server logs or try again later");
+              }
+              return new Promise(function(resolve) {
+                setTimeout(function() { resolve(tick()); }, 2500);
+              });
+            }
+            if (status === "error") {
+              throw new Error(st.error || "Overview refresh failed");
+            }
+            return loadSnapshotFromDisk();
+          });
+      }
+      return tick();
+    }
+
     if (refreshBtn) {
       refreshBtn.addEventListener("click", function() {
         refreshBtn.disabled = true;
         failEl.style.display = "none";
         setTilesLoading();
-        rangesEl.textContent = "Refreshing snapshot from APIs (may take several minutes)…";
-        var ropts = { method: "POST", credentials: "same-origin", headers: { Accept: "application/json" } };
-        if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
-          ropts.signal = AbortSignal.timeout(900000);
-        }
-        fetch(refreshUrl, ropts)
+        rangesEl.textContent = "Queuing snapshot refresh from APIs…";
+        fetch(refreshUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { Accept: "application/json" },
+        })
           .then(function(r) {
-            if (r.status === 401) throw new Error("HTTP 401");
-            if (!r.ok) return r.text().then(function(t) { throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200)); });
+            if (r.status === 401) throw new Error("HTTP 401 — sign in again");
+            if (!r.ok) {
+              return r.text().then(function(t) {
+                throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200));
+              });
+            }
             return r.json();
           })
-          .then(renderFromSnapshot)
+          .then(function(st) {
+            if (st && st.status === "error") {
+              throw new Error(st.error || "Could not queue refresh");
+            }
+            return pollRefreshUntilDone();
+          })
           .catch(function(e) {
             failEl.style.display = "block";
             failEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
