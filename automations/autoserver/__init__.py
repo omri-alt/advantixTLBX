@@ -37,7 +37,7 @@ AUTOMATION_SPECS: List[Dict[str, str]] = [
     {
         "class_name": "CloseNipuhimAuto",
         "label": "Close Nipuhim (Zeropark)",
-        "schedule": "Hour 23 only",
+        "schedule": "Daily 23:30 Europe/Warsaw (ZEROPARK_CLOSE_* env)",
     },
     {
         "class_name": "BlendSync2h",

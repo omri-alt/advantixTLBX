@@ -299,6 +299,22 @@ if not KEYZP:
 # Publisher stats API (``panel/reports/*``) needs domainer id from Zeropark Publisher Team
 ZEROPARK_PUBLISHER_DID = (os.getenv("ZEROPARK_PUBLISHER_DID") or os.getenv("ZEROPARK_DID") or "").strip()
 
+# CloseNipuhimAuto: pause all ``generalMehila-*`` Zeropark campaigns (panel clock / TZ).
+# Default 23:30 — 1.5h before a previous 01:00 panel-time close that used server hour 23.
+ZEROPARK_CLOSE_TZ = (os.getenv("ZEROPARK_CLOSE_TZ") or "Europe/Warsaw").strip()
+_zp_close_h = (os.getenv("ZEROPARK_CLOSE_HOUR") or "23").strip()
+_zp_close_m = (os.getenv("ZEROPARK_CLOSE_MINUTE") or "30").strip()
+try:
+    ZEROPARK_CLOSE_HOUR = int(_zp_close_h)
+except ValueError:
+    ZEROPARK_CLOSE_HOUR = 23
+try:
+    ZEROPARK_CLOSE_MINUTE = int(_zp_close_m)
+except ValueError:
+    ZEROPARK_CLOSE_MINUTE = 30
+ZEROPARK_CLOSE_HOUR = max(0, min(23, ZEROPARK_CLOSE_HOUR))
+ZEROPARK_CLOSE_MINUTE = max(0, min(59, ZEROPARK_CLOSE_MINUTE))
+
 # SourceKnowledge (affiliate API — X-API-KEY)
 SOURCEKNOWLEDGE_API_KEY = (os.getenv("KEYSK") or os.getenv("keySK") or "").strip()
 if not SOURCEKNOWLEDGE_API_KEY:

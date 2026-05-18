@@ -39,6 +39,17 @@ def scheduler_running() -> bool:
     return bool(sch and getattr(sch, "running", False))
 
 
+def _run_close_nipuhim_scheduled() -> None:
+    """Daily Zeropark ``pause_generalMehila`` at ``ZEROPARK_CLOSE_*`` in ``ZEROPARK_CLOSE_TZ``."""
+    _ensure_listeners()
+    for automation in _automation_listeners:
+        if automation.__class__.__name__ == "CloseNipuhimAuto":
+            logger.info("=== CloseNipuhimAuto cron (Zeropark generalMehila pause) ===")
+            automation._wrap_run("scheduler", automation._execute)
+            return
+    logger.warning("CloseNipuhimAuto not registered; skip Zeropark close cron")
+
+
 def _hourly_signal_broadcast() -> None:
     current_hour = datetime.now().hour
     logger.info("=== AUTOSERVER HOURLY SIGNAL hour=%s ===", current_hour)
@@ -153,15 +164,40 @@ def start_autoserver_scheduler() -> None:
 
     from apscheduler.schedulers.background import BackgroundScheduler
 
+    from config import ZEROPARK_CLOSE_HOUR, ZEROPARK_CLOSE_MINUTE, ZEROPARK_CLOSE_TZ
+
     _ensure_listeners()
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(_hourly_signal_broadcast, trigger="cron", minute=0)
+    try:
+        from zoneinfo import ZoneInfo
+
+        zp_close_tz = ZoneInfo(ZEROPARK_CLOSE_TZ or "Europe/Warsaw")
+    except Exception:
+        logger.warning("Invalid ZEROPARK_CLOSE_TZ %r; using Europe/Warsaw", ZEROPARK_CLOSE_TZ)
+        from zoneinfo import ZoneInfo
+
+        zp_close_tz = ZoneInfo("Europe/Warsaw")
+    _scheduler.add_job(
+        _run_close_nipuhim_scheduled,
+        trigger="cron",
+        hour=int(ZEROPARK_CLOSE_HOUR),
+        minute=int(ZEROPARK_CLOSE_MINUTE),
+        timezone=zp_close_tz,
+        id="zeropark_close_general_mehila",
+        replace_existing=True,
+    )
     _scheduler.start()
     if _should_schedule_startup_catchup():
         _scheduler.add_job(_hourly_signal_broadcast, trigger="date", run_date=datetime.now())
         logger.info("AutoServer APScheduler scheduled startup catch-up run")
     _started = True
-    logger.info("AutoServer APScheduler started (hourly at :00)")
+    logger.info(
+        "AutoServer APScheduler started (hourly at :00; Zeropark close at %02d:%02d %s)",
+        int(ZEROPARK_CLOSE_HOUR),
+        int(ZEROPARK_CLOSE_MINUTE),
+        ZEROPARK_CLOSE_TZ,
+    )
 
 
 def stop_autoserver_scheduler(wait: bool = False) -> None:

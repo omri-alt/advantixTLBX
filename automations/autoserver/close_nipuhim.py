@@ -11,12 +11,16 @@ logger = logging.getLogger(__name__)
 
 
 class CloseNipuhimAuto(BaseAutomation):
-    """Hour 23 only: Zeropark close nipuhim (general mehila pause)."""
+    """
+    Daily Zeropark close: pause all ``generalMehila-*`` campaigns.
+
+    Scheduled via APScheduler cron (``ZEROPARK_CLOSE_HOUR`` / ``MINUTE`` in ``ZEROPARK_CLOSE_TZ``),
+    not the legacy server-local hour-23 hourly gate.
+    """
 
     def on_hourly_signal(self, hour: int) -> None:
-        if hour in (23,):
-            logger.info("CloseNipuhimAuto at hour %s", hour)
-            self._wrap_run("scheduler", self._execute)
+        # Fired by ``scheduler/autoserver_scheduler.py`` cron at configured Zeropark panel time.
+        pass
 
     def run_manually(self) -> dict[str, Any]:
         logger.info("CloseNipuhimAuto manual trigger")
