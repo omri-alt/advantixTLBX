@@ -143,9 +143,14 @@ def mehilot():
         plan['lastUpdate'] = now
         plan['bid'] = camp['details']['bid']
         plan['clicksToday'] = camp['stats']['redirects']
-        plan['monStatus'] = kl.check_monetizationWithResp(
-            camp['details']['url'].split('oadest=')[1],
-            camp['details']['name'].split('-')[1].lower()).json()
+        url = camp['details'].get('url') or ''
+        parts = url.split('oadest=', 1)
+        oadest = parts[1].split('&', 1)[0] if len(parts) > 1 else ''
+        geo = camp['details']['name'].split('-')[1].lower() if '-' in camp['details']['name'] else ''
+        if oadest and geo:
+          plan['monStatus'] = kl.check_monetizationWithResp(oadest, geo).json()
+        else:
+          plan['monStatus'] = {'error': 'missing oadest or geo in campaign URL/name'}
         try:
           plan['monStatus'] = plan['monStatus']['result']
           try:

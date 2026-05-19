@@ -480,6 +480,10 @@ AUTOSERVER_SCHEDULER_ENABLED = (
 )
 # Hour gate for even/odd automations (``on_hourly_signal``). Default UTC; set e.g. ``Europe/Warsaw`` for panel time.
 AUTOSERVER_SCHEDULER_TZ = (os.getenv("AUTOSERVER_SCHEDULER_TZ") or "UTC").strip()
+# Off by default: parallel catch-up on deploy can starve the Gunicorn scheduler worker.
+AUTOSERVER_STARTUP_CATCHUP = (
+    os.getenv("AUTOSERVER_STARTUP_CATCHUP", "0").strip().lower() in ("1", "true", "yes", "on")
+)
 _as_hb = (os.getenv("AUTOSERVER_SCHEDULER_HEARTBEAT_PATH") or "").strip()
 if _as_hb:
     _as_hb_p = Path(_as_hb)

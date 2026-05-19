@@ -184,9 +184,12 @@ def _parse_utc_iso(raw: str) -> Optional[datetime]:
 
 def _should_schedule_startup_catchup() -> bool:
     """
-    Run one immediate catch-up when the process starts mid-hour and no recent
-    AutoServer execution was recorded.
+    Optional deploy catch-up (off by default — parallel runs can overload the
+    scheduler worker). Set ``AUTOSERVER_STARTUP_CATCHUP=1`` to enable.
     """
+    flag = (os.getenv("AUTOSERVER_STARTUP_CATCHUP") or "").strip().lower()
+    if flag not in ("1", "true", "yes", "on"):
+        return False
     now_utc = datetime.now(timezone.utc)
     if now_utc.minute == 0:
         return False

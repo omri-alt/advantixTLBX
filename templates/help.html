@@ -320,7 +320,7 @@
         <details class="help-acc" id="automations-ui" data-help-search="automations trigger log">
           <summary>Scheduler &amp; manual triggers</summary>
           <div class="help-acc-body">
-            <p>APScheduler runs <strong>one cron job per automation</strong> at minute 0 (so a slow Mehilot run does not block KLWL / Blend sync). Even/odd-hour jobs use <code>AUTOSERVER_SCHEDULER_TZ</code> (default UTC). Close Nipuhim uses <code>ZEROPARK_CLOSE_*</code>. Under Gunicorn, only one worker runs schedulers (<code>gunicorn.conf.py</code>); do not set <code>AUTOSERVER_SCHEDULER_ENABLED=0</code> unless you run jobs elsewhere. Env aliases: <code>integrations/autoserver/env.py</code>.</p>
+            <p>APScheduler runs <strong>one cron job per automation</strong> at minute 0 (so a slow Mehilot run does not block KLWL / Blend sync). Even/odd-hour jobs use <code>AUTOSERVER_SCHEDULER_TZ</code> (default UTC). Close Nipuhim uses <code>ZEROPARK_CLOSE_*</code>. Under Gunicorn, a file lock picks one worker for schedulers; the rest serve HTTP only. Deploy catch-up is off unless <code>AUTOSERVER_STARTUP_CATCHUP=1</code>. Env aliases: <code>integrations/autoserver/env.py</code>.</p>
             <table>
               <thead><tr><th>API</th><th>Purpose</th></tr></thead>
               <tbody>

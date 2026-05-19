@@ -1,40 +1,62 @@
 """
 Start in-process background schedulers (AutoServer, Kelkoo late-sales prep, overview).
 
-Under Gunicorn, only the worker selected in ``gunicorn.conf.py`` should call this
-(see ``KLBLEND_SCHEDULER_WORKER=1``). Flask dev / ``python app.py`` start at import.
+Under Gunicorn with multiple workers, a file lock ensures exactly one process runs
+schedulers; the others serve HTTP only. Safe to call on every ``app`` import.
 """
 from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-
-def should_start_background_schedulers_at_import() -> bool:
-    """False when Gunicorn defers startup to ``post_fork`` (one worker only)."""
-    if os.getenv("KLBLEND_DEFER_SCHEDULERS", "").strip().lower() in ("1", "true", "yes"):
-        return False
-    return True
+_scheduler_lock_fd: Optional[int] = None
 
 
-def is_designated_scheduler_worker() -> bool:
-    """True when this process is allowed to run background schedulers."""
-    flag = os.getenv("KLBLEND_SCHEDULER_WORKER", "").strip()
-    if flag == "1":
+def _scheduler_lock_path() -> Path:
+    raw = (os.getenv("KLBLEND_SCHEDULER_LOCK_PATH") or "").strip()
+    if raw:
+        p = Path(raw)
+        return p if p.is_absolute() else Path(__file__).resolve().parents[1] / p
+    return Path(__file__).resolve().parents[1] / "runtime" / "scheduler_worker.lock"
+
+
+def _try_acquire_scheduler_lock() -> bool:
+    """Non-blocking flock; one live worker across Gunicorn processes (Linux)."""
+    global _scheduler_lock_fd
+    if _scheduler_lock_fd is not None:
         return True
-    if flag == "0":
+
+    lock_path = _scheduler_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import fcntl
+
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            return False
+        _scheduler_lock_fd = fd
+        return True
+    except ImportError:
+        # Windows / no fcntl: single-process dev only.
+        return True
+    except Exception as e:
+        logger.warning("Scheduler lock unavailable (%s); skipping background jobs", e)
         return False
-    # Not under Gunicorn defer mode: any process that loads the app may run schedulers.
-    return should_start_background_schedulers_at_import()
 
 
 def start_background_schedulers() -> None:
-    """Idempotent-ish: each ``start_*`` guards with module-level flags."""
-    if not is_designated_scheduler_worker():
+    """Start schedulers on this process if it holds the cluster-wide lock."""
+    if not _try_acquire_scheduler_lock():
         logger.info(
-            "Background schedulers skipped on worker pid=%s (not designated scheduler worker)",
+            "Background schedulers not started on pid=%s (another worker holds the lock)",
             os.getpid(),
         )
         return

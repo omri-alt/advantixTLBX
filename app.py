@@ -2489,10 +2489,9 @@ def assistance_get_streams_by_campaign():
         }), (e.status_code or 502)
 
 
-from scheduler.background import should_start_background_schedulers_at_import, start_background_schedulers
+from scheduler.background import start_background_schedulers
 
-if should_start_background_schedulers_at_import():
-    start_background_schedulers()
+start_background_schedulers()
 
 
 def main():
