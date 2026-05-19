@@ -17,8 +17,8 @@ Sheets (workbook ``config.SK_OPTIMIZER_SHEET_ID``):
 - ``SKtrackWL``: campaignId, campaignName, brand, geo, monUrl, monNetwork, status,
   budgetReachedYesterday, lastMonCheck, lastAction, logs
 
-``monNetwork`` (case-insensitive): ``kl`` | ``feed1`` | ``feed2`` | ``feed3`` | ``feed4`` | ``adexa`` | ``yadore``
-— Kelkoo feed1/feed2 use ``FEED1_API_KEY`` / ``FEED2_API_KEY``; ``kl`` uses legacy Kelkoo key via ``kl_as.check_monetization``;
+``monNetwork`` (case-insensitive): ``kl`` | ``feed1`` | ``feed2`` | ``feed5`` | ``kelkoo5`` | ``feed3`` | ``feed4`` | ``adexa`` | ``yadore``
+— Kelkoo feed1/feed2/feed5 use ``FEED1_API_KEY`` / ``FEED2_API_KEY`` / ``FEED5_API_KEY``; ``kl`` uses legacy Kelkoo key via ``kl_as.check_monetization``;
 ``feed3`` / ``feed4`` use Yadore deeplink / Adexa link monetizer checks.
 """
 from __future__ import annotations
@@ -38,6 +38,7 @@ from config import (
     ADEXA_SITE_ID,
     FEED1_API_KEY,
     FEED2_API_KEY,
+    FEED5_API_KEY,
     SK_OPTIMIZER_SHEET_ID,
     SK_UNMON_SKIP_CAMPAIGN_IDS,
     SK_TOOLS_SPREADSHEET_ID,
@@ -195,6 +196,11 @@ def _monetization_for_network(mon_network: str, mon_url: str, geo: str) -> Tuple
             if not FEED2_API_KEY:
                 return None, "error"
             st = format_kelkoo_monetization_status(kelkoo_merchant_link_check(url, g, FEED2_API_KEY))
+            return st.startswith("monetized"), None
+        if net in ("feed5", "kelkoo5"):
+            if not FEED5_API_KEY:
+                return None, "error"
+            st = format_kelkoo_monetization_status(kelkoo_merchant_link_check(url, g, FEED5_API_KEY))
             return st.startswith("monetized"), None
         if net in ("feed3", "yadore"):
             d = deeplink(url, g)

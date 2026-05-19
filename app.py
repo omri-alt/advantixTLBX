@@ -32,6 +32,7 @@ from config import (
     ECOMNIA_GLOBA_LIST_TAB,
     FEED1_API_KEY,
     FEED2_API_KEY,
+    FEED5_API_KEY,
     KELKOO_LATE_SALES_SPREADSHEET_ID,
     KELKOO_POSTBACK_FEED_TAGS,
     LATE_SALES_POSTBACK_BASE,
@@ -1104,6 +1105,11 @@ def ui_matchmaking_manual():
             for g in geos:
                 k1 = kelkoo_merchant_link_check(domain, g, FEED1_API_KEY)
                 k2 = kelkoo_merchant_link_check(domain, g, FEED2_API_KEY)
+                k5 = (
+                    kelkoo_merchant_link_check(domain, g, FEED5_API_KEY)
+                    if (FEED5_API_KEY or "").strip()
+                    else {"found": False, "estimatedCpc": ""}
+                )
                 try:
                     y_nc = yadore_deeplink(domain, g, is_couponing=False)
                     y_nc_found = bool(y_nc.get("found"))
@@ -1126,6 +1132,7 @@ def ui_matchmaking_manual():
                         "geo": g,
                         "kelkoo1_found": bool(k1.get("found")),
                         "kelkoo2_found": bool(k2.get("found")),
+                        "kelkoo5_found": bool(k5.get("found")),
                         "yadore_non_coupon_found": y_nc_found,
                         "yadore_coupon_found": y_c_found,
                         "yadore_class": yadore_feed_class(y_nc_found, y_c_found),
@@ -1133,6 +1140,7 @@ def ui_matchmaking_manual():
                         "adexa_note": adexa_note,
                         "kelkoo1_cpc": str(k1.get("estimatedCpc", "")),
                         "kelkoo2_cpc": str(k2.get("estimatedCpc", "")),
+                        "kelkoo5_cpc": str(k5.get("estimatedCpc", "")),
                     }
                 )
     return render_template(

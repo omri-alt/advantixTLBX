@@ -14,7 +14,7 @@ Optional:
 
 With ``--apply``, you may add ``--register-exploration`` to append each created campaign
 to the ``SKtrackExploration`` tab (``SK_OPTIMIZER_SHEET_ID``) for the hourly optimizer.
-Use ``--mon-network kl|feed1|feed2|feed3|feed4`` (default ``kl``) for the new rows.
+Use ``--mon-network kl|feed1|feed2|feed5|feed3|feed4`` (default ``kl``) for the new rows.
 
 Examples:
   python sk_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --dry-run

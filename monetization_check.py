@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Monetization checker (Kelkoo feed1/2, Yadore feed3, Adexa feed4) driven by Google Sheets.
+Monetization checker (Kelkoo feed1/2/5, Yadore feed3, Adexa feed4) driven by Google Sheets.
 
 Spreadsheet: 1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0
 Input sheet: sourceToCheck (columns: url, geo)
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dotenv import load_dotenv
 load_dotenv()
 
-from config import FEED1_API_KEY, FEED2_API_KEY
+from config import FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY
 from integrations.kelkoo_search import kelkoo_merchant_link_check as kelkoo_check
 from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
 from integrations.adexa import links_merchant_check as adexa_links_check, AdexaClientError
@@ -36,8 +36,8 @@ SPREADSHEET_ID = "1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0"
 INPUT_SHEET = "sourceToCheck"
 OUTPUT_SHEET = "Matches"
 
-# Parallel HTTP calls per row (Kelkoo×2 + Yadore×2 + Adexa).
-_ROW_POOL_WORKERS = 5
+# Parallel HTTP calls per row (Kelkoo×3 + Yadore×2 + Adexa).
+_ROW_POOL_WORKERS = 6
 
 
 def get_credentials_path() -> str:
@@ -108,6 +108,11 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
     def _k2() -> Dict[str, Any]:
         return kelkoo_check(url, geo, FEED2_API_KEY)
 
+    def _k5() -> Dict[str, Any]:
+        if not (FEED5_API_KEY or "").strip():
+            return {"found": False, "estimatedCpc": "", "note": "no FEED5_API_KEY"}
+        return kelkoo_check(url, geo, FEED5_API_KEY)
+
     def _ync() -> Dict[str, Any]:
         try:
             return yadore_deeplink(url, geo, is_couponing=False)
@@ -130,6 +135,8 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
     with ThreadPoolExecutor(max_workers=_ROW_POOL_WORKERS) as ex:
         futures[ex.submit(_k1)] = "k1"
         futures[ex.submit(_k2)] = "k2"
+        if (FEED5_API_KEY or "").strip():
+            futures[ex.submit(_k5)] = "k5"
         futures[ex.submit(_ync)] = "ync"
         futures[ex.submit(_yc)] = "yc"
         futures[ex.submit(_ax)] = "ax"
@@ -173,12 +180,14 @@ def main() -> None:
         "adexa_note",
         "kelkoo1_found",
         "kelkoo2_found",
+        "kelkoo5_found",
         "yadore_nc_cpc",
         "yadore_nc_currency",
         "yadore_c_cpc",
         "yadore_c_currency",
         "kelkoo1_cpc",
         "kelkoo2_cpc",
+        "kelkoo5_cpc",
     ]
     ensure_sheet(service, OUTPUT_SHEET, header)
 
@@ -197,6 +206,7 @@ def main() -> None:
         r = _run_row_checks(url, geo)
         k1 = r["k1"]
         k2 = r["k2"]
+        k5 = r.get("k5") or {"found": False, "estimatedCpc": ""}
         y_nc = r["ync"]
         y_c = r["yc"]
         ax = r["ax"]
@@ -231,6 +241,7 @@ def main() -> None:
                 str(y_c_cur),
                 str(k1.get("estimatedCpc", "")),
                 str(k2.get("estimatedCpc", "")),
+                str(k5.get("estimatedCpc", "")),
             ]
         )
 
