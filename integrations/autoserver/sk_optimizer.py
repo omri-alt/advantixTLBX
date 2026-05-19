@@ -381,8 +381,6 @@ def _apply_slow_exploration_bid_decay_once_daily(
     state = _load_bid_decay_state()
     ok = 0
     failed = 0
-    changed_sources: List[str] = []
-    failed_sources: List[str] = []
     for sid, info in per_sub.items():
         clicks = int(info.get("clicks") or 0)
         if clicks <= 0 or clicks >= 30:
@@ -418,30 +416,19 @@ def _apply_slow_exploration_bid_decay_once_daily(
             if r is not None and r.status_code == 200:
                 state[lock_key] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 ok += 1
-                if len(changed_sources) < 20:
-                    changed_sources.append(sid)
             else:
                 failed += 1
-                if len(failed_sources) < 20:
-                    failed_sources.append(sid)
         except Exception as e:
             failed += 1
             logger.exception("SK bid-decay exception %s %s: %s", campaign_id, sid, e)
-            if len(failed_sources) < 20:
-                failed_sources.append(sid)
 
     _save_bid_decay_state(state)
     if ok or failed:
         _sk_tools_workbook_log(
             campaign_id,
             campaign_name,
-            "SK exploration: bid-decay summary",
-            {
-                "updated_ok": ok,
-                "failed_updates": failed,
-                "updated_sample_subIds": changed_sources,
-                "failed_sample_subIds": failed_sources,
-            },
+            f"SK exploration: bid-decay {ok} source(s) updated, {failed} failed",
+            {"bid_decay_ok": ok, "bid_decay_failed": failed},
         )
     return ok, failed
 
@@ -680,37 +667,36 @@ def checkUnmonExploration_SK() -> None:
                 if to_block:
                     bad = _blacklist_sources_sk(cid, to_block)
                     ok = [s for s in to_block if s not in bad]
-                    blacklisted_ok_total += len(ok)
-                    blacklisted_fail_total += len(bad)
-                    for s in ok:
-                        msg = f"Blacklisted source {s} on campaign {cid} ({clicks_map.get(s, 0)} clicks)"
-                        logger.info(msg)
-                        row["logs"] = _append_logs_cell(row.get("logs", ""), msg)
-                        _sk_tools_workbook_log(
-                            cid,
-                            cname_expl,
-                            f"SK exploration: blacklisted source {s}",
-                            {"clicks_window": int(clicks_map.get(s, 0) or 0), "from": stats_start, "to": today, "bidFactor": 0},
-                        )
+                    n_ok = len(ok)
+                    n_bad = len(bad)
+                    blacklisted_ok_total += n_ok
+                    blacklisted_fail_total += n_bad
+                    logger.info(
+                        "SK exploration campaign %s: blacklisted %s source(s), %s failed",
+                        cid,
+                        n_ok,
+                        n_bad,
+                    )
                     row["lastBlacklisted"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                     row["lastAction"] = "blacklist"
                     did_blacklist = True
-                    if bad:
-                        row["logs"] = _append_logs_cell(
-                            row.get("logs", ""), f"bid-factor 0 failed for: {','.join(bad)}"
-                        )
-                        for s in bad:
-                            _sk_tools_workbook_log(
-                                cid,
-                                cname_expl,
-                                f"SK exploration: blacklist failed for source {s}",
-                                {"clicks_window": int(clicks_map.get(s, 0) or 0), "from": stats_start, "to": today, "bidFactor": 0},
-                            )
+                    log_line = f"blacklisted {n_ok} source(s) on campaign {cid}"
+                    if n_bad:
+                        log_line += f", {n_bad} failed"
+                    row["logs"] = _append_logs_cell(row.get("logs", ""), log_line)
+                    verify = f"SK exploration: blacklisted {n_ok} source(s)"
+                    if n_bad:
+                        verify += f", {n_bad} failed"
                     _sk_tools_workbook_log(
                         cid,
                         cname_expl,
-                        "SK exploration: blacklist high-click publishers",
-                        {"blacklisted": ok, "bid_factor_failed": bad},
+                        verify,
+                        {
+                            "blacklisted_count": n_ok,
+                            "blacklist_failed_count": n_bad,
+                            "from": stats_start,
+                            "to": today,
+                        },
                     )
                     changed = True
 
