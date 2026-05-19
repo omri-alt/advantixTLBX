@@ -478,6 +478,18 @@ ADEXA_API_KEY = (ADEXA_API_KEY or "").strip().lstrip("= ").strip().strip('"').st
 AUTOSERVER_SCHEDULER_ENABLED = (
     os.getenv("AUTOSERVER_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no")
 )
+# Hour gate for even/odd automations (``on_hourly_signal``). Default UTC; set e.g. ``Europe/Warsaw`` for panel time.
+AUTOSERVER_SCHEDULER_TZ = (os.getenv("AUTOSERVER_SCHEDULER_TZ") or "UTC").strip()
+_as_hb = (os.getenv("AUTOSERVER_SCHEDULER_HEARTBEAT_PATH") or "").strip()
+if _as_hb:
+    _as_hb_p = Path(_as_hb)
+    AUTOSERVER_SCHEDULER_HEARTBEAT_PATH = (
+        _as_hb_p if _as_hb_p.is_absolute() else Path(__file__).resolve().parent / _as_hb
+    )
+else:
+    AUTOSERVER_SCHEDULER_HEARTBEAT_PATH = (
+        Path(__file__).resolve().parent / "runtime" / "autoserver_scheduler_heartbeat.json"
+    )
 AUTOSERVER_RUN_LOG_MAX = int((os.getenv("AUTOSERVER_RUN_LOG_MAX") or "500").strip() or "500")
 _as_log_raw = (os.getenv("AUTOSERVER_RUN_LOG_PATH") or "").strip()
 if _as_log_raw:

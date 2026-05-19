@@ -1,13 +1,15 @@
 """
-APScheduler hourly broadcast for AutoServer-derived automations (minute 0).
+APScheduler jobs for AutoServer-derived automations.
 
-Start via ``start_autoserver_scheduler()`` from the Flask app factory / module
-load so it runs under Gunicorn (not only ``__main__``).
+Each automation has its own hourly cron job (minute 0) so a slow Mehilot run does not
+block KLWL / Blend sync on the same worker tick.
 
-For multi-worker Gunicorn, set ``AUTOSERVER_SCHEDULER_ENABLED=0`` on all but one worker.
+Start via ``start_autoserver_scheduler()`` from ``scheduler.background`` (one Gunicorn
+worker when using ``gunicorn.conf.py``).
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -34,9 +36,74 @@ def get_scheduler() -> Any:
     return _scheduler
 
 
+def _heartbeat_path() -> "Path":
+    from pathlib import Path
+
+    from config import AUTOSERVER_SCHEDULER_HEARTBEAT_PATH
+
+    p = Path(AUTOSERVER_SCHEDULER_HEARTBEAT_PATH)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parents[1] / p
+    return p
+
+
+def _write_scheduler_heartbeat() -> None:
+    path = _heartbeat_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "pid": os.getpid(),
+        "at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "running": bool(_scheduler and getattr(_scheduler, "running", False)),
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _heartbeat_is_recent(max_age_minutes: int = 90) -> bool:
+    path = _heartbeat_path()
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        at_s = str(data.get("at_utc") or "")
+        if at_s.endswith("Z"):
+            at_s = at_s[:-1] + "+00:00"
+        at = datetime.fromisoformat(at_s).astimezone(timezone.utc)
+        return at >= datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    except Exception:
+        return False
+
+
 def scheduler_running() -> bool:
     sch = _scheduler
-    return bool(sch and getattr(sch, "running", False))
+    if sch and getattr(sch, "running", False):
+        return True
+    return _heartbeat_is_recent()
+
+
+def _current_scheduler_hour() -> int:
+    from config import AUTOSERVER_SCHEDULER_TZ
+
+    from zoneinfo import ZoneInfo
+
+    tz_name = (AUTOSERVER_SCHEDULER_TZ or "UTC").strip()
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        logger.warning("Invalid AUTOSERVER_SCHEDULER_TZ %r; using UTC", tz_name)
+        tz = ZoneInfo("UTC")
+    return datetime.now(tz).hour
+
+
+def _run_automation_hourly(automation: Any) -> None:
+    hour = _current_scheduler_hour()
+    name = automation.__class__.__name__
+    logger.info("=== AUTOSERVER hourly %s (hour=%s tz) ===", name, hour)
+    try:
+        automation.on_hourly_signal(hour)
+    except Exception:
+        logger.exception("Error in %s.on_hourly_signal", name)
 
 
 def _run_close_nipuhim_scheduled() -> None:
@@ -51,11 +118,12 @@ def _run_close_nipuhim_scheduled() -> None:
 
 
 def _hourly_signal_broadcast() -> None:
-    current_hour = datetime.now().hour
-    logger.info("=== AUTOSERVER HOURLY SIGNAL hour=%s ===", current_hour)
+    """Legacy single-threaded broadcast (manual catch-up / trigger-all internals)."""
+    hour = _current_scheduler_hour()
+    logger.info("=== AUTOSERVER HOURLY SIGNAL hour=%s ===", hour)
     for automation in _automation_listeners:
         try:
-            automation.on_hourly_signal(current_hour)
+            automation.on_hourly_signal(hour)
         except Exception:
             logger.exception("Error in %s", automation.__class__.__name__)
 
@@ -118,9 +186,6 @@ def _should_schedule_startup_catchup() -> bool:
     """
     Run one immediate catch-up when the process starts mid-hour and no recent
     AutoServer execution was recorded.
-
-    Without this, a deploy/restart at e.g. 09:58 leaves the dashboard on
-    "No run yet" until 10:00 even though the scheduler is healthy.
     """
     now_utc = datetime.now(timezone.utc)
     if now_utc.minute == 0:
@@ -155,8 +220,6 @@ def start_autoserver_scheduler() -> None:
     if not AUTOSERVER_SCHEDULER_ENABLED:
         logger.info("AutoServer APScheduler disabled (AUTOSERVER_SCHEDULER_ENABLED)")
         return
-    # Skip only the parent process of the Werkzeug dev reloader. In other
-    # runtimes, FLASK_DEBUG may still be set while WERKZEUG_RUN_MAIN is unset.
     if os.getenv("FLASK_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") == "false":
         return
     if _started:
@@ -168,7 +231,21 @@ def start_autoserver_scheduler() -> None:
 
     _ensure_listeners()
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_hourly_signal_broadcast, trigger="cron", minute=0)
+    for automation in _automation_listeners:
+        name = automation.__class__.__name__
+        if name == "CloseNipuhimAuto":
+            continue
+        _scheduler.add_job(
+            _run_automation_hourly,
+            trigger="cron",
+            minute=0,
+            args=[automation],
+            id=f"autoserver_hourly_{name}",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=900,
+        )
     try:
         from zoneinfo import ZoneInfo
 
@@ -186,14 +263,33 @@ def start_autoserver_scheduler() -> None:
         timezone=zp_close_tz,
         id="zeropark_close_general_mehila",
         replace_existing=True,
+        max_instances=1,
+    )
+    _scheduler.add_job(
+        _write_scheduler_heartbeat,
+        trigger="interval",
+        minutes=5,
+        id="autoserver_scheduler_heartbeat",
+        replace_existing=True,
     )
     _scheduler.start()
+    _write_scheduler_heartbeat()
     if _should_schedule_startup_catchup():
-        _scheduler.add_job(_hourly_signal_broadcast, trigger="date", run_date=datetime.now())
-        logger.info("AutoServer APScheduler scheduled startup catch-up run")
+        for automation in _automation_listeners:
+            if automation.__class__.__name__ == "CloseNipuhimAuto":
+                continue
+            _scheduler.add_job(
+                _run_automation_hourly,
+                trigger="date",
+                run_date=datetime.now(),
+                args=[automation],
+                id=f"autoserver_catchup_{automation.__class__.__name__}",
+            )
+        logger.info("AutoServer APScheduler scheduled per-automation startup catch-up")
     _started = True
     logger.info(
-        "AutoServer APScheduler started (hourly at :00; Zeropark close at %02d:%02d %s)",
+        "AutoServer APScheduler started (%s hourly jobs at :00; Zeropark close at %02d:%02d %s)",
+        len(_automation_listeners) - 1,
         int(ZEROPARK_CLOSE_HOUR),
         int(ZEROPARK_CLOSE_MINUTE),
         ZEROPARK_CLOSE_TZ,

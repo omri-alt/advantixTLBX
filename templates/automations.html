@@ -123,7 +123,7 @@
     function renderCards(data) {
       var on = data.scheduler_running;
       schedInd.querySelector(".dot").className = "dot " + (on ? "on" : "off");
-      schedTxt.textContent = on ? "Scheduler running" : "Scheduler stopped";
+      schedTxt.textContent = on ? "Scheduler running" : "Scheduler stopped (redeploy with gunicorn.conf.py; one worker holds the lock)";
       var items = data.automations || [];
       cardsEl.innerHTML = items.map(function(a) {
         var lr = a.last_run || null;

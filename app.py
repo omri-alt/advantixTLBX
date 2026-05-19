@@ -65,8 +65,6 @@ from integrations.overview_snapshot import (
     queue_overview_refresh,
     read_refresh_state,
     read_snapshot_for_api,
-    start_daily_overview_scheduler,
-    start_overview_snapshot_bootstrap,
 )
 from integrations.daily_conversion_postbacks import (
     default_report_date_str,
@@ -96,9 +94,7 @@ from scheduler.autoserver_scheduler import (
     schedule_trigger_all,
     schedule_trigger_one,
     scheduler_running,
-    start_autoserver_scheduler,
 )
-from scheduler.kelkoo_late_sales_scheduler import start_kelkoo_late_sales_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -2493,25 +2489,10 @@ def assistance_get_streams_by_campaign():
         }), (e.status_code or 502)
 
 
-try:
-    start_autoserver_scheduler()
-except Exception as e:
-    logger.warning("AutoServer scheduler did not start: %s", e)
+from scheduler.background import should_start_background_schedulers_at_import, start_background_schedulers
 
-try:
-    start_kelkoo_late_sales_scheduler()
-except Exception as e:
-    logger.warning("Kelkoo late-sales prep scheduler did not start: %s", e)
-
-try:
-    start_daily_overview_scheduler()
-except Exception as e:
-    logger.warning("Overview snapshot scheduler did not start: %s", e)
-
-try:
-    start_overview_snapshot_bootstrap()
-except Exception as e:
-    logger.warning("Overview snapshot bootstrap did not start: %s", e)
+if should_start_background_schedulers_at_import():
+    start_background_schedulers()
 
 
 def main():
