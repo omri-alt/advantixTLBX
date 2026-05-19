@@ -3,7 +3,7 @@
 Populate the `Blend` sheet from a feed-specific potential sheet in the Blend spreadsheet.
 
 Reads:
-  - potentialKelkoo1, potentialKelkoo2, potentialAdexa, or potentialYadore
+  - potentialKelkoo1, potentialKelkoo2, potentialKelkoo5, potentialAdexa, or potentialYadore
 
 Writes (upserts) into:
   - Blend tab
@@ -13,7 +13,7 @@ Rules:
   - inserted rows get:
       clickCap = 50
       auto = v
-      feed = kelkoo1 / kelkoo2 / adexa / yadore (based on --feed)
+      feed = kelkoo1 / kelkoo2 / kelkoo5 / adexa / yadore (based on --feed)
   - avoids duplicates by (geo, merchantId, feed)
   - ``--max-add`` is a safety ceiling on **new** rows per run (daily uses env ``BLEND_POPULATE_MAX_ADD``,
     default large so monetized merchants from the potential sheet are not dropped arbitrarily).
@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import BLEND_SHEETS_SPREADSHEET_ID
+from config import BLEND_FEED_CHOICES, BLEND_SHEETS_SPREADSHEET_ID
 
 BLEND_SPREADSHEET_ID = BLEND_SHEETS_SPREADSHEET_ID
 BLEND_SHEET = "Blend"
@@ -121,7 +121,7 @@ def _reorder_potential_body_rows(
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Upsert monetized potential merchants into Blend sheet.")
-    p.add_argument("--feed", required=True, choices=["kelkoo1", "kelkoo2", "adexa", "yadore"])
+    p.add_argument("--feed", required=True, choices=list(BLEND_FEED_CHOICES))
     p.add_argument(
         "--max-add",
         type=int,
@@ -143,6 +143,7 @@ def main() -> None:
     potential_sheet = {
         "kelkoo1": "potentialKelkoo1",
         "kelkoo2": "potentialKelkoo2",
+        "kelkoo5": "potentialKelkoo5",
         "adexa": "potentialAdexa",
         "yadore": "potentialYadore",
     }[args.feed]

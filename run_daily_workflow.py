@@ -72,6 +72,7 @@ from config import (
     BLEND_POTENTIAL_FEEDS,
     FEED1_API_KEY,
     FEED2_API_KEY,
+    FEED5_API_KEY,
     FEED2_MERCHANTS_GEOS,
     KELKOO_SHEETS_SPREADSHEET_ID,
     YADORE_API_KEY,
@@ -323,6 +324,8 @@ def _blend_potential_feeds_for_run() -> tuple[str, ...]:
             print("   Note: Blend potential 'kelkoo1' skipped (missing FEED1_API_KEY).")
         elif f == "kelkoo2":
             print("   Note: Blend potential 'kelkoo2' skipped (missing FEED2_API_KEY).")
+        elif f == "kelkoo5":
+            print("   Note: Blend potential 'kelkoo5' skipped (missing FEED5_API_KEY / KLFEED3_API_KEY).")
         elif f == "adexa":
             print("   Note: Blend potential 'adexa' skipped (missing ADEXA_SITE_ID / ADEXA_API_KEY).")
         elif f == "yadore":

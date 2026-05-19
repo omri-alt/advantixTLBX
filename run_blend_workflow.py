@@ -21,14 +21,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from config import BLEND_POTENTIAL_FEEDS
+
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Blend: Keitaro sync + potential merchant sheets")
     p.add_argument(
         "--feed",
         default="both",
-        choices=["kelkoo1", "kelkoo2", "adexa", "yadore", "both", "all"],
-        help="Potential sheet source: kelkoo1/kelkoo2/adexa/yadore, both=Kelkoo only, all=kelkoo1+kelkoo2+adexa+yadore.",
+        choices=["kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore", "both", "all"],
+        help="Potential source: kelkoo*/adexa/yadore; both=kelkoo1+kelkoo2; all=BLEND_POTENTIAL_FEEDS from .env.",
     )
     p.add_argument("--geo", default=None, help="Passed to blend_sync_from_sheet.")
     p.add_argument("--skip-potential", action="store_true", help="Skip blend_potential_merchants.")
@@ -45,7 +48,7 @@ def main() -> None:
     if args.feed == "both":
         feeds = ["kelkoo1", "kelkoo2"]
     elif args.feed == "all":
-        feeds = ["kelkoo1", "kelkoo2", "adexa", "yadore"]
+        feeds = list(BLEND_POTENTIAL_FEEDS)
     else:
         feeds = [args.feed]
 

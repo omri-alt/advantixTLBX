@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from config import BLEND_FEED_CHOICES  # noqa: E402
 from populate_blend_from_potential import (  # noqa: E402
     BLEND_SHEET,
     BLEND_SPREADSHEET_ID,
@@ -61,7 +62,7 @@ def _blend_existing_keys(service, feed_tag: str) -> Set[Tuple[str, str, str]]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Diagnose Blend potential → Blend sheet path for one merchant.")
-    p.add_argument("--feed", required=True, choices=["kelkoo1", "kelkoo2", "adexa", "yadore"])
+    p.add_argument("--feed", required=True, choices=list(BLEND_FEED_CHOICES))
     p.add_argument("--brand", required=True, help="Case-insensitive substring matched against merchant column")
     p.add_argument("--geo", default="", help="Optional 2-letter geo filter when printing matches")
     args = p.parse_args()
@@ -69,6 +70,7 @@ def main() -> None:
     potential_sheet = {
         "kelkoo1": "potentialKelkoo1",
         "kelkoo2": "potentialKelkoo2",
+        "kelkoo5": "potentialKelkoo5",
         "adexa": "potentialAdexa",
         "yadore": "potentialYadore",
     }[args.feed]

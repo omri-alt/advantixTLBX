@@ -14,6 +14,7 @@ Defaults:
 
 Usage:
   python blend_potential_merchants.py --feed kelkoo1
+  python blend_potential_merchants.py --feed kelkoo5
   python blend_potential_merchants.py --feed adexa
   python blend_potential_merchants.py --feed yadore
 """
@@ -33,10 +34,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import (
+    BLEND_FEED_CHOICES,
     BLEND_SHEETS_SPREADSHEET_ID,
     FEED1_API_KEY,
     FEED2_API_KEY,
     FEED2_MERCHANTS_GEOS,
+    FEED5_API_KEY,
+    FEED5_MERCHANTS_GEOS,
     YADORE_REPORT_DETAIL_MARKETS,
 )
 from workflows.kelkoo_daily import download_merchants_feed, REPORTS_AGGREGATED_URL, _headers
@@ -79,6 +83,8 @@ def _api_key_for_feed(feed: str) -> str:
         return FEED1_API_KEY
     if f == "kelkoo2":
         return FEED2_API_KEY
+    if f == "kelkoo5":
+        return FEED5_API_KEY
     return ""
 
 
@@ -87,6 +93,7 @@ def _default_output_sheet(feed: str) -> str:
     return {
         "kelkoo1": "potentialKelkoo1",
         "kelkoo2": "potentialKelkoo2",
+        "kelkoo5": "potentialKelkoo5",
         "adexa": "potentialAdexa",
         "yadore": "potentialYadore",
     }.get(f, f"potential{f.title()}")
@@ -419,7 +426,7 @@ def main() -> None:
     p.add_argument(
         "--feed",
         required=True,
-        choices=["kelkoo1", "kelkoo2", "adexa", "yadore"],
+        choices=list(BLEND_FEED_CHOICES),
     )
     p.add_argument("--output", default=None, help="Output sheet name (default: potentialKelkoo1/2)")
     p.add_argument("--start", default=None)
@@ -460,7 +467,11 @@ def main() -> None:
         raise RuntimeError(f"Reports API {r.status_code}: {r.text[:500]}")
     report_items = r.json() or []
 
-    geo_list = list(FEED2_MERCHANTS_GEOS) if args.feed == "kelkoo2" and FEED2_MERCHANTS_GEOS else None
+    geo_list = None
+    if args.feed == "kelkoo2" and FEED2_MERCHANTS_GEOS:
+        geo_list = list(FEED2_MERCHANTS_GEOS)
+    elif args.feed == "kelkoo5" and FEED5_MERCHANTS_GEOS:
+        geo_list = list(FEED5_MERCHANTS_GEOS)
     merchants_feed = download_merchants_feed(api_key, geo_list, static_only=False)
     feed_by_id: Dict[str, Dict[str, str]] = {}
     for m in merchants_feed:

@@ -2024,10 +2024,10 @@ def ui_workflow(workflow_key: str):
         extra_args = (request.form.get("extra_args") or "").strip()
         if workflow_key == "blend":
             bf = (request.form.get("blend_feed") or "both").strip().lower()
-            if bf in ("kelkoo1", "kelkoo2", "adexa", "yadore", "both", "all"):
+            if bf in ("kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore", "both", "all"):
                 # Avoid duplicate --feed if user pasted one in the text box; dropdown wins.
                 extra_args = re.sub(
-                    r"--feed\s+(kelkoo1|kelkoo2|adexa|yadore|both|all)\b",
+                    r"--feed\s+(kelkoo1|kelkoo2|kelkoo5|adexa|yadore|both|all)\b",
                     "",
                     extra_args,
                     flags=re.IGNORECASE,

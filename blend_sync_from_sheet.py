@@ -45,8 +45,10 @@ from config import (
     BLEND_YADORE_OFFER_USE_SUB_MACROS,
     FEED1_API_KEY,
     FEED2_API_KEY,
+    FEED5_API_KEY,
     FEED1_KELKOO_ACCOUNT_ID,
     FEED2_KELKOO_ACCOUNT_ID,
+    FEED5_KELKOO_ACCOUNT_ID,
     KELKOO_ACCOUNT_ID,
     KELKOO_ACCOUNT_ID_2,
     YADORE_PROJECT_ID,
@@ -75,10 +77,11 @@ BLEND_CAMPAIGN_ALIAS = "9Xq9dSMh"
 POTENTIAL_TAB_BY_FEED: Dict[str, str] = {
     "kelkoo1": "potentialKelkoo1",
     "kelkoo2": "potentialKelkoo2",
+    "kelkoo5": "potentialKelkoo5",
     "adexa": "potentialAdexa",
     "yadore": "potentialYadore",
 }
-KNOWN_BLEND_FEED_TAGS: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "adexa", "yadore")
+KNOWN_BLEND_FEED_TAGS: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore")
 
 # Keitaro offer shells: inner URLs are percent-encoded as the ``rain`` query value.
 BLEND_ADEXA_RAIN_SHELL = "https://shopli.city/raino?rain="
@@ -224,6 +227,8 @@ def _kelkoo_api_key_for_feed_tag(feed_tag: str) -> Optional[str]:
         return FEED1_API_KEY
     if ft == "kelkoo2":
         return FEED2_API_KEY
+    if ft == "kelkoo5":
+        return FEED5_API_KEY
     return None
 
 
@@ -303,6 +308,9 @@ def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> st
     if ft == "kelkoo2":
         acc = (FEED2_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID_2
         return build_offer_action_payload(geo, offer_url, account_id=acc, feed=2)
+    if ft == "kelkoo5":
+        acc = (FEED5_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID
+        return build_offer_action_payload(geo, offer_url, account_id=acc, feed=1)
     if ft == "adexa":
         return _blend_adexa_action_payload(geo, offer_url)
     if ft == "yadore":

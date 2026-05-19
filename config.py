@@ -136,7 +136,7 @@ def _parse_blend_potential_feeds() -> tuple[str, ...]:
     """
     raw = (os.getenv("BLEND_POTENTIAL_FEEDS") or "kelkoo1,kelkoo2,adexa,yadore").strip().lower()
     parts = [p.strip() for p in raw.split(",") if p.strip()]
-    allowed = {"kelkoo1", "kelkoo2", "adexa", "yadore"}
+    allowed = {"kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore"}
     out = tuple(p for p in parts if p in allowed)
     return out if out else ("kelkoo1", "kelkoo2", "adexa", "yadore")
 
@@ -154,6 +154,16 @@ BLEND_POPULATE_MAX_ADD = max(1, min(20000, BLEND_POPULATE_MAX_ADD))
 # Kelkoo
 FEED1_API_KEY = (os.getenv("FEED1_API_KEY") or "").strip()
 FEED2_API_KEY = (os.getenv("FEED2_API_KEY") or "").strip()
+# Kelkoo feed 5 (Blend tag ``kelkoo5``): ``FEED5_API_KEY`` or legacy ``KLFEED3_API_KEY`` in .env
+FEED5_API_KEY = (os.getenv("FEED5_API_KEY") or os.getenv("KLFEED3_API_KEY") or "").strip()
+if not FEED5_API_KEY:
+    FEED5_API_KEY = (
+        _read_env_fallback("FEED5_API_KEY") or _read_env_fallback("KLFEED3_API_KEY") or ""
+    ).strip()
+FEED5_API_KEY = (FEED5_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
+
+# argparse / UI feed tags for Blend tooling
+BLEND_FEED_CHOICES: tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore")
 
 
 def discover_kelkoo_feed_api_keys() -> tuple[tuple[int, str], ...]:
@@ -183,6 +193,34 @@ KELKOO_ACCOUNT_ID = (os.getenv("KELKOO_ACCOUNT_ID") or "47692679-139a-4232-9170-
 KELKOO_ACCOUNT_ID_2 = (os.getenv("KELKOO_ACCOUNT_ID_2") or "").strip() or None
 FEED1_KELKOO_ACCOUNT_ID = (os.getenv("FEED1_KELKOO_ACCOUNT_ID") or "").strip() or KELKOO_ACCOUNT_ID
 FEED2_KELKOO_ACCOUNT_ID = (os.getenv("FEED2_KELKOO_ACCOUNT_ID") or "").strip() or (KELKOO_ACCOUNT_ID_2 or "")
+
+# Blend / Keitaro offer URLs for ``feed=kelkoo5`` rows (permanentLinkGo account id).
+FEED5_KELKOO_ACCOUNT_ID = (os.getenv("FEED5_KELKOO_ACCOUNT_ID") or "").strip()
+if not FEED5_KELKOO_ACCOUNT_ID:
+    FEED5_KELKOO_ACCOUNT_ID = _read_env_fallback("FEED5_KELKOO_ACCOUNT_ID")
+FEED5_KELKOO_ACCOUNT_ID = (FEED5_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID
+
+
+def _parse_feed5_merchants_geos() -> tuple[str, ...] | None:
+    """Optional geo filter for Kelkoo feed5 merchants API (same idea as ``FEED2_MERCHANTS_GEOS``)."""
+    raw = (os.getenv("FEED5_MERCHANTS_GEOS") or os.getenv("KLFEED3_MERCHANTS_GEOS") or "").strip().lower()
+    if not raw:
+        return None
+    out: list[str] = []
+    for part in raw.split(","):
+        p = part.strip().lower()
+        if len(p) >= 2 and p[:2].isalpha():
+            out.append(p[:2])
+    seen: set[str] = set()
+    uniq = []
+    for g in out:
+        if g not in seen:
+            seen.add(g)
+            uniq.append(g)
+    return tuple(uniq) if uniq else None
+
+
+FEED5_MERCHANTS_GEOS: tuple[str, ...] | None = _parse_feed5_merchants_geos()
 
 
 def _parse_feed2_merchants_geos() -> tuple[str, ...] | None:

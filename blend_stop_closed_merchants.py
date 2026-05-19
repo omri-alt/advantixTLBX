@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import FEED1_API_KEY, FEED2_API_KEY
+from config import FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY
 from assistance import (
     add_country_flow,
     flow_name_to_geo,
@@ -81,6 +81,8 @@ def _kelkoo_api_key_for_feed_tag(feed_tag: str) -> Optional[str]:
         return FEED1_API_KEY
     if ft == "kelkoo2":
         return FEED2_API_KEY
+    if ft == "kelkoo5":
+        return FEED5_API_KEY
     return None
 
 
