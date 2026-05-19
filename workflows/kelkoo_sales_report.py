@@ -51,8 +51,10 @@ def _fetch_raw_tsv_yesterday(session: requests.Session, api_key: str, geo: str) 
 
 
 def _click_id_from_raw_row(r: Dict[str, str], feed_index: int) -> str:
-    """Kelkoo2 raw rows use ``custom1`` for Keitaro subid; feed1 uses ``publisherClickId``."""
-    if feed_index == 2:
+    """Kelkoo2 raw rows use ``custom1`` for Keitaro subid; other feeds use ``publisherClickId``."""
+    from config import kelkoo_raw_report_uses_custom1_subid
+
+    if kelkoo_raw_report_uses_custom1_subid(feed_index=feed_index):
         for key in ("custom1", "Custom1"):
             v = r.get(key)
             if v is not None and str(v).strip():

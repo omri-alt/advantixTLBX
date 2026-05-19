@@ -7,16 +7,17 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from config import KELKOO_RAW_REPORT_GEOS
+from config import KELKOO_POSTBACK_FEED_TAGS, KELKOO_RAW_REPORT_GEOS
 from integrations.daily_conversion_postback_state import load_state
 from integrations.daily_conversion_postbacks import default_report_date_str
-from integrations.daily_postbacks_run_history import load_last_runs
+from integrations.daily_postbacks_run_history import load_last_runs, postback_sources_enabled
 
 _DATE_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 FEED_META: Tuple[Tuple[str, str], ...] = (
     ("kelkoo1", "Kelkoo feed 1"),
     ("kelkoo2", "Kelkoo feed 2"),
+    ("kelkoo5", "Kelkoo feed 5"),
     ("adexa", "Adexa (feed 4)"),
     ("yadore", "Yadore (feed 3)"),
 )
@@ -122,8 +123,11 @@ def build_dashboard_cards(state_path: Path) -> List[Dict[str, Any]]:
     history = load_last_runs()
     geo_order = list(KELKOO_RAW_REPORT_GEOS) if KELKOO_RAW_REPORT_GEOS else []
 
+    enabled = set(postback_sources_enabled())
     cards: List[Dict[str, Any]] = []
     for key, title in FEED_META:
+        if key not in enabled:
+            continue
         src = (data.get("sources") or {}).get(key) or {}
         primary = _pick_primary_date(src)
         hist = history.get(key) if isinstance(history.get(key), dict) else {}
@@ -133,7 +137,7 @@ def build_dashboard_cards(state_path: Path) -> List[Dict[str, Any]]:
         kelkoo_extra: Dict[str, Any] = {}
         flat_extra: Dict[str, Any] = {}
 
-        if key in ("kelkoo1", "kelkoo2") and geo_order:
+        if key in KELKOO_POSTBACK_FEED_TAGS and geo_order:
             if primary:
                 det = kelkoo_state_detail(data, key, primary, geo_order)
                 state_ts = det.get("max_state_ts")
@@ -213,7 +217,7 @@ def feed_detail_context(
 
     kelkoo_detail: Optional[Dict[str, Any]] = None
     flat_detail: Optional[Dict[str, Any]] = None
-    if feed_key in ("kelkoo1", "kelkoo2") and rd and geo_order:
+    if feed_key in KELKOO_POSTBACK_FEED_TAGS and rd and geo_order:
         kelkoo_detail = kelkoo_state_detail(data, feed_key, rd, geo_order)
     elif feed_key in ("adexa", "yadore") and rd:
         flat_detail = flat_state_detail(data, feed_key, rd)

@@ -127,11 +127,12 @@ def send_postback_get(
 
 
 def kelkoo_api_key_for(feed: str) -> str:
-    if feed == "kelkoo1":
-        return (FEED1_API_KEY or "").strip()
-    if feed == "kelkoo2":
-        return (FEED2_API_KEY or "").strip()
-    raise ValueError(f"Unknown Kelkoo feed: {feed}")
+    from config import kelkoo_api_key_for_postback_tag
+
+    key = kelkoo_api_key_for_postback_tag(feed)
+    if not key:
+        raise ValueError(f"Unknown Kelkoo feed or missing API key: {feed}")
+    return key
 
 
 def fetch_kelkoo_raw_tsv(
@@ -152,8 +153,10 @@ def fetch_kelkoo_raw_tsv(
 
 
 def _kelkoo_row_click_id(row: Dict[str, str], feed: str) -> str:
-    """Kelkoo2 raw reports carry Keitaro subid in ``custom1``; kelkoo1 uses ``publisherClickId``."""
-    if feed == "kelkoo2":
+    """Kelkoo2 raw reports carry Keitaro subid in ``custom1``; kelkoo1/5 use ``publisherClickId``."""
+    from config import kelkoo_raw_report_uses_custom1_subid
+
+    if kelkoo_raw_report_uses_custom1_subid(feed_tag=feed):
         for key in ("custom1", "Custom1"):
             v = row.get(key)
             if v is not None and str(v).strip():
@@ -890,9 +893,12 @@ def run_daily_conversion_postbacks_batch(
 
     session = requests.Session()
     only_l = only.strip().lower()
-    targets: List[str]
+    from integrations.daily_postbacks_run_history import postback_sources_enabled
+
     if only_l in ("", "all"):
-        targets = ["kelkoo1", "kelkoo2", "adexa", "yadore"]
+        targets = postback_sources_enabled()
+        if not targets:
+            targets = ["kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore"]
     else:
         targets = [only_l]
 
@@ -943,7 +949,9 @@ def run_daily_conversion_postbacks_batch(
     )
 
     for t in targets:
-        if t in ("kelkoo1", "kelkoo2"):
+        from config import KELKOO_POSTBACK_FEED_TAGS
+
+        if t in KELKOO_POSTBACK_FEED_TAGS:
             out = run_kelkoo_feed_postbacks(
                 t,
                 report_date,

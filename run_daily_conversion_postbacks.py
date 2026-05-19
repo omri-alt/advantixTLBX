@@ -43,7 +43,7 @@ def main() -> None:
     ap.add_argument(
         "--only",
         default="all",
-        help="kelkoo1 | kelkoo2 | adexa | yadore | all",
+        help="kelkoo1 | kelkoo2 | kelkoo5 | adexa | yadore | all",
     )
     ap.add_argument("--geo", default="", help="Kelkoo only: process a single country code (e.g. uk).")
     ap.add_argument(
@@ -61,7 +61,7 @@ def main() -> None:
         action="append",
         default=[],
         metavar="SOURCE",
-        help="Clear saved state for SOURCE@report-date before running (repeatable). kelkoo1, kelkoo2, adexa, yadore.",
+        help="Clear saved state for SOURCE@report-date before running (repeatable). kelkoo1, kelkoo2, kelkoo5, adexa, yadore.",
     )
     args = ap.parse_args()
 

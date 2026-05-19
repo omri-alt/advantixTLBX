@@ -165,6 +165,27 @@ FEED5_API_KEY = (FEED5_API_KEY or "").strip().lstrip("= ").strip().strip('"').st
 # argparse / UI feed tags for Blend tooling
 BLEND_FEED_CHOICES: tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore")
 
+# Daily conversion postbacks UI / CLI (Kelkoo per-geo + Adexa/Yadore flat)
+KELKOO_POSTBACK_FEED_TAGS: tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5")
+
+
+def kelkoo_postback_tag_to_index(feed_tag: str) -> int:
+    """Map postback source tag to Kelkoo feed index (1, 2, 5, …)."""
+    return {"kelkoo1": 1, "kelkoo2": 2, "kelkoo5": 5}.get((feed_tag or "").strip().lower(), 0)
+
+
+def kelkoo_api_key_for_postback_tag(feed_tag: str) -> str:
+    idx = kelkoo_postback_tag_to_index(feed_tag)
+    by_idx = {1: FEED1_API_KEY, 2: FEED2_API_KEY, 5: FEED5_API_KEY}
+    return (by_idx.get(idx) or "").strip()
+
+
+def kelkoo_raw_report_uses_custom1_subid(*, feed_tag: str = "", feed_index: int = 0) -> bool:
+    """Kelkoo2 raw TSV uses ``custom1`` for Keitaro subid; other feeds use ``publisherClickId``."""
+    if feed_index == 2 or (feed_tag or "").strip().lower() == "kelkoo2":
+        return True
+    return False
+
 
 def discover_kelkoo_feed_api_keys() -> tuple[tuple[int, str], ...]:
     """
@@ -177,8 +198,15 @@ def discover_kelkoo_feed_api_keys() -> tuple[tuple[int, str], ...]:
     found: list[tuple[int, str]] = []
     for n in range(1, 33):
         k = (os.getenv(f"FEED{n}_API_KEY") or "").strip()
+        if not k and n == 5:
+            k = (os.getenv("KLFEED3_API_KEY") or _read_env_fallback("KLFEED3_API_KEY") or "").strip()
         if k:
             found.append((n, k))
+    # ``KLFEED3_API_KEY`` / resolved ``FEED5_API_KEY`` when ``FEED5_API_KEY`` env name is unset
+    if (FEED5_API_KEY or "").strip() and not any(n == 5 for n, _ in found):
+        found.append((5, (FEED5_API_KEY or "").strip()))
+    if found:
+        found.sort(key=lambda x: x[0])
     if not found:
         legacy = (
             (os.getenv("KEY_KL") or os.getenv("keyKL") or "").strip()

@@ -97,7 +97,7 @@
         <label for="report_date">Report date</label><br>
         <input type="text" id="report_date" name="report_date" value="{{ request.form.get('report_date', report_date or default_report_date) }}" style="width:200px;">
       </div>
-      {% if feed_key == 'kelkoo1' or feed_key == 'kelkoo2' %}
+      {% if feed_key in ('kelkoo1', 'kelkoo2', 'kelkoo5') %}
       <div>
         <label for="only_geo">Single country only (optional)</label><br>
         <input type="text" id="only_geo" name="only_geo" value="{{ request.form.get('only_geo', '') }}" placeholder="e.g. uk" style="width:120px;">

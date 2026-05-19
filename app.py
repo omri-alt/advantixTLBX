@@ -33,6 +33,7 @@ from config import (
     FEED1_API_KEY,
     FEED2_API_KEY,
     KELKOO_LATE_SALES_SPREADSHEET_ID,
+    KELKOO_POSTBACK_FEED_TAGS,
     LATE_SALES_POSTBACK_BASE,
     DAILY_CONVERSION_POSTBACK_STATE_PATH,
     OVERVIEW_SNAPSHOT_TZ,
@@ -1247,7 +1248,7 @@ def ui_kelkoo_late_sales():
     return render_template("late_sales.html", late_sales_result=late_sales_result)
 
 
-DAILY_POSTBACK_FEED_KEYS = frozenset({"kelkoo1", "kelkoo2", "adexa", "yadore"})
+DAILY_POSTBACK_FEED_KEYS = frozenset(list(KELKOO_POSTBACK_FEED_TAGS) + ["adexa", "yadore"])
 
 
 @app.route("/kelkoo/daily-postbacks", methods=["GET"])
@@ -1282,7 +1283,7 @@ def ui_kelkoo_daily_postbacks_feed(feed_key: str):
         focus_date = report_date
         only_geo_raw = (request.form.get("only_geo") or "").strip().lower()
         only_geo = only_geo_raw[:2] if len(only_geo_raw) >= 2 else None
-        if fk not in ("kelkoo1", "kelkoo2"):
+        if fk not in KELKOO_POSTBACK_FEED_TAGS:
             only_geo = None
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         dry_run = mode != "apply"
@@ -1292,7 +1293,7 @@ def ui_kelkoo_daily_postbacks_feed(feed_key: str):
             if (request.form.get("reset_state") or "").strip().lower() in ("1", "on", "yes", "true")
             else None
         )
-        run_in_background = (not dry_run) and (fk in ("kelkoo1", "kelkoo2")) and (only_geo is None)
+        run_in_background = (not dry_run) and (fk in KELKOO_POSTBACK_FEED_TAGS) and (only_geo is None)
         if run_in_background:
             bg = _run_daily_postbacks_feed_in_background(
                 feed_key=fk,
