@@ -100,6 +100,10 @@ _SK_BID_DECAY_RETRY_ROUNDS = max(1, int((os.getenv("SK_BID_DECAY_RETRY_ROUNDS") 
 _SK_BID_TRANSIENT_RETRY_MINUTES = max(
     1, int((os.getenv("SK_BID_TRANSIENT_RETRY_MINUTES") or "5").strip() or "5")
 )
+# SK by-publisher stats: ``start`` must be within the last ~3 months (90d can trigger HTTP 400).
+_SK_STATS_MAX_LOOKBACK_DAYS = max(
+    30, int((os.getenv("SK_STATS_MAX_LOOKBACK_DAYS") or "85").strip() or "85")
+)
 
 
 def _utc_today() -> str:
@@ -127,18 +131,45 @@ def _parse_campaign_start_date(camp_json: Optional[dict]) -> Optional[datetime.d
             return None
 
 
+def _sk_stats_earliest_allowed(today: Optional[datetime.date] = None) -> datetime.date:
+    """Earliest ``from`` date accepted by SK publisher stats (within last ~3 months)."""
+    today = today or datetime.now(timezone.utc).date()
+    return today - timedelta(days=_SK_STATS_MAX_LOOKBACK_DAYS)
+
+
+def _clamp_sk_stats_range(d0: str, d1: str) -> Tuple[str, str]:
+    """Clamp ``from``/``to`` so SK stats API does not return HTTP 400 invalid date range."""
+    today = datetime.now(timezone.utc).date()
+    earliest = _sk_stats_earliest_allowed(today)
+    try:
+        d1_date = datetime.strptime((d1 or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        d1_date = today
+    if d1_date > today:
+        d1_date = today
+    try:
+        d0_date = datetime.strptime((d0 or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        d0_date = earliest
+    if d0_date < earliest:
+        d0_date = earliest
+    if d0_date > d1_date:
+        d0_date = d1_date
+    return d0_date.strftime("%Y-%m-%d"), d1_date.strftime("%Y-%m-%d")
+
+
 def _sk_stats_start_date(camp_json: Optional[dict]) -> str:
     """
-    Start date for SK by-publisher checks:
-    - if campaign start is within the last 90 days, use campaign start
-    - otherwise use the last 90 days including today
+    Start date for SK by-publisher blacklist window:
+    - campaign start when it falls inside SK's allowed lookback
+    - otherwise earliest allowed day (~85d, under SK's 3-month cap)
     """
     today = datetime.now(timezone.utc).date()
-    floor_90d = today - timedelta(days=89)
+    earliest = _sk_stats_earliest_allowed(today)
     campaign_start = _parse_campaign_start_date(camp_json)
-    if campaign_start and campaign_start > floor_90d:
+    if campaign_start and earliest < campaign_start <= today:
         return campaign_start.strftime("%Y-%m-%d")
-    return floor_90d.strftime("%Y-%m-%d")
+    return earliest.strftime("%Y-%m-%d")
 
 
 def _append_logs_cell(existing: str, line: str, max_entries: int = 5) -> str:
@@ -254,10 +285,23 @@ def _sk_publisher_stats_page(campaign_id: int, d0: str, d1: str, page: int) -> T
 
 
 def _sk_aggregate_clicks_by_subid(campaign_id: int, d0: str, d1: str) -> Tuple[Dict[str, int], Optional[str]]:
+    d0, d1 = _clamp_sk_stats_range(d0, d1)
     clicks: Dict[str, int] = {}
     page = 1
     while True:
         data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
+        if err and "date range is invalid" in err.lower() and page == 1:
+            earliest = _sk_stats_earliest_allowed()
+            d0_retry = earliest.strftime("%Y-%m-%d")
+            if d0_retry != d0:
+                logger.info(
+                    "SK stats %s: retrying with from=%s (was %s) after invalid date range",
+                    campaign_id,
+                    d0_retry,
+                    d0,
+                )
+                d0 = d0_retry
+                data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
         if err:
             return {}, err
         if not isinstance(data, dict):
@@ -438,10 +482,17 @@ def _stats_items_by_subid_today(campaign_id: int, d0: str, d1: str) -> Tuple[Dic
     """
     Aggregate clicks and keep latest bidFactor / winRate for each subId in [d0..d1].
     """
+    d0, d1 = _clamp_sk_stats_range(d0, d1)
     out: Dict[str, Dict[str, Any]] = {}
     page = 1
     while True:
         data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
+        if err and "date range is invalid" in err.lower() and page == 1:
+            earliest = _sk_stats_earliest_allowed()
+            d0_retry = earliest.strftime("%Y-%m-%d")
+            if d0_retry != d0:
+                d0 = d0_retry
+                data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
         if err:
             return {}, err
         if not isinstance(data, dict):
