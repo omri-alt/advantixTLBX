@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -90,6 +91,15 @@ HEADERS_WL = [
 _BID_DECAY_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_bidfactor_decay_state.json"
 _SK_TOOLS_LOG_DISABLED_UNTIL: Optional[datetime] = None
 _SK_UNMON_SKIP_CAMPAIGN_ID_SET = {int(x) for x in (SK_UNMON_SKIP_CAMPAIGN_IDS or ())}
+
+# SK bid-factor floor (exploration often uses ~0.205; halving below ~0.0101 returns HTTP 400).
+SK_MIN_BID_FACTOR = float((os.getenv("SK_MIN_BID_FACTOR") or "0.0101").strip() or "0.0101")
+_SK_BID_POST_DELAY_S = float((os.getenv("SK_BID_POST_DELAY_S") or "0.4").strip() or "0.4")
+_SK_BID_429_MAX_ATTEMPTS = max(4, int((os.getenv("SK_BID_429_MAX_ATTEMPTS") or "8").strip() or "8"))
+_SK_BID_DECAY_RETRY_ROUNDS = max(1, int((os.getenv("SK_BID_DECAY_RETRY_ROUNDS") or "3").strip() or "3"))
+_SK_BID_TRANSIENT_RETRY_MINUTES = max(
+    1, int((os.getenv("SK_BID_TRANSIENT_RETRY_MINUTES") or "5").strip() or "5")
+)
 
 
 def _utc_today() -> str:
@@ -326,6 +336,104 @@ def _save_bid_decay_state(state: Dict[str, str]) -> None:
     p.write_text(json.dumps(pruned, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _bid_decay_state_blocks(lock_key: str, state: Dict[str, str], now: datetime) -> bool:
+    """True if we should not POST again today (success, skip:*, or retry: not yet due)."""
+    val = (state.get(lock_key) or "").strip()
+    if not val:
+        return False
+    if val.startswith("retry:"):
+        raw = val[6:].strip()
+        try:
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            retry_at = datetime.fromisoformat(raw)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return now < retry_at.astimezone(timezone.utc)
+        except Exception:
+            return False
+    return True
+
+
+def _schedule_bid_decay_retry(state: Dict[str, str], lock_key: str, now: datetime) -> None:
+    retry_at = now + timedelta(minutes=_SK_BID_TRANSIENT_RETRY_MINUTES)
+    state[lock_key] = f"retry:{retry_at.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
+
+
+def _post_bid_factor_with_retry(
+    campaign_id: int,
+    sub_id: str,
+    bid_factor: float,
+) -> Tuple[bool, str]:
+    """
+    POST bid-factor with 429 backoff. Returns (ok, reason).
+    reason: ``ok`` | ``api_min`` | ``rate_limit`` | ``http_<code>`` | ``exception``.
+    """
+    wait_s = 1.0
+    last_status: Optional[int] = None
+    last_body = ""
+    try:
+        for _attempt in range(_SK_BID_429_MAX_ATTEMPTS):
+            r = sk.post_bid_factor(campaign_id, sub_id, bid_factor)
+            last_status = r.status_code
+            last_body = (r.text or "")[:300]
+            if r.status_code == 200:
+                if _SK_BID_POST_DELAY_S > 0:
+                    time.sleep(_SK_BID_POST_DELAY_S)
+                return True, "ok"
+            if r.status_code == 429:
+                time.sleep(wait_s)
+                wait_s = min(wait_s * 2.0, 30.0)
+                continue
+            if r.status_code == 400 and "lower than" in last_body.lower():
+                return False, "api_min"
+            break
+    except Exception as e:
+        logger.exception("SK bid-factor exception %s %s: %s", campaign_id, sub_id, e)
+        return False, "exception"
+
+    if last_status == 429:
+        return False, "rate_limit"
+    return False, f"http_{last_status or 0}"
+
+
+def _flush_bid_decay_pending(
+    campaign_id: int,
+    pending: List[Tuple[str, float, str]],
+    state: Dict[str, str],
+    now: datetime,
+) -> Tuple[int, int]:
+    """Retry rate-limited decay updates in the same run (not only next hour)."""
+    ok = 0
+    failed = 0
+    queue = list(pending)
+    for round_i in range(_SK_BID_DECAY_RETRY_ROUNDS):
+        if not queue:
+            break
+        if round_i > 0:
+            time.sleep(2.0)
+        next_queue: List[Tuple[str, float, str]] = []
+        for sid, new_bf, lock_key in queue:
+            success, reason = _post_bid_factor_with_retry(campaign_id, sid, new_bf)
+            if success:
+                state[lock_key] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                ok += 1
+                continue
+            if reason == "api_min":
+                state[lock_key] = "skip:api_min"
+                continue
+            if reason in ("rate_limit", "exception") or str(reason).startswith("http_5"):
+                next_queue.append((sid, new_bf, lock_key))
+                continue
+            failed += 1
+            _schedule_bid_decay_retry(state, lock_key, now)
+        queue = next_queue
+    for _sid, _nbf, lock_key in queue:
+        failed += 1
+        _schedule_bid_decay_retry(state, lock_key, now)
+    return ok, failed
+
+
 def _stats_items_by_subid_today(campaign_id: int, d0: str, d1: str) -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
     """
     Aggregate clicks and keep latest bidFactor / winRate for each subId in [d0..d1].
@@ -371,6 +479,7 @@ def _apply_slow_exploration_bid_decay_once_daily(
     """
     For non-WL sources with today's clicks, <30 clicks, 100% winRate:
     reduce bidFactor to (current_bidFactor * 0.5), once per source per campaign per day.
+    Skips sources already at ``SK_MIN_BID_FACTOR`` (~0.0101). Retries 429 in-run + short retry window.
     Returns (updated_ok, failed_updates).
     """
     per_sub, err = _stats_items_by_subid_today(campaign_id, today, today)
@@ -385,8 +494,13 @@ def _apply_slow_exploration_bid_decay_once_daily(
         return 0, 0
 
     state = _load_bid_decay_state()
+    now = datetime.now(timezone.utc)
     ok = 0
     failed = 0
+    skipped_min = 0
+    pending: List[Tuple[str, float, str]] = []
+    min_bf = SK_MIN_BID_FACTOR
+
     for sid, info in per_sub.items():
         clicks = int(info.get("clicks") or 0)
         if clicks <= 0 or clicks >= 30:
@@ -397,44 +511,48 @@ def _apply_slow_exploration_bid_decay_once_daily(
             continue
 
         lock_key = f"{today}|{campaign_id}|{sid}"
-        if lock_key in state:
+        if _bid_decay_state_blocks(lock_key, state, now):
             continue
 
         cur_bf = _to_float(info.get("bidFactor"), default=1.0)
         if cur_bf <= 0:
             continue
+        if cur_bf <= min_bf + 1e-9:
+            state[lock_key] = "skip:min"
+            skipped_min += 1
+            continue
         new_bf = round(cur_bf * 0.5, 4)
-        if new_bf <= 0:
+        if new_bf <= 0 or new_bf < min_bf:
+            state[lock_key] = "skip:half_below_min"
+            skipped_min += 1
             continue
 
-        try:
-            wait_s = 0.7
-            r = None
-            for _attempt in range(4):
-                r = sk.post_bid_factor(campaign_id, sid, new_bf)
-                if r.status_code == 200:
-                    break
-                if r.status_code == 429:
-                    time.sleep(wait_s)
-                    wait_s = min(wait_s * 2.0, 6.0)
-                    continue
-                break
-            if r is not None and r.status_code == 200:
-                state[lock_key] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                ok += 1
-            else:
-                failed += 1
-        except Exception as e:
-            failed += 1
-            logger.exception("SK bid-decay exception %s %s: %s", campaign_id, sid, e)
+        success, reason = _post_bid_factor_with_retry(campaign_id, sid, new_bf)
+        if success:
+            state[lock_key] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+            ok += 1
+            continue
+        if reason == "api_min":
+            state[lock_key] = "skip:api_min"
+            skipped_min += 1
+            continue
+        if reason in ("rate_limit", "exception"):
+            pending.append((sid, new_bf, lock_key))
+            continue
+        failed += 1
+        _schedule_bid_decay_retry(state, lock_key, now)
+
+    extra_ok, extra_fail = _flush_bid_decay_pending(campaign_id, pending, state, now)
+    ok += extra_ok
+    failed += extra_fail
 
     _save_bid_decay_state(state)
-    if ok or failed:
+    if ok or failed or skipped_min:
         _sk_tools_workbook_log(
             campaign_id,
             campaign_name,
-            f"SK exploration: bid-decay {ok} source(s) updated, {failed} failed",
-            {"bid_decay_ok": ok, "bid_decay_failed": failed},
+            f"SK exploration: bid-decay {ok} updated, {failed} failed, {skipped_min} at min",
+            {"bid_decay_ok": ok, "bid_decay_failed": failed, "bid_decay_skipped_min": skipped_min},
         )
     return ok, failed
 
@@ -534,30 +652,40 @@ def _sk_tools_workbook_log(
 def _blacklist_sources_sk(campaign_id: int, sub_ids: List[str]) -> List[str]:
     """Sets bidFactor 0 per sub (SK equivalent of EC blacklist). Returns sub_ids that failed."""
     failed: List[str] = []
+    pending: List[str] = []
     for sid in sub_ids:
-        try:
-            wait_s = 0.7
-            ok = False
-            last_status = None
-            last_body = ""
-            for _attempt in range(4):
-                r = sk.post_bid_factor(campaign_id, sid, 0.0)
-                last_status = r.status_code
-                last_body = (r.text or "")[:200]
-                if r.status_code == 200:
-                    ok = True
-                    break
-                if r.status_code == 429:
-                    time.sleep(wait_s)
-                    wait_s = min(wait_s * 2.0, 6.0)
-                    continue
-                break
-            if not ok:
-                logger.error("SK bid-factor 0 failed %s %s: %s %s", campaign_id, sid, last_status, last_body)
-                failed.append(sid)
-        except Exception as e:
-            logger.exception("SK bid-factor exception %s %s: %s", campaign_id, sid, e)
+        success, reason = _post_bid_factor_with_retry(campaign_id, sid, 0.0)
+        if success:
+            continue
+        if reason in ("rate_limit", "exception"):
+            pending.append(sid)
+            continue
+        logger.error(
+            "SK bid-factor 0 failed %s %s: %s",
+            campaign_id,
+            sid,
+            reason,
+        )
+        failed.append(sid)
+    for round_i in range(_SK_BID_DECAY_RETRY_ROUNDS):
+        if not pending:
+            break
+        if round_i > 0:
+            time.sleep(2.0)
+        next_pending: List[str] = []
+        for sid in pending:
+            success, reason = _post_bid_factor_with_retry(campaign_id, sid, 0.0)
+            if success:
+                continue
+            if reason in ("rate_limit", "exception"):
+                next_pending.append(sid)
+                continue
+            logger.error("SK bid-factor 0 failed %s %s: %s", campaign_id, sid, reason)
             failed.append(sid)
+        pending = next_pending
+    for sid in pending:
+        logger.error("SK bid-factor 0 rate-limited %s %s after retries", campaign_id, sid)
+        failed.append(sid)
     return failed
 
 
