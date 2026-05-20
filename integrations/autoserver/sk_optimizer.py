@@ -4,8 +4,8 @@ SourceKnowledge exploration / WL optimizer (hourly).
 Live API field verification (2026-04, GET/POST against api.sourceknowledge.com):
 - Campaign GET ``/affiliate/v2/campaigns/{id}`` includes:
   - ``dailyBudget`` (float, e.g. ``25.0``) — daily spend cap; omit/null/0 treated as no cap for budget-reached logic.
-  - No separate blacklist array is returned; stopping traffic from a sub-publisher is done via
-    ``POST /affiliate/v2/campaigns/{id}/bid-factor`` with ``{"subId": "<subId>", "bidFactor": 0}`` (200 OK).
+  - No separate blacklist array is returned; stopping traffic from a sub-publisher uses
+    ``POST .../bid-factors`` in batches (max 100) with ``bidFactor: 0``; single ``/bid-factor`` is fallback.
 - Publisher stats GET ``/affiliate/v2/stats/campaigns/{id}/by-publisher?from=YYYY-MM-DD&to=YYYY-MM-DD&page=N``:
   - Each ``items[]`` entry includes ``subId``, ``clicks``, ``spend``, ``bidFactor``, ``winRate``, etc.
   - Paginate while ``hasMore`` is true (same pattern as ``integrations/overview_costs._sk_by_publisher_spend_campaign``).
@@ -100,9 +100,12 @@ _SK_BID_DECAY_RETRY_ROUNDS = max(1, int((os.getenv("SK_BID_DECAY_RETRY_ROUNDS") 
 _SK_BID_TRANSIENT_RETRY_MINUTES = max(
     1, int((os.getenv("SK_BID_TRANSIENT_RETRY_MINUTES") or "5").strip() or "5")
 )
-# SK by-publisher stats: ``start`` must be within the last ~3 months (90d can trigger HTTP 400).
+_SK_BID_FACTORS_BATCH_SIZE = max(
+    1, min(100, int((os.getenv("SK_BID_FACTORS_BATCH_SIZE") or "100").strip() or "100"))
+)
+# SK by-publisher stats: ``from`` must be within ~3 calendar months (~74d works; 85d returns HTTP 400).
 _SK_STATS_MAX_LOOKBACK_DAYS = max(
-    30, int((os.getenv("SK_STATS_MAX_LOOKBACK_DAYS") or "85").strip() or "85")
+    7, min(74, int((os.getenv("SK_STATS_MAX_LOOKBACK_DAYS") or "74").strip() or "74"))
 )
 
 
@@ -161,14 +164,14 @@ def _clamp_sk_stats_range(d0: str, d1: str) -> Tuple[str, str]:
 def _sk_stats_start_date(camp_json: Optional[dict]) -> str:
     """
     Start date for SK by-publisher blacklist window:
-    - campaign start when it falls inside SK's allowed lookback
-    - otherwise earliest allowed day (~85d, under SK's 3-month cap)
+    ``max(campaign_start, earliest_allowed)`` so old campaigns never request a range SK rejects.
     """
     today = datetime.now(timezone.utc).date()
     earliest = _sk_stats_earliest_allowed(today)
     campaign_start = _parse_campaign_start_date(camp_json)
-    if campaign_start and earliest < campaign_start <= today:
-        return campaign_start.strftime("%Y-%m-%d")
+    if campaign_start and campaign_start <= today:
+        start = campaign_start if campaign_start >= earliest else earliest
+        return start.strftime("%Y-%m-%d")
     return earliest.strftime("%Y-%m-%d")
 
 
@@ -284,26 +287,41 @@ def _sk_publisher_stats_page(campaign_id: int, d0: str, d1: str, page: int) -> T
         return None, str(e)
 
 
-def _sk_aggregate_clicks_by_subid(campaign_id: int, d0: str, d1: str) -> Tuple[Dict[str, int], Optional[str]]:
+def _sk_aggregate_clicks_by_subid(
+    campaign_id: int, d0: str, d1: str
+) -> Tuple[Dict[str, int], Optional[str], str, str]:
+    """Returns (clicks_by_subid, error, from_used, to_used)."""
     d0, d1 = _clamp_sk_stats_range(d0, d1)
     clicks: Dict[str, int] = {}
     page = 1
     while True:
         data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
         if err and "date range is invalid" in err.lower() and page == 1:
-            earliest = _sk_stats_earliest_allowed()
-            d0_retry = earliest.strftime("%Y-%m-%d")
-            if d0_retry != d0:
+            today = datetime.now(timezone.utc).date()
+            shrunk = False
+            for shrink_days in (60, 45, 30, 14, 7):
+                d0_retry = (today - timedelta(days=shrink_days)).strftime("%Y-%m-%d")
+                d0_retry, d1_retry = _clamp_sk_stats_range(d0_retry, d1)
+                if d0_retry == d0:
+                    continue
                 logger.info(
-                    "SK stats %s: retrying with from=%s (was %s) after invalid date range",
+                    "SK stats %s: retry from=%s (was %s) after invalid date range",
                     campaign_id,
                     d0_retry,
                     d0,
                 )
-                d0 = d0_retry
+                d0, d1 = d0_retry, d1_retry
                 data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
+                shrunk = True
+                if not err:
+                    break
+            if err and not shrunk:
+                d0_fb, d1_fb = _clamp_sk_stats_range(d0, today.strftime("%Y-%m-%d"))
+                if d0_fb != d0:
+                    d0, d1 = d0_fb, d1_fb
+                    data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
         if err:
-            return {}, err
+            return {}, err, d0, d1
         if not isinstance(data, dict):
             return {}, "bad json"
         items = data.get("items") or []
@@ -324,7 +342,7 @@ def _sk_aggregate_clicks_by_subid(campaign_id: int, d0: str, d1: str) -> Tuple[D
         if page > 500:
             logger.warning("SK stats pagination cap hit for campaign %s", campaign_id)
             break
-    return clicks, None
+    return clicks, None, d0, d1
 
 
 def _to_float(v: Any, default: float = 0.0) -> float:
@@ -441,6 +459,62 @@ def _post_bid_factor_with_retry(
     return False, f"http_{last_status or 0}"
 
 
+def _post_bid_factors_bulk_chunk_with_retry(
+    campaign_id: int,
+    chunk: List[Tuple[str, float]],
+) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """POST one bulk batch (≤100). On non-200/non-429, fall back to single POSTs."""
+    if not chunk:
+        return [], []
+    payload = [{"subId": str(sid), "bidFactor": float(bf)} for sid, bf in chunk]
+    wait_s = 1.0
+    last_status: Optional[int] = None
+    try:
+        for _attempt in range(_SK_BID_429_MAX_ATTEMPTS):
+            r = sk.post_bid_factors_bulk(campaign_id, payload)
+            last_status = r.status_code
+            if r.status_code == 200:
+                if _SK_BID_POST_DELAY_S > 0:
+                    time.sleep(_SK_BID_POST_DELAY_S)
+                return [sid for sid, _ in chunk], []
+            if r.status_code == 429:
+                time.sleep(wait_s)
+                wait_s = min(wait_s * 2.0, 30.0)
+                continue
+            break
+    except Exception as e:
+        logger.exception("SK bid-factors bulk exception %s (%s items): %s", campaign_id, len(chunk), e)
+        return [], [(sid, "exception") for sid, _ in chunk]
+
+    if last_status == 429:
+        return [], [(sid, "rate_limit") for sid, _ in chunk]
+
+    ok: List[str] = []
+    failed: List[Tuple[str, str]] = []
+    for sid, bf in chunk:
+        success, reason = _post_bid_factor_with_retry(campaign_id, sid, bf)
+        if success:
+            ok.append(sid)
+        else:
+            failed.append((sid, reason))
+    return ok, failed
+
+
+def _post_bid_factors_bulk_with_retry(
+    campaign_id: int,
+    updates: List[Tuple[str, float]],
+) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """Bulk bid-factor updates in chunks of ``_SK_BID_FACTORS_BATCH_SIZE`` (max 100)."""
+    ok: List[str] = []
+    failed: List[Tuple[str, str]] = []
+    for i in range(0, len(updates), _SK_BID_FACTORS_BATCH_SIZE):
+        chunk = updates[i : i + _SK_BID_FACTORS_BATCH_SIZE]
+        chunk_ok, chunk_fail = _post_bid_factors_bulk_chunk_with_retry(campaign_id, chunk)
+        ok.extend(chunk_ok)
+        failed.extend(chunk_fail)
+    return ok, failed
+
+
 def _flush_bid_decay_pending(
     campaign_id: int,
     pending: List[Tuple[str, float, str]],
@@ -456,13 +530,17 @@ def _flush_bid_decay_pending(
             break
         if round_i > 0:
             time.sleep(2.0)
+        updates = [(sid, new_bf) for sid, new_bf, _lock in queue]
+        ok_sids, fail_pairs = _post_bid_factors_bulk_with_retry(campaign_id, updates)
+        ok_set = set(ok_sids)
+        fail_map = {sid: reason for sid, reason in fail_pairs}
         next_queue: List[Tuple[str, float, str]] = []
         for sid, new_bf, lock_key in queue:
-            success, reason = _post_bid_factor_with_retry(campaign_id, sid, new_bf)
-            if success:
+            if sid in ok_set:
                 state[lock_key] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
                 ok += 1
                 continue
+            reason = fail_map.get(sid, "http_0")
             if reason == "api_min":
                 state[lock_key] = "skip:api_min"
                 continue
@@ -478,7 +556,9 @@ def _flush_bid_decay_pending(
     return ok, failed
 
 
-def _stats_items_by_subid_today(campaign_id: int, d0: str, d1: str) -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
+def _stats_items_by_subid_today(
+    campaign_id: int, d0: str, d1: str
+) -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
     """
     Aggregate clicks and keep latest bidFactor / winRate for each subId in [d0..d1].
     """
@@ -488,11 +568,18 @@ def _stats_items_by_subid_today(campaign_id: int, d0: str, d1: str) -> Tuple[Dic
     while True:
         data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
         if err and "date range is invalid" in err.lower() and page == 1:
-            earliest = _sk_stats_earliest_allowed()
-            d0_retry = earliest.strftime("%Y-%m-%d")
-            if d0_retry != d0:
-                d0 = d0_retry
+            today_s = datetime.now(timezone.utc).date().strftime("%Y-%m-%d")
+            for shrink_days in (60, 45, 30, 14, 7):
+                d0_retry = (
+                    datetime.now(timezone.utc).date() - timedelta(days=shrink_days)
+                ).strftime("%Y-%m-%d")
+                d0_retry, d1_retry = _clamp_sk_stats_range(d0_retry, today_s)
+                if d0_retry == d0:
+                    continue
+                d0, d1 = d0_retry, d1_retry
                 data, err = _sk_publisher_stats_page(campaign_id, d0, d1, page)
+                if not err:
+                    break
         if err:
             return {}, err
         if not isinstance(data, dict):
@@ -550,6 +637,7 @@ def _apply_slow_exploration_bid_decay_once_daily(
     failed = 0
     skipped_min = 0
     pending: List[Tuple[str, float, str]] = []
+    to_apply: List[Tuple[str, float, str]] = []
     min_bf = SK_MIN_BID_FACTOR
 
     for sid, info in per_sub.items():
@@ -578,20 +666,28 @@ def _apply_slow_exploration_bid_decay_once_daily(
             skipped_min += 1
             continue
 
-        success, reason = _post_bid_factor_with_retry(campaign_id, sid, new_bf)
-        if success:
-            state[lock_key] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-            ok += 1
-            continue
-        if reason == "api_min":
-            state[lock_key] = "skip:api_min"
-            skipped_min += 1
-            continue
-        if reason in ("rate_limit", "exception"):
-            pending.append((sid, new_bf, lock_key))
-            continue
-        failed += 1
-        _schedule_bid_decay_retry(state, lock_key, now)
+        to_apply.append((sid, new_bf, lock_key))
+
+    if to_apply:
+        updates = [(sid, new_bf) for sid, new_bf, _lock in to_apply]
+        ok_sids, fail_pairs = _post_bid_factors_bulk_with_retry(campaign_id, updates)
+        ok_set = set(ok_sids)
+        fail_map = {sid: reason for sid, reason in fail_pairs}
+        for sid, new_bf, lock_key in to_apply:
+            if sid in ok_set:
+                state[lock_key] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                ok += 1
+                continue
+            reason = fail_map.get(sid, "http_0")
+            if reason == "api_min":
+                state[lock_key] = "skip:api_min"
+                skipped_min += 1
+                continue
+            if reason in ("rate_limit", "exception"):
+                pending.append((sid, new_bf, lock_key))
+                continue
+            failed += 1
+            _schedule_bid_decay_retry(state, lock_key, now)
 
     extra_ok, extra_fail = _flush_bid_decay_pending(campaign_id, pending, state, now)
     ok += extra_ok
@@ -701,33 +797,25 @@ def _sk_tools_workbook_log(
 
 
 def _blacklist_sources_sk(campaign_id: int, sub_ids: List[str]) -> List[str]:
-    """Sets bidFactor 0 per sub (SK equivalent of EC blacklist). Returns sub_ids that failed."""
+    """Sets bidFactor 0 in bulk batches (SK equivalent of EC blacklist). Returns sub_ids that failed."""
+    if not sub_ids:
+        return []
     failed: List[str] = []
-    pending: List[str] = []
-    for sid in sub_ids:
-        success, reason = _post_bid_factor_with_retry(campaign_id, sid, 0.0)
-        if success:
-            continue
-        if reason in ("rate_limit", "exception"):
-            pending.append(sid)
-            continue
-        logger.error(
-            "SK bid-factor 0 failed %s %s: %s",
-            campaign_id,
-            sid,
-            reason,
-        )
-        failed.append(sid)
+    pending = list(sub_ids)
     for round_i in range(_SK_BID_DECAY_RETRY_ROUNDS):
         if not pending:
             break
         if round_i > 0:
             time.sleep(2.0)
+        updates = [(sid, 0.0) for sid in pending]
+        ok_sids, fail_pairs = _post_bid_factors_bulk_with_retry(campaign_id, updates)
+        ok_set = set(ok_sids)
+        fail_map = {sid: reason for sid, reason in fail_pairs}
         next_pending: List[str] = []
         for sid in pending:
-            success, reason = _post_bid_factor_with_retry(campaign_id, sid, 0.0)
-            if success:
+            if sid in ok_set:
                 continue
+            reason = fail_map.get(sid, "http_0")
             if reason in ("rate_limit", "exception"):
                 next_pending.append(sid)
                 continue
@@ -837,7 +925,10 @@ def checkUnmonExploration_SK() -> None:
                     )
 
             stats_start = _sk_stats_start_date(camp_json)
-            clicks_map, err = _sk_aggregate_clicks_by_subid(cid, stats_start, today)
+            from_used, to_used = _clamp_sk_stats_range(stats_start, today)
+            clicks_map, err, from_used, to_used = _sk_aggregate_clicks_by_subid(
+                cid, stats_start, today
+            )
             if err:
                 logger.warning("SK blacklist-window stats unavailable for %s: %s", cid, err)
                 row["logs"] = _append_logs_cell(row.get("logs", ""), f"blacklist-window stats skipped: {err}")
@@ -845,7 +936,7 @@ def checkUnmonExploration_SK() -> None:
                     cid,
                     cname_expl,
                     "SK exploration: blacklist-window stats skipped",
-                    {"error": err, "from": stats_start, "to": today},
+                    {"error": err, "from": from_used, "to": to_used},
                 )
             else:
                 to_block = [sid for sid, c in clicks_map.items() if c >= 30 and sid not in wl]
@@ -879,8 +970,8 @@ def checkUnmonExploration_SK() -> None:
                         {
                             "blacklisted_count": n_ok,
                             "blacklist_failed_count": n_bad,
-                            "from": stats_start,
-                            "to": today,
+                            "from": from_used,
+                            "to": to_used,
                         },
                     )
                     changed = True
