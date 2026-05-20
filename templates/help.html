@@ -243,7 +243,7 @@
           <summary>SK console (<code>/sk</code> hub, <code>/sk/bulk-open</code>)</summary>
           <div class="help-acc-body">
             <p><strong>Hub</strong> (<code>/sk</code>): links to bulk opener, Google tabs <code>SKtrackExploration</code> / <code>SKtrackWL</code>, QualityWL, and tools sheet browser.</p>
-            <p><strong>Bulk opener</strong> (<code>/sk/bulk-open</code>): prefix (e.g. KLFIX), Keitaro alias, input tab on <code>SK_TOOLS_SPREADSHEET_ID</code> (e.g. <code>bulkSK-KLFIX</code>), dry-run vs apply. Optional <strong>Add to SKtrackExploration</strong> (apply only): appends one optimizer row per created campaign; set <strong>Monetization network</strong> for the <code>monNetwork</code> column. CLI: <code>sk_bulk_open_from_sheet.py --apply --register-exploration [--mon-network kl]</code>.</p>
+            <p><strong>Bulk opener</strong> (<code>/sk/bulk-open</code>): prefix (e.g. KLFIX), Keitaro alias, input tab on <code>SK_TOOLS_SPREADSHEET_ID</code> (e.g. <code>bulkSK-KLFIX</code>), dry-run vs apply. Optional <strong>Add to SKtrackExploration</strong> (apply only): appends one optimizer row per created campaign; set <strong>Monetization network</strong> for the <code>monNetwork</code> column (<code>kl</code>, feeds, or <code>new</code> / <code>skip</code> to bypass unmon pause). CLI: <code>sk_bulk_open_from_sheet.py --apply --register-exploration [--mon-network kl]</code>.</p>
             <p><a href="{{ url_for('ui_sk') }}">Open SK hub →</a> · <a href="{{ url_for('ui_sk_bulk_open') }}">Bulk opener →</a></p>
           </div>
         </details>

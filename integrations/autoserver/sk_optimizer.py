@@ -18,8 +18,8 @@ Sheets (workbook ``config.SK_OPTIMIZER_SHEET_ID``):
   budgetReachedYesterday, lastMonCheck, lastAction, logs
 
 ``monNetwork`` (case-insensitive): ``kl`` | ``feed1`` | ``feed2`` | ``feed5`` | ``kelkoo5`` | ``feed3`` | ``feed4`` | ``adexa`` | ``yadore``
-— Kelkoo feed1/feed2/feed5 use ``FEED1_API_KEY`` / ``FEED2_API_KEY`` / ``FEED5_API_KEY``; ``kl`` uses legacy Kelkoo key via ``kl_as.check_monetization``;
-``feed3`` / ``feed4`` use Yadore deeplink / Adexa link monetizer checks.
+| ``new`` | ``skip`` — Kelkoo feed1/feed2/feed5 use ``FEED1_API_KEY`` / ``FEED2_API_KEY`` / ``FEED5_API_KEY``; ``kl`` uses legacy Kelkoo key;
+``feed3`` / ``feed4`` use Yadore deeplink / Adexa link monetizer checks. ``new`` / ``skip`` skip the unmon pause probe (not yet integrated or operator opt-out).
 """
 from __future__ import annotations
 
@@ -91,6 +91,8 @@ HEADERS_WL = [
 _BID_DECAY_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_bidfactor_decay_state.json"
 _SK_TOOLS_LOG_DISABLED_UNTIL: Optional[datetime] = None
 _SK_UNMON_SKIP_CAMPAIGN_ID_SET = {int(x) for x in (SK_UNMON_SKIP_CAMPAIGN_IDS or ())}
+# monNetwork values that skip unmon pause (no API probe; campaign stays active).
+_MON_NETWORK_SKIP_UNMON = frozenset({"new", "skip"})
 
 # SK bid-factor floor (exploration often uses ~0.205; halving below ~0.0101 returns HTTP 400).
 SK_MIN_BID_FACTOR = float((os.getenv("SK_MIN_BID_FACTOR") or "0.0101").strip() or "0.0101")
@@ -216,9 +218,13 @@ def _hp_from_tracking_url(tracking_url: str) -> Optional[str]:
 
 def _monetization_for_network(mon_network: str, mon_url: str, geo: str) -> Tuple[Optional[bool], Optional[str]]:
     """
-    Returns (is_monetized, None) on success, (None, 'error') on inconclusive API failure.
+    Returns (is_monetized, err_tag).
+
+    err_tag: ``None`` | ``error`` (inconclusive API) | ``skip_unmon`` (``new`` / ``skip`` networks).
     """
     net = _norm_mon_network(mon_network)
+    if net in _MON_NETWORK_SKIP_UNMON:
+        return True, "skip_unmon"
     url = (mon_url or "").strip()
     g = (geo or "").strip().lower()
     if g == "gb":
@@ -983,7 +989,16 @@ def checkUnmonExploration_SK() -> None:
                 mon_ok, err_t = _monetization_for_network(str(net), mon_url, geo)
                 row["lastMonCheck"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 changed = True
-                if err_t == "error":
+                if err_t == "skip_unmon":
+                    row["logs"] = _append_logs_cell(
+                        row.get("logs", ""),
+                        f"unmon check skipped (monNetwork={net})",
+                    )
+                    row["lastAction"] = "mon-skip-network"
+                    _sk_tools_workbook_log(
+                        cid, cname_expl, "SK exploration: unmon check skipped", f"net={net}"
+                    )
+                elif err_t == "error":
                     logger.warning("SK monetization inconclusive; not pausing %s", cid)
                     row["logs"] = _append_logs_cell(row.get("logs", ""), "mon check inconclusive (network error)")
                     row["lastAction"] = "mon-skip"
@@ -1080,7 +1095,14 @@ def checkUnmonWL_SK() -> None:
         mon_ok, err_t = _monetization_for_network(str(net), mon_url, geo)
         row["lastMonCheck"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         changed = True
-        if err_t == "error":
+        if err_t == "skip_unmon":
+            row["logs"] = _append_logs_cell(
+                row.get("logs", ""),
+                f"unmon check skipped (monNetwork={net})",
+            )
+            row["lastAction"] = "mon-skip-network"
+            _sk_tools_workbook_log(cid, cname_wl, "SK WL: unmon check skipped", f"net={net}")
+        elif err_t == "error":
             logger.warning("SK WL monetization inconclusive; not pausing %s", cid)
             row["logs"] = _append_logs_cell(row.get("logs", ""), "mon check inconclusive (network error)")
             row["lastAction"] = "mon-skip"
