@@ -24,7 +24,12 @@ def _run_once() -> None:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
-    from config import KELKOO_LATE_SALES_SPREADSHEET_ID
+    from config import (
+        KELKOO_LATE_SALES_APPLY_ENABLED,
+        KELKOO_LATE_SALES_SPREADSHEET_ID,
+        LATE_SALES_POSTBACK_BASE,
+    )
+    from kelkoo_late_sales import run_late_sales_flow
     from workflows.kelkoo_sales_report import run_yesterday_sales_reports
 
     sid = (KELKOO_LATE_SALES_SPREADSHEET_ID or "").strip()
@@ -46,6 +51,39 @@ def _run_once() -> None:
         (seven or {}).get("rows"),
     )
 
+    if not KELKOO_LATE_SALES_APPLY_ENABLED:
+        logger.info("Kelkoo late-sales apply disabled (KELKOO_LATE_SALES_APPLY_ENABLED=0)")
+        return
+
+    ls = run_late_sales_flow(
+        credentials_path=cred,
+        spreadsheet_id=sid,
+        postback_base=LATE_SALES_POSTBACK_BASE,
+        as_of_str="",
+        apply=True,
+    )
+    if ls.get("ok"):
+        logger.info(
+            "Kelkoo late-sales apply done: eligible=%s sent_ok=%s sent_fail=%s skipped_keitaro=%s skipped_log=%s log=%s",
+            ls.get("eligible_count"),
+            ls.get("postbacks_ok"),
+            ls.get("postbacks_fail"),
+            ls.get("skipped_keitaro"),
+            ls.get("skipped_logged"),
+            ls.get("log_sheet"),
+        )
+    else:
+        logger.error("Kelkoo late-sales apply failed: %s", ls.get("error"))
+
+    from kelkoo_late_sales import prune_old_sales_workbook_tabs
+
+    try:
+        removed = prune_old_sales_workbook_tabs(service, sid, dry_run=False)
+        if removed:
+            logger.info("Kelkoo sales tab prune: removed %s tab(s)", len(removed))
+    except Exception:
+        logger.exception("Kelkoo sales tab prune failed")
+
 
 def _loop() -> None:
     from config import KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC
@@ -64,6 +102,7 @@ def _loop() -> None:
 def start_kelkoo_late_sales_scheduler() -> None:
     global _started
     from config import (
+        KELKOO_LATE_SALES_APPLY_ENABLED,
         KELKOO_LATE_SALES_SCHEDULER_ENABLED,
         KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC,
     )
@@ -79,6 +118,7 @@ def start_kelkoo_late_sales_scheduler() -> None:
     threading.Thread(target=_loop, name="kelkoo-late-sales-prep-scheduler", daemon=True).start()
     _started = True
     logger.info(
-        "Kelkoo late-sales prep scheduler started (daily at %02d:00 UTC)",
+        "Kelkoo late-sales scheduler started (daily at %02d:00 UTC: sales tabs + apply=%s)",
         int(KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC),
+        "on" if KELKOO_LATE_SALES_APPLY_ENABLED else "off",
     )

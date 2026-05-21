@@ -3,10 +3,10 @@ Kelkoo late-sales (KLtools): diff last two ``SalesReport_7days-generated-*`` tab
 apply sale-date window rules, build postback URLs, optionally GET each URL.
 
 Dedup before sending (apply or dry-run display):
-  - ``SalesReport_<saleday>_generated-<genday>`` or ``SalesReport_feed{n}_<saleday>_generated-<genday>``
-    daily exports: ``click_id`` already present (on-time sale; original postback already fired).
-  - ``{month}_late_sales_log`` tabs: ``click_id`` already has ``late_postback_fired_at_utc`` set
-    (we already sent a LateSale postback for that sale).
+  - Keitaro conversion log (``POST .../conversions/log``): skip if ``sub_id`` already has status ``LateSale``.
+  - ``{month}_late_sales_log`` tabs: ``click_id`` already has ``late_postback_fired_at_utc`` set.
+  - Optional (``LATE_SALES_SKIP_IF_IN_DAILY_TAB=1``): skip if ``click_id`` is on a daily ``SalesReport_*`` tab.
+    Default off — daily tabs list sales; on-time ``SaleOur`` is separate from ``LateSale``.
 
 After successful LateSale GETs (apply), append rows to ``{month}_late_sales_log`` for the
 **generation month** of the newer 7-day tab (``d_new``), e.g. ``april_late_sales_log``.
@@ -15,21 +15,27 @@ Used by ``tools/kelkoo_late_sales_7day_diff.py`` and the Flask UI.
 """
 from __future__ import annotations
 
+import calendar
+import logging
+import os
 import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 TAB_RE = re.compile(r"^SalesReport_7days-generated-(\d{4}-\d{2}-\d{2})$")
 DAILY_TAB_RE = re.compile(
     r"^SalesReport_(?:(feed\d+)_)?(\d{4}-\d{2}-\d{2})_generated-(\d{4}-\d{2}-\d{2})$",
     re.I,
 )
+_SALES_TAB_CONFLICT_SUFFIX_RE = re.compile(r"_conflict\d+$", re.I)
 
 _MONTH_EN = (
     "january",
@@ -44,6 +50,11 @@ _MONTH_EN = (
     "october",
     "november",
     "december",
+)
+
+_LATE_LOG_TAB_RE = re.compile(
+    r"^(" + "|".join(_MONTH_EN) + r")_late_sales_log$",
+    re.I,
 )
 
 LATE_SALES_LOG_HEADERS = [
@@ -61,6 +72,129 @@ LATE_SALES_LOG_HEADERS = [
 POSTBACK_REQUEST_DELAY_SEC = 0.25
 POSTBACK_REQUEST_TIMEOUT_SEC = 45
 DAILY_BATCH_RANGES = 80
+
+
+def _strip_sales_tab_conflict_suffix(title: str) -> str:
+    return _SALES_TAB_CONFLICT_SUFFIX_RE.sub("", (title or "").strip())
+
+
+def sales_tab_anchor_date(title: str) -> Optional[date]:
+    """
+    Date used for KLtools retention: 7-day tab generation day, or daily tab ``generated`` day.
+    """
+    base = _strip_sales_tab_conflict_suffix(title)
+    m = TAB_RE.match(base)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    m = DAILY_TAB_RE.match(base)
+    if m:
+        try:
+            return datetime.strptime(m.group(3), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def _late_log_month_range(title: str, today: date) -> Optional[Tuple[date, date]]:
+    m = _LATE_LOG_TAB_RE.match((title or "").strip())
+    if not m:
+        return None
+    month_name = m.group(1).lower()
+    try:
+        mm = _MONTH_EN.index(month_name) + 1
+    except ValueError:
+        return None
+    yy = today.year
+    if mm > today.month:
+        yy -= 1
+    last_dom = calendar.monthrange(yy, mm)[1]
+    return date(yy, mm, 1), date(yy, mm, last_dom)
+
+
+def _late_log_overlaps_retention(title: str, cutoff: date, today: date) -> bool:
+    """Keep monthly log tabs that cover at least one day on or after ``cutoff``."""
+    rng = _late_log_month_range(title, today)
+    if not rng:
+        return True
+    _start, month_end = rng
+    return month_end >= cutoff
+
+
+def prune_old_sales_workbook_tabs(
+    service: Any,
+    spreadsheet_id: str,
+    *,
+    retention_days: Optional[int] = None,
+    dry_run: bool = False,
+) -> List[str]:
+    """
+    Delete KLtools ``SalesReport_*`` tabs (incl. ``_conflict*`` dupes) older than retention.
+    Drops ``{month}_late_sales_log`` tabs for months fully before the retention window.
+    """
+    from config import KELKOO_SALES_TAB_RETENTION_DAYS
+
+    days = int(retention_days if retention_days is not None else KELKOO_SALES_TAB_RETENTION_DAYS)
+    today = datetime.now(timezone.utc).date()
+    cutoff = today - timedelta(days=max(1, days))
+
+    meta = service.get(spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId,title))").execute()
+    sheets = meta.get("sheets") or []
+    if len(sheets) <= 1:
+        return []
+
+    to_delete: List[Tuple[int, str]] = []
+    for s in sheets:
+        props = s.get("properties") or {}
+        title = str(props.get("title") or "")
+        sheet_id = props.get("sheetId")
+        if sheet_id is None or not title:
+            continue
+
+        anchor = sales_tab_anchor_date(title)
+        if anchor is not None:
+            if anchor < cutoff:
+                to_delete.append((int(sheet_id), title))
+            continue
+
+        if _LATE_LOG_TAB_RE.match(title):
+            if not _late_log_overlaps_retention(title, cutoff, today):
+                to_delete.append((int(sheet_id), title))
+            continue
+
+        if _strip_sales_tab_conflict_suffix(title) != title and title.startswith("SalesReport_"):
+            to_delete.append((int(sheet_id), title))
+
+    if len(to_delete) >= len(sheets):
+        keep_id = max(sheets, key=lambda x: int((x.get("properties") or {}).get("sheetId") or 0))
+        keep_title = (keep_id.get("properties") or {}).get("title")
+        to_delete = [(sid, t) for sid, t in to_delete if t != keep_title]
+
+    deleted_titles = [t for _sid, t in to_delete]
+    if dry_run:
+        logger.info(
+            "KLtools tab prune [dry-run]: would delete %s tab(s) older than %s (retention %sd)",
+            len(deleted_titles),
+            cutoff.isoformat(),
+            days,
+        )
+        return deleted_titles
+
+    for i in range(0, len(to_delete), 50):
+        chunk = to_delete[i : i + 50]
+        reqs = [{"deleteSheet": {"sheetId": sid}} for sid, _t in chunk]
+        service.batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": reqs}).execute()
+
+    if deleted_titles:
+        logger.info(
+            "KLtools tab prune: deleted %s tab(s) with anchor before %s (retention %sd)",
+            len(deleted_titles),
+            cutoff.isoformat(),
+            days,
+        )
+    return deleted_titles
 
 
 def sheet_title_a1_range(title: str, cell_range: str = "A:I") -> str:
@@ -415,7 +549,136 @@ def _compute_new_late_sale_rows_inner(
         "count_new_filtered": len(seen_new),
         "count_old_filtered": len(ids_old),
         "new_row_values": new_rows,
+        "rows_new_filtered": rows_new_f,
+        "ids_old_filtered": ids_old,
     }
+
+
+def _merchant_backfill_hints() -> Tuple[str, ...]:
+    from config import LATE_SALES_RAW_BACKFILL_MERCHANTS
+
+    return tuple(
+        x.strip().lower()
+        for x in (LATE_SALES_RAW_BACKFILL_MERCHANTS or "").split(",")
+        if x.strip()
+    )
+
+
+def _sale_dict_to_sheet_row(header: list[str], sale: Dict[str, Any]) -> list[str]:
+    """Map ``workflows.kelkoo_sales_report`` sale dict to sheet row column order."""
+    key_map = {
+        "merchant": "merchant",
+        "date": "date",
+        "click_id": "click_id",
+        "lead_valid": "lead_valid",
+        "sale": "sale",
+        "sale_value_usd": "sale_value_usd",
+        "cpc": "cpc",
+        "country": "country",
+        "postback": "postback",
+    }
+    out: list[str] = []
+    for col in header:
+        k = key_map.get(col.strip().lower(), col)
+        out.append(str(sale.get(k) or sale.get(col) or ""))
+    return out
+
+
+def _fetch_raw_sales_for_window(
+    lo: date,
+    hi: date,
+    merchant_hints: Tuple[str, ...],
+) -> List[Dict[str, Any]]:
+    """Day-by-day Kelkoo raw export for merchant hints (catches sales missing from daily tabs)."""
+    if not merchant_hints:
+        return []
+    from config import LATE_SALES_RAW_BACKFILL_GEOS, discover_kelkoo_feed_api_keys
+    from integrations.daily_conversion_postbacks import fetch_kelkoo_raw_tsv
+    from workflows.kelkoo_sales_report import _sale_rows_from_tsv
+
+    session = requests.Session()
+    out: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    geos = LATE_SALES_RAW_BACKFILL_GEOS
+    day = lo
+    while day <= hi:
+        for feed_index, api_key in discover_kelkoo_feed_api_keys():
+            for geo in geos:
+                try:
+                    status, body = fetch_kelkoo_raw_tsv(geo, day.isoformat(), api_key, session)
+                except Exception as e:
+                    logger.warning("Raw backfill %s %s %s: %s", feed_index, geo, day, e)
+                    continue
+                if status != 200:
+                    continue
+                for row in _sale_rows_from_tsv(body, feed_index):
+                    m = str(row.get("merchant") or "").lower()
+                    if not any(h in m for h in merchant_hints):
+                        continue
+                    cid = str(row.get("click_id") or "").strip()
+                    if not cid or cid in seen:
+                        continue
+                    seen.add(cid)
+                    out.append(row)
+        day += timedelta(days=1)
+    return out
+
+
+def _collect_late_sale_candidate_rows(
+    header: list[str],
+    core: dict[str, Any],
+    *,
+    keitaro_latesale_ids: Set[str],
+    keitaro_saleour_ids: Set[str],
+    log_fired_ids: Set[str],
+) -> Tuple[List[list[str]], dict[str, int]]:
+    """
+    Union of (1) day-over-day 7-day diff new rows and (2) sales on the latest 7-day tab
+    with no SaleOur/LateSale in Keitaro, plus optional raw backfill for watchlist merchants.
+    """
+    from config import LATE_SALES_INCLUDE_MISSED_KEITARO
+
+    idx_click = header.index("click_id")
+    ids_old: Set[str] = set(core.get("ids_old_filtered") or [])
+    rows_new_f: list[list[str]] = list(core.get("rows_new_filtered") or [])
+    by_cid: Dict[str, list[str]] = {}
+
+    for r in core.get("new_row_values") or []:
+        cid = row_get(header, r, "click_id")
+        if cid:
+            by_cid[cid] = r
+
+    missed_sheet = 0
+    if LATE_SALES_INCLUDE_MISSED_KEITARO:
+        for r in rows_new_f:
+            cid = row_get(header, r, "click_id")
+            if not cid or cid in by_cid:
+                continue
+            if cid in keitaro_latesale_ids or cid in keitaro_saleour_ids or cid in log_fired_ids:
+                continue
+            by_cid[cid] = r
+            missed_sheet += 1
+
+    lo_n, hi_n = core["window_new"]
+    raw_added = 0
+    hints = _merchant_backfill_hints()
+    if hints:
+        for sale in _fetch_raw_sales_for_window(lo_n, hi_n, hints):
+            cid = str(sale.get("click_id") or "").strip()
+            if not cid or cid in by_cid:
+                continue
+            if cid in keitaro_latesale_ids or cid in keitaro_saleour_ids or cid in log_fired_ids:
+                continue
+            by_cid[cid] = _sale_dict_to_sheet_row(header, sale)
+            raw_added += 1
+
+    stats = {
+        "diff_new": len(core.get("new_row_values") or []),
+        "missed_on_sheet": missed_sheet,
+        "raw_backfill": raw_added,
+        "total_candidates": len(by_cid),
+    }
+    return list(by_cid.values()), stats
 
 
 def compute_new_late_sale_rows(
@@ -515,30 +778,77 @@ def run_late_sales_flow(
         }
 
     header = core["header"]
-    new_vals = core["new_row_values"]
     d_new: date = core["d_new"]
     d_old: date = core["d_old"]
     wn = core["window_new"]
     wo = core["window_old"]
 
     titles = sheet_titles(meta)
-    daily_ids = collect_daily_sale_click_ids(service, spreadsheet_id, meta)
+    skip_daily_tab = os.getenv("LATE_SALES_SKIP_IF_IN_DAILY_TAB", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    daily_ids: Set[str] = set()
+    if skip_daily_tab:
+        daily_ids = collect_daily_sale_click_ids(service, spreadsheet_id, meta)
 
+    keitaro_latesale_ids: Set[str] = set()
+    keitaro_saleour_ids: Set[str] = set()
+    try:
+        from config import KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS
+        from integrations.keitaro_conversions import (
+            collect_keitaro_conversion_subids_by_status,
+            collect_late_sale_dedup_subids,
+        )
+
+        lookback = int(KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS)
+        keitaro_latesale_ids = collect_late_sale_dedup_subids(lookback_days=lookback)
+        by_st = collect_keitaro_conversion_subids_by_status(lookback_days=lookback)
+        keitaro_saleour_ids = set(by_st.get("SaleOur") or set())
+        logger.info(
+            "Late-sales Keitaro dedup: LateSale=%s SaleOur=%s (lookback %sd)",
+            len(keitaro_latesale_ids),
+            len(keitaro_saleour_ids),
+            lookback,
+        )
+    except Exception as e:
+        logger.warning("Late-sales Keitaro dedup skipped: %s", e)
+
+    pre_vals, _pre_stats = _collect_late_sale_candidate_rows(
+        header,
+        core,
+        keitaro_latesale_ids=keitaro_latesale_ids,
+        keitaro_saleour_ids=keitaro_saleour_ids,
+        log_fired_ids=set(),
+    )
     sale_dates: list[date | None] = []
-    for r in new_vals:
+    for r in pre_vals:
         sale_dates.append(parse_row_sale_date(row_get(header, r, "date")))
     log_fired_ids = collect_logged_fired_click_ids(service, spreadsheet_id, meta, d_new, sale_dates)
 
-    rows = diff_rows_to_late_sale_rows(header, new_vals, postback_base)
+    candidate_vals, cand_stats = _collect_late_sale_candidate_rows(
+        header,
+        core,
+        keitaro_latesale_ids=keitaro_latesale_ids,
+        keitaro_saleour_ids=keitaro_saleour_ids,
+        log_fired_ids=log_fired_ids,
+    )
+
+    rows = diff_rows_to_late_sale_rows(header, candidate_vals, postback_base)
 
     row_dicts: list[dict[str, Any]] = []
     for x in rows:
         cid = x.click_id
         skip = ""
-        if cid in daily_ids:
-            skip = "already_in_daily_sheet"
+        if cid in keitaro_latesale_ids:
+            skip = "already_latesale_keitaro"
+        elif cid in keitaro_saleour_ids:
+            skip = "already_saleour_keitaro"
         elif cid in log_fired_ids:
             skip = "already_logged_late_postback"
+        elif cid in daily_ids:
+            skip = "already_in_daily_sheet"
         row_dicts.append(
             {
                 "click_id": cid,
@@ -553,6 +863,11 @@ def run_late_sales_flow(
             }
         )
 
+    skip_keitaro = sum(
+        1
+        for r in row_dicts
+        if r["skip_reason"] in ("already_latesale_keitaro", "already_saleour_keitaro")
+    )
     skip_daily = sum(1 for r in row_dicts if r["skip_reason"] == "already_in_daily_sheet")
     skip_logged = sum(1 for r in row_dicts if r["skip_reason"] == "already_logged_late_postback")
     to_send = [r for r in row_dicts if not r["skip_reason"]]
@@ -614,8 +929,12 @@ def run_late_sales_flow(
                     "count_new_filtered": core["count_new_filtered"],
                     "count_old_filtered": core["count_old_filtered"],
                     "new_count": len(row_dicts),
-                    "diff_count": len(row_dicts),
+                    "diff_count": cand_stats.get("diff_new", 0),
+                    "missed_on_sheet": cand_stats.get("missed_on_sheet", 0),
+                    "raw_backfill": cand_stats.get("raw_backfill", 0),
+                    "candidate_count": cand_stats.get("total_candidates", 0),
                     "eligible_count": len(to_send),
+                    "skipped_keitaro": skip_keitaro,
                     "skipped_daily": skip_daily,
                     "skipped_logged": skip_logged,
                     "postbacks_ok": post_ok,
@@ -645,8 +964,12 @@ def run_late_sales_flow(
         "count_new_filtered": core["count_new_filtered"],
         "count_old_filtered": core["count_old_filtered"],
         "new_count": len(row_dicts),
-        "diff_count": len(row_dicts),
+        "diff_count": cand_stats.get("diff_new", 0),
+        "missed_on_sheet": cand_stats.get("missed_on_sheet", 0),
+        "raw_backfill": cand_stats.get("raw_backfill", 0),
+        "candidate_count": cand_stats.get("total_candidates", 0),
         "eligible_count": len(to_send),
+        "skipped_keitaro": skip_keitaro,
         "skipped_daily": skip_daily,
         "skipped_logged": skip_logged,
         "postbacks_ok": post_ok if apply else None,

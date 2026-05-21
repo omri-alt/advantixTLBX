@@ -121,6 +121,40 @@ try:
 except Exception:
     KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = 6
 KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = max(0, min(23, KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC))
+# After sales tabs are built, run late-sales diff and apply GET postbacks (not dry-run).
+KELKOO_LATE_SALES_APPLY_ENABLED = (
+    os.getenv("KELKOO_LATE_SALES_APPLY_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+)
+try:
+    KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS = int(
+        (os.getenv("KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS") or "45").strip()
+    )
+except Exception:
+    KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS = 45
+KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS = max(7, min(120, KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS))
+# When 1, skip late-sale if click_id appears on any daily SalesReport tab (legacy; usually off).
+LATE_SALES_SKIP_IF_IN_DAILY_TAB = (
+    os.getenv("LATE_SALES_SKIP_IF_IN_DAILY_TAB", "0").strip().lower() in ("1", "true", "yes")
+)
+try:
+    KELKOO_SALES_TAB_RETENTION_DAYS = int((os.getenv("KELKOO_SALES_TAB_RETENTION_DAYS") or "14").strip())
+except Exception:
+    KELKOO_SALES_TAB_RETENTION_DAYS = 14
+KELKOO_SALES_TAB_RETENTION_DAYS = max(3, min(90, KELKOO_SALES_TAB_RETENTION_DAYS))
+# Also fire LateSale for sales on the latest 7-day tab with no SaleOur/LateSale in Keitaro (not only day-over-day diff).
+LATE_SALES_INCLUDE_MISSED_KEITARO = (
+    os.getenv("LATE_SALES_INCLUDE_MISSED_KEITARO", "1").strip().lower() not in ("0", "false", "no")
+)
+# Comma-separated merchant substrings for extra Kelkoo raw day-by-day backfill (e.g. joueclub,passagedudesir).
+LATE_SALES_RAW_BACKFILL_MERCHANTS = (
+    os.getenv("LATE_SALES_RAW_BACKFILL_MERCHANTS") or "joueclub,passagedudesir"
+).strip().lower()
+# Geos for raw backfill only (default fr — watchlist merchants are usually FR).
+LATE_SALES_RAW_BACKFILL_GEOS: tuple[str, ...] = tuple(
+    g.strip().lower()[:2]
+    for g in (os.getenv("LATE_SALES_RAW_BACKFILL_GEOS") or "fr").split(",")
+    if g.strip()
+) or ("fr",)
 
 # Google Sheets — Blend workflow spreadsheet (Blend tab + potential sheets)
 BLEND_SHEETS_SPREADSHEET_ID = (
