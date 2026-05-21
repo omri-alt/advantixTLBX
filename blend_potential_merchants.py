@@ -108,6 +108,72 @@ def _is_static_tier(merchant_tier: str) -> bool:
     return (merchant_tier or "").strip().lower() == "static"
 
 
+def _domain_fallback_from_name(name: str) -> str:
+    """When Kelkoo report/feed omit URL, merchant name may be a bare domain (e.g. 3dprima.com)."""
+    n = (name or "").strip().lower()
+    if not n or " " in n or "/" in n:
+        return ""
+    if "." not in n:
+        return ""
+    return n
+
+
+def _normalize_merchant_domain(url_or_host: str) -> str:
+    s = (url_or_host or "").strip()
+    if not s:
+        return ""
+    if s.lower().startswith("http://") or s.lower().startswith("https://"):
+        return s
+    return f"https://{s.lstrip('/')}"
+
+
+def _best_geo_from_country_sales(by_country: Dict[str, int]) -> str:
+    if not by_country:
+        return ""
+    return max(by_country.items(), key=lambda kv: (kv[1], kv[0]))[0]
+
+
+def _aggregate_kelkoo_report_by_merchant(report_items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Sum leads/sales per merchantId; keep domain/tier/name and per-country sales for geo pick."""
+    agg: Dict[str, Dict[str, Any]] = {}
+    for item in report_items:
+        mid = item.get("merchantId")
+        if mid is None:
+            continue
+        mid = str(mid)
+        leads = int(item.get("leadCount") or 0)
+        sales = int(item.get("saleCount") or 0)
+        country = str(item.get("country") or "").strip().lower()[:2]
+        if mid not in agg:
+            agg[mid] = {
+                "leads": 0,
+                "sales": 0,
+                "name": "",
+                "domain": "",
+                "tier": "",
+                "website_id": "",
+                "by_country": {},
+            }
+        rec = agg[mid]
+        wid = str(item.get("merchantWebsiteId") or "").strip()
+        if wid and not rec.get("website_id"):
+            rec["website_id"] = wid
+        rec["leads"] += leads
+        rec["sales"] += sales
+        name = str(item.get("merchantName") or "").strip()
+        if name and not rec["name"]:
+            rec["name"] = name
+        dom = str(item.get("merchantDomain") or "").strip()
+        if dom and not rec["domain"]:
+            rec["domain"] = dom
+        tier = str(item.get("merchantTier") or "").strip()
+        if tier and not rec["tier"]:
+            rec["tier"] = tier
+        if country:
+            rec["by_country"][country] = int(rec["by_country"].get(country) or 0) + sales
+    return agg
+
+
 def ensure_sheet(service, title: str) -> None:
     meta = service.get(spreadsheetId=BLEND_SPREADSHEET_ID, fields="sheets(properties(title))").execute()
     titles = [s.get("properties", {}).get("title") for s in meta.get("sheets", [])]
@@ -459,13 +525,14 @@ def main() -> None:
     print(f"Kelkoo reports ({args.feed}): {start} -> {end}")
     r = requests.get(
         REPORTS_AGGREGATED_URL,
-        params={"start": start, "end": end, "groupBy": "merchantId", "format": "JSON"},
+        params={"start": start, "end": end, "groupBy": "merchantId,country", "format": "JSON"},
         headers=_headers(api_key),
         timeout=30,
     )
     if r.status_code != 200:
         raise RuntimeError(f"Reports API {r.status_code}: {r.text[:500]}")
     report_items = r.json() or []
+    report_by_mid = _aggregate_kelkoo_report_by_merchant(report_items)
 
     geo_list = None
     if args.feed == "kelkoo2" and FEED2_MERCHANTS_GEOS:
@@ -489,7 +556,8 @@ def main() -> None:
             "merchantTier": str(m.get("merchantTier") or "").strip(),
         }
         for k in keys:
-            if k not in feed_by_id:
+            prev = feed_by_id.get(k)
+            if prev is None or ((not prev.get("domain")) and info.get("domain")):
                 feed_by_id[k] = info
 
     header = [
@@ -506,24 +574,24 @@ def main() -> None:
     rows_out: List[List[str]] = []
     checked = 0
 
-    for item in report_items:
-        mid = item.get("merchantId")
-        if mid is None:
-            continue
-        mid = str(mid)
-        leads = int(item.get("leadCount") or 0)
-        sales = int(item.get("saleCount") or 0)
+    for mid, rep in report_by_mid.items():
+        leads = int(rep.get("leads") or 0)
+        sales = int(rep.get("sales") or 0)
         cr = sales / max(leads, 1)
 
-        info = feed_by_id.get(mid) or {}
-        tier = (info.get("merchantTier") or "").strip() or "Flex"
+        wid = str(rep.get("website_id") or "").strip()
+        info = feed_by_id.get(mid) or (feed_by_id.get(wid) if wid else {}) or {}
+        tier = (info.get("merchantTier") or rep.get("tier") or "").strip() or "Flex"
         min_cr = 0.003 if _is_static_tier(tier) else 0.01
         if cr < min_cr:
             continue
 
-        merchant = (info.get("name") or "").strip() or str(item.get("merchantName") or "").strip()
-        domain = (info.get("domain") or "").strip()
-        geo_origin = (info.get("geo_origin") or "").strip()
+        merchant = (info.get("name") or rep.get("name") or "").strip() or mid
+        domain = (info.get("domain") or rep.get("domain") or "").strip()
+        if not domain:
+            domain = _domain_fallback_from_name(merchant)
+        domain = _normalize_merchant_domain(domain)
+        geo_origin = (info.get("geo_origin") or _best_geo_from_country_sales(rep.get("by_country") or {})).strip()
 
         geo2 = (geo_origin or "").strip().lower()[:2]
         if not domain:
