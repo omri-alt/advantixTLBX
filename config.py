@@ -132,18 +132,18 @@ try:
 except Exception:
     KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS = 45
 KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS = max(7, min(120, KELKOO_LATE_SALES_KEITARO_LOOKBACK_DAYS))
-# When 1, skip late-sale if click_id appears on any daily SalesReport tab (legacy; usually off).
+# When 1 (default), skip late-sale if click_id is on a daily SalesReport tab (SaleOur already sent).
 LATE_SALES_SKIP_IF_IN_DAILY_TAB = (
-    os.getenv("LATE_SALES_SKIP_IF_IN_DAILY_TAB", "0").strip().lower() in ("1", "true", "yes")
+    os.getenv("LATE_SALES_SKIP_IF_IN_DAILY_TAB", "1").strip().lower() not in ("0", "false", "no")
 )
 try:
     KELKOO_SALES_TAB_RETENTION_DAYS = int((os.getenv("KELKOO_SALES_TAB_RETENTION_DAYS") or "14").strip())
 except Exception:
     KELKOO_SALES_TAB_RETENTION_DAYS = 14
 KELKOO_SALES_TAB_RETENTION_DAYS = max(3, min(90, KELKOO_SALES_TAB_RETENTION_DAYS))
-# Also fire LateSale for sales on the latest 7-day tab with no SaleOur/LateSale in Keitaro (not only day-over-day diff).
+# When 1, also include any row on the latest 7-day tab missing Keitaro SaleOur/LateSale (can duplicate daily sales; default off).
 LATE_SALES_INCLUDE_MISSED_KEITARO = (
-    os.getenv("LATE_SALES_INCLUDE_MISSED_KEITARO", "1").strip().lower() not in ("0", "false", "no")
+    os.getenv("LATE_SALES_INCLUDE_MISSED_KEITARO", "0").strip().lower() in ("1", "true", "yes")
 )
 # Comma-separated merchant substrings for extra Kelkoo raw day-by-day backfill (e.g. joueclub,passagedudesir).
 LATE_SALES_RAW_BACKFILL_MERCHANTS = (

@@ -82,8 +82,8 @@ def main() -> None:
     )
     print(
         f"Candidates: total={res.get('candidate_count', res.get('new_count', 0))} "
-        f"diff={res.get('diff_count', 0)} missed_on_sheet={res.get('missed_on_sheet', 0)} "
-        f"raw_backfill={res.get('raw_backfill', 0)}"
+        f"diff={res.get('diff_count', 0)} skipped_daily_at_source={res.get('skipped_daily_at_source', 0)} "
+        f"missed_on_sheet={res.get('missed_on_sheet', 0)} raw_backfill={res.get('raw_backfill', 0)}"
     )
     print(f"Late-sale rows (eligible pipeline): {res.get('new_count', 0)}\n")
 

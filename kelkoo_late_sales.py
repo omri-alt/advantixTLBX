@@ -2,11 +2,14 @@
 Kelkoo late-sales (KLtools): diff last two ``SalesReport_7days-generated-*`` tabs,
 apply sale-date window rules, build postback URLs, optionally GET each URL.
 
+Late sale = ``click_id`` in the newer ``SalesReport_7days-generated-*`` tab but not the older one,
+and not on any daily ``SalesReport_*_generated-*`` tab (those are the sales we already sent as ``SaleOur``).
+
 Dedup before sending (apply or dry-run display):
-  - Keitaro conversion log (``POST .../conversions/log``): skip if ``sub_id`` already has status ``LateSale``.
+  - Daily ``SalesReport_*`` tabs (default on; ``LATE_SALES_SKIP_IF_IN_DAILY_TAB=0`` to disable).
+  - Keitaro conversion log: skip if ``sub_id`` already has ``LateSale`` or ``SaleOur``.
   - ``{month}_late_sales_log`` tabs: ``click_id`` already has ``late_postback_fired_at_utc`` set.
-  - Optional (``LATE_SALES_SKIP_IF_IN_DAILY_TAB=1``): skip if ``click_id`` is on a daily ``SalesReport_*`` tab.
-    Default off — daily tabs list sales; on-time ``SaleOur`` is separate from ``LateSale``.
+  - Optional raw backfill (``LATE_SALES_RAW_BACKFILL_MERCHANTS``): only if not on a daily tab.
 
 After successful LateSale GETs (apply), append rows to ``{month}_late_sales_log`` for the
 **generation month** of the newer 7-day tab (``d_new``), e.g. ``april_late_sales_log``.
@@ -628,25 +631,40 @@ def _collect_late_sale_candidate_rows(
     header: list[str],
     core: dict[str, Any],
     *,
+    daily_ids: Set[str],
     keitaro_latesale_ids: Set[str],
     keitaro_saleour_ids: Set[str],
     log_fired_ids: Set[str],
 ) -> Tuple[List[list[str]], dict[str, int]]:
     """
-    Union of (1) day-over-day 7-day diff new rows and (2) sales on the latest 7-day tab
-    with no SaleOur/LateSale in Keitaro, plus optional raw backfill for watchlist merchants.
+    Primary: day-over-day 7-day tab diff (newer minus older).
+    Exclude click_ids on daily SalesReport tabs (SaleOur already sent).
+    Optional: raw backfill for watchlist merchants not on daily tabs.
     """
     from config import LATE_SALES_INCLUDE_MISSED_KEITARO
 
-    idx_click = header.index("click_id")
-    ids_old: Set[str] = set(core.get("ids_old_filtered") or [])
     rows_new_f: list[list[str]] = list(core.get("rows_new_filtered") or [])
     by_cid: Dict[str, list[str]] = {}
+    skipped_daily = 0
+
+    def _blocked(cid: str) -> bool:
+        return (
+            cid in daily_ids
+            or cid in keitaro_latesale_ids
+            or cid in keitaro_saleour_ids
+            or cid in log_fired_ids
+        )
 
     for r in core.get("new_row_values") or []:
         cid = row_get(header, r, "click_id")
-        if cid:
-            by_cid[cid] = r
+        if not cid:
+            continue
+        if cid in daily_ids:
+            skipped_daily += 1
+            continue
+        if cid in keitaro_latesale_ids or cid in keitaro_saleour_ids or cid in log_fired_ids:
+            continue
+        by_cid[cid] = r
 
     missed_sheet = 0
     if LATE_SALES_INCLUDE_MISSED_KEITARO:
@@ -654,7 +672,7 @@ def _collect_late_sale_candidate_rows(
             cid = row_get(header, r, "click_id")
             if not cid or cid in by_cid:
                 continue
-            if cid in keitaro_latesale_ids or cid in keitaro_saleour_ids or cid in log_fired_ids:
+            if _blocked(cid):
                 continue
             by_cid[cid] = r
             missed_sheet += 1
@@ -667,13 +685,14 @@ def _collect_late_sale_candidate_rows(
             cid = str(sale.get("click_id") or "").strip()
             if not cid or cid in by_cid:
                 continue
-            if cid in keitaro_latesale_ids or cid in keitaro_saleour_ids or cid in log_fired_ids:
+            if _blocked(cid):
                 continue
             by_cid[cid] = _sale_dict_to_sheet_row(header, sale)
             raw_added += 1
 
     stats = {
         "diff_new": len(core.get("new_row_values") or []),
+        "skipped_daily_at_source": skipped_daily,
         "missed_on_sheet": missed_sheet,
         "raw_backfill": raw_added,
         "total_candidates": len(by_cid),
@@ -784,14 +803,13 @@ def run_late_sales_flow(
     wo = core["window_old"]
 
     titles = sheet_titles(meta)
-    skip_daily_tab = os.getenv("LATE_SALES_SKIP_IF_IN_DAILY_TAB", "0").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    from config import LATE_SALES_SKIP_IF_IN_DAILY_TAB
+
+    skip_daily_tab = bool(LATE_SALES_SKIP_IF_IN_DAILY_TAB)
     daily_ids: Set[str] = set()
     if skip_daily_tab:
         daily_ids = collect_daily_sale_click_ids(service, spreadsheet_id, meta)
+        logger.info("Late-sales daily-tab dedup: %s click_id(s) on SalesReport_* daily tabs", len(daily_ids))
 
     keitaro_latesale_ids: Set[str] = set()
     keitaro_saleour_ids: Set[str] = set()
@@ -818,6 +836,7 @@ def run_late_sales_flow(
     pre_vals, _pre_stats = _collect_late_sale_candidate_rows(
         header,
         core,
+        daily_ids=daily_ids,
         keitaro_latesale_ids=keitaro_latesale_ids,
         keitaro_saleour_ids=keitaro_saleour_ids,
         log_fired_ids=set(),
@@ -830,6 +849,7 @@ def run_late_sales_flow(
     candidate_vals, cand_stats = _collect_late_sale_candidate_rows(
         header,
         core,
+        daily_ids=daily_ids,
         keitaro_latesale_ids=keitaro_latesale_ids,
         keitaro_saleour_ids=keitaro_saleour_ids,
         log_fired_ids=log_fired_ids,
@@ -930,6 +950,7 @@ def run_late_sales_flow(
                     "count_old_filtered": core["count_old_filtered"],
                     "new_count": len(row_dicts),
                     "diff_count": cand_stats.get("diff_new", 0),
+                    "skipped_daily_at_source": cand_stats.get("skipped_daily_at_source", 0),
                     "missed_on_sheet": cand_stats.get("missed_on_sheet", 0),
                     "raw_backfill": cand_stats.get("raw_backfill", 0),
                     "candidate_count": cand_stats.get("total_candidates", 0),
@@ -965,6 +986,7 @@ def run_late_sales_flow(
         "count_old_filtered": core["count_old_filtered"],
         "new_count": len(row_dicts),
         "diff_count": cand_stats.get("diff_new", 0),
+        "skipped_daily_at_source": cand_stats.get("skipped_daily_at_source", 0),
         "missed_on_sheet": cand_stats.get("missed_on_sheet", 0),
         "raw_backfill": cand_stats.get("raw_backfill", 0),
         "candidate_count": cand_stats.get("total_candidates", 0),
