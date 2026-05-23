@@ -96,6 +96,20 @@
     }
     .pb-dismiss:hover { opacity: 1; background: rgba(0,0,0,0.12); }
     .blend-cap { margin: 0 0 32px; }
+    .blend-cap details.bc-panel { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 0; }
+    .blend-cap details.bc-panel > summary {
+      list-style: none; cursor: pointer; padding: 12px 14px; display: flex; flex-wrap: wrap;
+      align-items: center; gap: 8px 14px; user-select: none;
+    }
+    .blend-cap details.bc-panel > summary::-webkit-details-marker { display: none; }
+    .blend-cap details.bc-panel > summary::before {
+      content: "▸"; display: inline-block; width: 1em; color: var(--muted);
+      transition: transform 0.15s ease;
+    }
+    .blend-cap details.bc-panel[open] > summary::before { transform: rotate(90deg); }
+    .blend-cap .bc-summary-title { font-size: 1.15rem; font-weight: 700; margin: 0; }
+    .blend-cap .bc-summary-stats { font-size: 12px; color: var(--muted); flex: 1; min-width: 200px; }
+    .blend-cap .bc-panel-body { padding: 0 14px 14px; border-top: 1px solid var(--line); }
     .blend-cap h2 { margin: 0 0 8px; font-size: 1.15rem; font-weight: 700; }
     .blend-cap .bc-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 10px; }
     .blend-cap .bc-meta { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
@@ -162,22 +176,32 @@
     </section>
 
     <section class="blend-cap" id="blend-cap-widget" aria-live="polite">
-      <h2 class="section-title">Blend click caps (geo × device)</h2>
-      <p class="muted" style="margin:0 0 10px;font-size:13px;max-width:820px;">
-        Today’s target clicks from the Blend sheet (device-weighted <code>clickCap</code>) vs Keitaro clicks on the Blend campaign.
-        <span class="bc-pill green" style="vertical-align:middle;">≥90%</span>
-        <span class="bc-pill yellow" style="vertical-align:middle;">50–89%</span>
-        <span class="bc-pill red" style="vertical-align:middle;">&lt;50%</span>
-        — use this to decide whether to buy more traffic on a segment.
-      </p>
-      <div class="bc-actions">
-        <button type="button" class="btn btn-sm" id="blend-cap-refresh-btn" title="Rebuild from Blend sheet + Keitaro">Refresh now</button>
-        <span class="muted" id="blend-cap-meta">Loading…</span>
-      </div>
-      <div id="blend-cap-err" class="bc-err" style="display:none;"></div>
-      <div class="blend-cap-table-wrap">
-        <div id="blend-cap-body" class="bc-empty">Loading cap progress…</div>
-      </div>
+      <details class="bc-panel" id="blend-cap-details">
+        <summary>
+          <span class="bc-summary-title">Blend click caps (geo × device)</span>
+          <span class="bc-summary-stats" id="blend-cap-summary-line">Loading…</span>
+          <button type="button" class="btn btn-sm" id="blend-cap-refresh-btn" title="Rebuild from Blend sheet + Keitaro">Refresh</button>
+        </summary>
+        <div class="bc-panel-body">
+          <p class="muted" style="margin:10px 0;font-size:13px;max-width:820px;">
+            Target clicks from the Blend sheet vs Keitaro today (UTC). Legacy rows split <code>clickCap</code> 50/50 desktop/mobile.
+            <span class="bc-pill green" style="vertical-align:middle;">≥90%</span>
+            <span class="bc-pill yellow" style="vertical-align:middle;">50–89%</span>
+            <span class="bc-pill red" style="vertical-align:middle;">&lt;50%</span>
+          </p>
+          <div class="bc-actions" style="margin-bottom:10px;">
+            <label class="muted" style="font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+              <input type="checkbox" id="blend-cap-show-zero-target" />
+              Show geos with clicks but no sheet cap
+            </label>
+            <span class="muted" id="blend-cap-meta"></span>
+          </div>
+          <div id="blend-cap-err" class="bc-err" style="display:none;"></div>
+          <div class="blend-cap-table-wrap">
+            <div id="blend-cap-body" class="bc-empty">Loading cap progress…</div>
+          </div>
+        </div>
+      </details>
     </section>
 
     <section class="tools-section" aria-label="Tools">
@@ -572,14 +596,28 @@
   <script>
   (function() {
     var metaEl = document.getElementById("blend-cap-meta");
+    var summaryLine = document.getElementById("blend-cap-summary-line");
     var bodyEl = document.getElementById("blend-cap-body");
     var errEl = document.getElementById("blend-cap-err");
     var refreshBtn = document.getElementById("blend-cap-refresh-btn");
+    var showZeroCb = document.getElementById("blend-cap-show-zero-target");
     var apiUrl = {{ url_for("api_blend_cap_progress") | tojson }};
     var refreshUrl = {{ url_for("api_blend_cap_progress_refresh") | tojson }};
     var pollMs = 3 * 60 * 60 * 1000;
+    var lastData = null;
 
     if (!metaEl || !bodyEl) return;
+
+    function showZeroTarget() {
+      return showZeroCb && showZeroCb.checked;
+    }
+
+    function filterSegs(segs) {
+      if (showZeroTarget()) return segs;
+      return segs.filter(function(s) {
+        return (s.target_clicks || 0) > 0;
+      });
+    }
 
     function esc(s) {
       return String(s == null ? "" : s)
@@ -593,8 +631,24 @@
       return Math.max(0, Math.min(100, pct));
     }
 
+    function renderSummary(data) {
+      var segs = filterSegs((data && data.segments) || []);
+      var counts = { green: 0, yellow: 0, red: 0 };
+      segs.forEach(function(s) {
+        var lvl = s.level || "none";
+        if (counts[lvl] != null) counts[lvl] += 1;
+      });
+      var parts = [];
+      if (data && data.calendar_day_utc) parts.push("UTC " + data.calendar_day_utc);
+      parts.push("green " + counts.green + " · yellow " + counts.yellow + " · red " + counts.red);
+      if (data && data.updated_utc) {
+        parts.push("updated " + data.updated_utc.replace("T", " ").replace("Z", " UTC"));
+      }
+      if (summaryLine) summaryLine.textContent = parts.join(" · ");
+    }
+
     function renderTable(data) {
-      var segs = (data && data.segments) || [];
+      var segs = filterSegs((data && data.segments) || []);
       if (!segs.length) {
         bodyEl.className = "bc-empty";
         bodyEl.textContent = "No geo × device segments with targets today. Check the Blend sheet and run blend sync.";
@@ -627,19 +681,17 @@
 
     function renderMeta(data) {
       var parts = [];
-      if (data.calendar_day_utc) parts.push("UTC day " + data.calendar_day_utc);
-      if (data.updated_utc) parts.push("updated " + data.updated_utc);
-      if (data.next_refresh_utc) parts.push("next auto " + data.next_refresh_utc);
-      var sum = data.summary;
-      if (sum) {
-        parts.push(
-          "green " + (sum.green || 0) +
-          " · yellow " + (sum.yellow || 0) +
-          " · red " + (sum.red || 0)
-        );
-      }
-      if (data.refresh_queued) parts.push("(background refresh queued)");
-      metaEl.textContent = parts.join(" · ") || "—";
+      if (data.next_refresh_utc) parts.push("Next auto refresh " + data.next_refresh_utc.replace("T", " ").replace("Z", " UTC"));
+      if (data.refresh_queued) parts.push("Background refresh queued");
+      metaEl.textContent = parts.join(" · ") || "";
+    }
+
+    function paint(data) {
+      lastData = data;
+      renderSummary(data);
+      renderMeta(data);
+      renderErrors(data);
+      renderTable(data);
     }
 
     function renderErrors(data) {
@@ -660,9 +712,7 @@
           return r.json();
         })
         .then(function(data) {
-          renderMeta(data);
-          renderErrors(data);
-          renderTable(data);
+          paint(data);
         })
         .catch(function(e) {
           metaEl.textContent = "Could not load";
@@ -671,10 +721,18 @@
         });
     }
 
+    if (showZeroCb) {
+      showZeroCb.addEventListener("change", function() {
+        if (lastData) paint(lastData);
+      });
+    }
+
     if (refreshBtn) {
-      refreshBtn.addEventListener("click", function() {
+      refreshBtn.addEventListener("click", function(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
         refreshBtn.disabled = true;
-        metaEl.textContent = "Refreshing from Blend sheet + Keitaro…";
+        metaEl.textContent = "Refreshing…";
         fetch(refreshUrl, {
           method: "POST",
           credentials: "same-origin",
@@ -689,9 +747,7 @@
             return r.json();
           })
           .then(function(data) {
-            renderMeta(data);
-            renderErrors(data);
-            renderTable(data);
+            paint(data);
           })
           .catch(function(e) {
             errEl.style.display = "block";

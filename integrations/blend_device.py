@@ -84,13 +84,14 @@ def split_click_cap_weights(
 ) -> Tuple[float, float]:
     """
     Return (weight_desktop, weight_mobile) for Keitaro stream weighting.
-    ``legacy``: full cap on both channels. ``desktop_only`` / ``mobile_only``: one side only.
+    ``legacy``: split cap 50/50 (unknown device CPC). ``desktop_only`` / ``mobile_only``: one side only.
     ``split``: majority to higher CPC when ``BLEND_DEVICE_CAP_SPLIT_BY_CPC`` is on.
     """
     cap = max(0.0, float(total_cap))
     mode = normalize_device_mode(device_mode)
     if mode == DEVICE_MODE_LEGACY:
-        return cap, cap
+        half = cap / 2.0
+        return half, cap - half
     if mode == DEVICE_MODE_DESKTOP_ONLY:
         return cap, 0.0
     if mode == DEVICE_MODE_MOBILE_ONLY:
@@ -137,7 +138,8 @@ def device_mode_from_sheet_row(
         )
         return mode, w_d, w_m
     if mode == DEVICE_MODE_LEGACY:
-        return DEVICE_MODE_LEGACY, click_cap, click_cap
+        w_d, w_m = split_click_cap_weights(click_cap, DEVICE_MODE_LEGACY)
+        return DEVICE_MODE_LEGACY, w_d, w_m
     d, m, has_d, has_m = cpcs_from_strings(desktop_raw, mobile_raw)
     classified = classify_device_mode(d, m, has_desktop=has_d, has_mobile=has_m)
     w_d, w_m = split_click_cap_weights(click_cap, classified, desktop_cpc=d, mobile_cpc=m)
@@ -161,7 +163,9 @@ def blend_stream_weight_for_channel(
     if ch not in ("desktop", "mobile"):
         return None
     if mode == DEVICE_MODE_LEGACY:
-        return click_cap
+        if ch == "desktop":
+            return weight_desktop if weight_desktop > 0 else click_cap / 2.0
+        return weight_mobile if weight_mobile > 0 else click_cap / 2.0
     if mode == DEVICE_MODE_DESKTOP_ONLY:
         return weight_desktop if ch == "desktop" and weight_desktop > 0 else None
     if mode == DEVICE_MODE_MOBILE_ONLY:
