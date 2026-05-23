@@ -2205,6 +2205,26 @@ def api_postback_status():
     return jsonify(postback_banner_payload_for_today())
 
 
+@app.route("/api/blend-cap-progress", methods=["GET"])
+def api_blend_cap_progress():
+    """Blend click-cap fill by geo × device (cached; refreshes every ~3h)."""
+    from integrations.blend_cap_progress import get_api_payload
+
+    return jsonify(get_api_payload(allow_background_refresh=True))
+
+
+@app.route("/api/blend-cap-progress/refresh", methods=["POST"])
+def api_blend_cap_progress_refresh():
+    """Force rebuild of Blend cap progress cache."""
+    from integrations.blend_cap_progress import refresh_blend_cap_progress
+
+    try:
+        payload = refresh_blend_cap_progress(reason="api")
+        return jsonify({**payload, "refreshed": True})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e), "refreshed": False}), 500
+
+
 def _api_automations_payload() -> Dict[str, Any]:
     ensure_automations_initialized()
     last_map = last_run_by_automation()

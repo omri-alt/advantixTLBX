@@ -212,6 +212,17 @@ BLEND_DEVICE_CPC_MIN = max(0.0, BLEND_DEVICE_CPC_MIN)
 _blend_cap_split = (os.getenv("BLEND_DEVICE_CAP_SPLIT_BY_CPC") or "1").strip().lower()
 BLEND_DEVICE_CAP_SPLIT_BY_CPC = _blend_cap_split not in ("0", "false", "no", "off")
 
+BLEND_CAP_PROGRESS_CACHE_PATH = (
+    os.getenv("BLEND_CAP_PROGRESS_CACHE_PATH") or "runtime/blend_cap_progress.json"
+).strip()
+try:
+    BLEND_CAP_PROGRESS_INTERVAL_HOURS = float(
+        (os.getenv("BLEND_CAP_PROGRESS_INTERVAL_HOURS") or "3").strip()
+    )
+except Exception:
+    BLEND_CAP_PROGRESS_INTERVAL_HOURS = 3.0
+BLEND_CAP_PROGRESS_INTERVAL_HOURS = max(0.5, min(24.0, BLEND_CAP_PROGRESS_INTERVAL_HOURS))
+
 # Kelkoo
 FEED1_API_KEY = (os.getenv("FEED1_API_KEY") or "").strip()
 FEED2_API_KEY = (os.getenv("FEED2_API_KEY") or "").strip()

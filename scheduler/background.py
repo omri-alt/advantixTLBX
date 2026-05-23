@@ -68,6 +68,7 @@ def start_background_schedulers() -> None:
         start_daily_overview_scheduler,
         start_overview_snapshot_bootstrap,
     )
+    from scheduler.blend_cap_progress_scheduler import start_blend_cap_progress_scheduler
 
     for label, fn in (
         ("AutoServer", start_autoserver_scheduler),
@@ -75,6 +76,7 @@ def start_background_schedulers() -> None:
         ("Yadore daily sales postbacks", start_yadore_sales_scheduler),
         ("Overview snapshot", start_daily_overview_scheduler),
         ("Overview bootstrap", start_overview_snapshot_bootstrap),
+        ("Blend cap progress", start_blend_cap_progress_scheduler),
     ):
         try:
             fn()
