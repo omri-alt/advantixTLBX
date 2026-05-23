@@ -103,10 +103,10 @@
                 <tr><td><code>--skip-blend</code></td><td>Skip entire Blend block.</td><td><code>--skip-blend</code></td></tr>
                 <tr><td><code>--feed1-traffic-only</code></td><td>Feed1 Keitaro only, then Blend as configured.</td><td></td></tr>
                 <tr><td><code>--single-merchant-per-geo</code></td><td>Legacy one merchant per geo for PLA.</td><td></td></tr>
-                <tr><td><code>--skip-sales-report</code></td><td>Skip Kelkoo yesterday sales export before late-sales.</td><td></td></tr>
-                <tr><td><code>--skip-late-sales</code></td><td>Skip late-sales step after sales report.</td><td></td></tr>
-                <tr><td><code>--late-sales-apply</code></td><td>With successful diff, late-sales sends GET postbacks.</td><td></td></tr>
-                <tr><td><code>--dry-run</code></td><td>Sales report does not write Sheets; late-sales never applies GETs.</td><td></td></tr>
+                <tr><td><code>--skip-sales-report</code></td><td>Skip MTD <code>SalesMTD_*</code> sheet refresh in late-conversion step.</td><td></td></tr>
+                <tr><td><code>--skip-late-sales</code></td><td>Skip late-conversion step entirely.</td><td></td></tr>
+                <tr><td><code>--late-sales-apply</code></td><td>Send LateSale GET postbacks for eligible rows.</td><td></td></tr>
+                <tr><td><code>--dry-run</code></td><td>No MTD sheet writes; late-sales preview only (no GETs).</td><td></td></tr>
                 <tr><td><code>--skip-blend-prune</code></td><td>Skip step 7a½ Blend prune on Keitaro.</td><td></td></tr>
                 <tr><td><code>--geo</code></td><td>Comma 2-letter geos; only those get fresh PLA + Keitaro; others unchanged in offers tabs.</td><td><code>--geo uk,fr,de</code></td></tr>
                 <tr><td><code>--merchant-override</code></td><td>Repeatable <code>1:uk=id</code> or comma ids for fallback order.</td><td><code>--merchant-override 1:uk=15248713</code></td></tr>
@@ -138,12 +138,11 @@
         <details class="help-acc" id="late-sales" data-help-search="late sales postback kltools salesreport">
           <summary>Late sales postbacks</summary>
           <div class="help-acc-body">
-            <p>Late sale = <code>click_id</code> on the newer <code>SalesReport_7days-generated-*</code> tab but not the older one, and not on any daily <code>SalesReport_*_generated-*</code> tab (those rows already received <code>SaleOur</code>). Also skips if Keitaro already has <code>LateSale</code> or <code>SaleOur</code>, or <code>{month}_late_sales_log</code> recorded a prior LateSale. Scheduler at <code>KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC</code> builds tabs, applies when <code>KELKOO_LATE_SALES_APPLY_ENABLED=1</code>, then prunes tabs older than <code>KELKOO_SALES_TAB_RETENTION_DAYS</code> (default 14). Manual prune: <code>python tools/kelkoo_late_sales_7day_diff.py --prune-tabs</code>.</p>
+            <p>Each day, all feeds refresh <code>SalesMTD_{feed}_{YYYY-MM}</code> on the sales workbook (month-to-date sales). Late window = <strong>1st of month</strong> through <strong>day-before-yesterday</strong> (UTC sale date). Yesterday uses <a href="#daily-postbacks">daily postbacks</a> (<code>SaleOur</code>). Skips a row when Keitaro already has <code>SaleOur</code> or <code>LateSale</code> for the same <code>sub_id</code> and <code>params.payout</code>. Scheduler: <code>LATE_CONVERSION_SCHEDULER_HOUR_LOCAL</code> (default 10) in <code>LATE_CONVERSION_SCHEDULER_TZ</code> (default <code>Asia/Jerusalem</code>). Apply when <code>KELKOO_LATE_SALES_APPLY_ENABLED=1</code>. Legacy <code>SalesReport_*</code> tabs are pruned on run. CLI: <code>python tools/kelkoo_late_sales_7day_diff.py --prune-tabs</code>.</p>
             <table>
               <thead><tr><th>Field</th><th>Description</th></tr></thead>
               <tbody>
-                <tr><td>As-of date</td><td>Optional <code>YYYY-MM-DD</code>; blank = latest tab.</td></tr>
-                <tr><td>Mode</td><td><strong>Dry run</strong> shows GET URLs only. <strong>Apply</strong> sends GETs and appends successes to the monthly log.</td></tr>
+                <tr><td>Mode</td><td><strong>Dry run</strong> refreshes MTD sheets and lists LateSale GET URLs. <strong>Apply</strong> sends GETs for eligible rows.</td></tr>
               </tbody>
             </table>
             <p><strong>Example:</strong> leave as-of blank, choose Dry run, submit to preview.</p>
@@ -153,7 +152,8 @@
         <details class="help-acc" id="daily-postbacks" data-help-search="daily postbacks kelkoo adexa yadore conversion">
           <summary>Daily conversion postbacks</summary>
           <div class="help-acc-body">
-            <p>Per-feed pages run Kelkoo / Adexa / Yadore daily click &amp; sale GET postbacks (see <code>integrations/daily_conversion_postbacks.py</code>). State file: <code>runtime/daily_conversion_postbacks_state.json</code> (or <code>DAILY_CONVERSION_POSTBACK_STATE_PATH</code>). On a feed page, set <strong>Report date</strong> to inspect another day’s resume rows or use <code>?date=YYYY-MM-DD</code> in the URL.</p>
+            <p>Per-feed pages run Kelkoo / Adexa / Yadore daily GET postbacks (see <code>integrations/daily_conversion_postbacks.py</code>). State file: <code>runtime/daily_conversion_postbacks_state.json</code> (or <code>DAILY_CONVERSION_POSTBACK_STATE_PATH</code>). On a feed page, set <strong>Report date</strong> to inspect another day’s resume rows or use <code>?date=YYYY-MM-DD</code> in the URL.</p>
+            <p><strong>Yadore:</strong> <code>yadore</code> = clicks (<code>/v2/report/detail</code>, manual from this hub). <code>yadore_sales</code> = yesterday’s sales only (<code>/v2/conversion/detail</code>, <code>SaleOur</code>, <code>payout=0</code>) — scheduled daily at <code>YADORE_SALES_SCHEDULER_HOUR_LOCAL</code> (default 10:00) <code>YADORE_SALES_SCHEDULER_TZ</code> (default <code>Asia/Jerusalem</code>). CLI: <code>python run_daily_conversion_postbacks.py --only yadore_sales</code>.</p>
             <p id="daily-postbacks-run"><strong>Run form:</strong> <em>Ignore saved progress</em> maps to <code>--no-resume</code>. <em>Clear resume state</em> wipes saved progress for this feed + report date before the run (use when you intentionally want a clean rerun).</p>
             <p><a href="{{ url_for('ui_kelkoo_daily_postbacks_hub') }}">Open postbacks hub →</a></p>
           </div>

@@ -305,13 +305,14 @@ def fetch_report_detail_clicks(
 def fetch_conversion_detail(
     date: str,
     *,
+    market: Optional[str] = None,
     api_key: Optional[str] = None,
     project_id: Optional[str] = None,
     base_url: str = YADORE_BASE_URL,
     timeout: int = 120,
 ) -> list[dict[str, Any]]:
     """
-    GET ``/v2/conversion/detail?date=YYYY-MM-DD&format=json``.
+    GET ``/v2/conversion/detail?date=YYYY-MM-DD&format=json`` (optional ``market``).
 
     Sends ``projectId`` when ``YADORE_PROJECT_ID`` / ``project_id`` is set (required for some accounts).
     Accepts several JSON shapes (top-level ``clicks``, nested ``result.clicks``, etc.).
@@ -326,6 +327,8 @@ def fetch_conversion_detail(
         "API-Key": token,
     }
     params: Dict[str, Any] = {"date": date, "format": "json"}
+    if market and str(market).strip():
+        params["market"] = geo_for_yadore(str(market))
     pid = (project_id or YADORE_PROJECT_ID or "").strip()
     if pid:
         params["projectId"] = pid
@@ -350,12 +353,112 @@ def fetch_conversion_detail(
     clicks = _conversion_detail_click_rows(data)
     if not clicks and isinstance(data, dict):
         logger.info(
-            "Yadore conversion/detail: 0 rows for date=%s projectId=%s; JSON keys=%s",
+            "Yadore conversion/detail: 0 rows for date=%s market=%s projectId=%s; JSON keys=%s",
             date,
+            params.get("market") or "(all)",
             pid or "(none)",
             list(data.keys()),
         )
     return clicks
+
+
+def fetch_conversion_detail_clicks(
+    date: str,
+    *,
+    markets: Optional[Sequence[str]] = None,
+    api_key: Optional[str] = None,
+    project_id: Optional[str] = None,
+    base_url: str = YADORE_BASE_URL,
+    timeout: int = 120,
+) -> List[Dict[str, Any]]:
+    """
+    Conversion report per click (paid conversions). One API call per market when ``markets`` is set.
+
+    Yadore docs: use ``/v2/conversion/detail`` for sales; ``/v2/report/detail`` is click/CPC revenue only.
+    """
+    market_list: List[str] = []
+    if markets:
+        market_list = [geo_for_yadore(str(m)) for m in markets if str(m).strip()]
+
+    merged: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _merge(rows: List[Dict[str, Any]], mkt: str) -> None:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            pl = str(row.get("placementId") or row.get("placement_id") or "").strip()
+            ck = str(row.get("clickId") or row.get("click_id") or "").strip()
+            key = pl or ck or f"{mkt}:{len(merged)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(row)
+
+    if market_list:
+        for m in market_list:
+            rows = fetch_conversion_detail(
+                date,
+                market=m,
+                api_key=api_key,
+                project_id=project_id,
+                base_url=base_url,
+                timeout=timeout,
+            )
+            _merge(rows, m)
+    else:
+        _merge(
+            fetch_conversion_detail(
+                date,
+                api_key=api_key,
+                project_id=project_id,
+                base_url=base_url,
+                timeout=timeout,
+            ),
+            "",
+        )
+
+    return merged
+
+
+def fetch_conversion_general(
+    date_from: str,
+    date_to: str,
+    *,
+    api_key: Optional[str] = None,
+    project_id: Optional[str] = None,
+    base_url: str = YADORE_BASE_URL,
+    timeout: int = 120,
+) -> Dict[str, Any]:
+    """GET ``/v2/conversion/general`` — grouped sales/click totals (sanity check)."""
+    token = (api_key or YADORE_API_KEY or "").strip()
+    if not token:
+        raise YadoreClientError("YADORE_API_KEY is not set")
+    endpoint = f"{base_url.rstrip('/')}/v2/conversion/general"
+    headers = {"Accept": "application/json", "API-Key": token}
+    params: Dict[str, Any] = {
+        "from": (date_from or "").strip()[:10],
+        "to": (date_to or "").strip()[:10],
+        "format": "json",
+    }
+    pid = (project_id or YADORE_PROJECT_ID or "").strip()
+    if pid:
+        params["projectId"] = pid
+    try:
+        r = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
+    except requests.RequestException as e:
+        raise YadoreClientError(str(e)) from e
+    if r.status_code != 200:
+        raise YadoreClientError(
+            f"conversion/general HTTP {r.status_code}",
+            status_code=r.status_code,
+            response_body=(r.text[:800] if r.text else None),
+        )
+    try:
+        data = r.json() if r.text else {}
+    except Exception as e:
+        raise YadoreClientError(f"conversion/general JSON error: {e}", response_body=r.text[:500]) from e
+    return data if isinstance(data, dict) else {}
 
 
 def fetch_conversion_detail_merchant(

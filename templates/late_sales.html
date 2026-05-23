@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kelkoo — Late sales postbacks</title>
+  <title>Late conversion sales</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; color: #e5e7eb; background: #0b1220; }
     .muted { color: #9ca3af; }
     .card { border: 1px solid #374151; border-radius: 8px; padding: 14px; background: #111827; margin-bottom: 16px; max-width: 1200px; }
-    input[type="text"], select { padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; box-sizing: border-box; }
+    select { padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; box-sizing: border-box; }
     button { padding: 8px 12px; background: #22c55e; border: 1px solid #16a34a; border-radius: 6px; color: #052e16; font-weight: 700; cursor: pointer; margin-top: 10px; }
     button:hover { background: #16a34a; }
     a { color: #86efac; text-decoration: none; }
@@ -20,25 +20,26 @@
     td.url { word-break: break-all; font-family: ui-monospace, monospace; font-size: 11px; color: #cbd5e1; }
     .ok { color: #4ade80; }
     .bad { color: #f87171; }
-    .warn { color: #fbbf24; }
   </style>
 </head>
 <body>
   {% from "macros/page_header.html" import tool_header %}
   <div><a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#late-sales">Help</a></div>
-  {{ tool_header("Kelkoo — late sales postbacks", "KLtools 7-day vs daily tabs → LateSale GETs.", "late-sales", "dry-run | apply") }}
+  {{ tool_header("Late conversion sales", "MTD sales (all feeds) vs Keitaro log → LateSale GETs.", "late-sales", "dry-run | apply") }}
 
   <div class="card">
+    <p class="muted">
+      Refreshes <code>SalesMTD_{feed}_{YYYY-MM}</code> tabs on the sales workbook, then finds sales from
+      <strong>month start</strong> through <strong>day-before-yesterday</strong> (UTC) missing a matching
+      <code>SaleOur</code> / <code>LateSale</code> in Keitaro (same <code>sub_id</code> + <code>payout</code>).
+      Yesterday stays on <a href="{{ url_for('ui_kelkoo_daily_postbacks_hub') }}">daily postbacks</a>.
+    </p>
     <form method="post">
-      <div style="margin:8px 0;">
-        <label>As-of generation date (optional)</label><br>
-        <input type="text" name="as_of" value="" placeholder="YYYY-MM-DD — blank = latest tab" style="width:100%;max-width:420px;">
-      </div>
       <div style="margin:8px 0;">
         <label>Mode</label><br>
         <select name="mode">
-          <option value="dry-run">Dry run (show postback URLs only)</option>
-          <option value="apply">Apply (send GET postbacks)</option>
+          <option value="dry-run">Dry run (refresh sheets, show URLs, no GETs)</option>
+          <option value="apply">Apply (refresh sheets + send LateSale GETs)</option>
         </select>
       </div>
       <button type="submit">Run</button>
@@ -64,27 +65,31 @@
       </p>
       <p class="muted">
         {{ late_sales_result.spreadsheet_title }} &mdash; <code>{{ late_sales_result.spreadsheet_id }}</code><br>
-        Newer: <code>{{ late_sales_result.tab_new }}</code> (gen {{ late_sales_result.d_new }}) sale-date window {{ late_sales_result.window_new }}<br>
-        Older: <code>{{ late_sales_result.tab_old }}</code> (gen {{ late_sales_result.d_old }}) sale-date window {{ late_sales_result.window_old }}<br>
-        Rows dropped by date filter: newer={{ late_sales_result.drop_new }}, older={{ late_sales_result.drop_old }}; dup click_id in newer={{ late_sales_result.dup_new }}<br>
-        <strong>Diff rows (7d vs 7d): {{ late_sales_result.diff_count | default(late_sales_result.new_count) }}</strong>
-        &mdash; skipped daily={{ late_sales_result.skipped_daily | default(0) }}, already logged={{ late_sales_result.skipped_logged | default(0) }},
-        <strong>eligible to send={{ late_sales_result.eligible_count | default(late_sales_result.new_count) }}</strong><br>
-        Monthly log tab (append target): <code>{{ late_sales_result.log_sheet }}</code>
-        {% if late_sales_result.log_rows_appended is not none %}
-          &mdash; rows appended this run: {{ late_sales_result.log_rows_appended }}
-        {% endif %}
+        Month: <code>{{ late_sales_result.month_key }}</code> &mdash;
+        sale window <strong>{{ late_sales_result.sale_window }}</strong>
+        (yesterday {{ late_sales_result.yesterday }} excluded)<br>
+        Keitaro sale keys loaded: {{ late_sales_result.keitaro_keys_loaded | default(0) }} &mdash;
+        skipped (already logged): {{ late_sales_result.skipped_keitaro | default(0) }},
+        <strong>eligible to send={{ late_sales_result.eligible_count | default(0) }}</strong>
       </p>
+      {% if late_sales_result.feeds %}
+      <p class="muted">Sheets:
+        {% for feed, info in late_sales_result.feeds.items() %}
+          <code>{{ info.tab or feed }}</code> ({{ info.rows | default(0) }} rows){% if not loop.last %}; {% endif %}
+        {% endfor %}
+      </p>
+      {% endif %}
 
       {% if late_sales_result.rows %}
       <table>
         <thead>
           <tr>
-            <th>Skip reason</th>
-            <th>click_id</th>
-            <th>date</th>
+            <th>Skip</th>
+            <th>feed</th>
+            <th>sub_id</th>
+            <th>sale_date</th>
             <th>merchant</th>
-            <th>sale_value_usd</th>
+            <th>payout</th>
             <th>country</th>
             <th>LateSale GET</th>
             {% if late_sales_result.mode == "apply" %}
@@ -96,6 +101,7 @@
           {% for r in late_sales_result.rows %}
           <tr>
             <td class="muted">{% if r.skip_reason %}{{ r.skip_reason }}{% else %}—{% endif %}</td>
+            <td>{{ r.feed }}</td>
             <td>{{ r.click_id }}</td>
             <td>{{ r.date }}</td>
             <td>{{ r.merchant }}</td>
@@ -119,7 +125,7 @@
         </tbody>
       </table>
       {% else %}
-      <p class="muted">No new late-sale rows for this diff.</p>
+      <p class="muted">No sale rows in the late window, or none missing from Keitaro.</p>
       {% endif %}
     {% endif %}
     {% endif %}

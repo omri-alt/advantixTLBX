@@ -85,11 +85,9 @@ KELKOO_SHEETS_SPREADSHEET_ID = (
     os.getenv("KELKOO_SHEETS_SPREADSHEET_ID") or "1XUkQoWqnNRqaSEnFVRAV36-oi9ENrNWtH5Ct8M4vNuU"
 ).strip()
 
-# Google Sheets — Kelkoo late-sales / click sales report ("KLtools").
-# One workbook for both feeds (feed1 + feed2). Tabs look like
-# ``SalesReport_7days-generated-YYYY-MM-DD`` and ``SalesReport_YYYY-MM-DD_generated-YYYY-MM-DD``.
-# Automation (planned): drop stale dated tabs and keep a monthly log, same pattern as Nipuhim
-# ``{month}_log_1`` / ``_log_2`` beside the daily notebook.
+# Google Sheets — late conversion / MTD sales workbook (KLsalesreport).
+# One tab per feed per month, refreshed daily: ``SalesMTD_{feed}_{YYYY-MM}``.
+# Legacy ``SalesReport_*`` tabs are pruned on each late-conversion run.
 KELKOO_LATE_SALES_SPREADSHEET_ID = (
     os.getenv("KELKOO_LATE_SALES_SPREADSHEET_ID") or "1hVhQ_BfrKOh8OCojTFkuTLKeU1KLbK_kWgm1BmJFteU"
 ).strip()
@@ -110,16 +108,36 @@ DAILY_CONVERSION_POSTBACK_STATE_PATH = _dcp_state or str(
     Path(__file__).resolve().parent / "runtime" / "daily_conversion_postbacks_state.json"
 )
 
-# Kelkoo late-sales prep scheduler:
-# builds yesterday daily sales tabs and the rolling ``SalesReport_7days-generated-YYYY-MM-DD`` tab.
-# Recommended with a single app worker; disable extras with ``KELKOO_LATE_SALES_SCHEDULER_ENABLED=0``.
+# Late conversion scheduler (MTD sales refresh + Keitaro check + LateSale postbacks).
+# Default: 10:00 Asia/Jerusalem. Disable extras with ``KELKOO_LATE_SALES_SCHEDULER_ENABLED=0``.
 KELKOO_LATE_SALES_SCHEDULER_ENABLED = (
     os.getenv("KELKOO_LATE_SALES_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no")
 )
+LATE_CONVERSION_SCHEDULER_TZ = (os.getenv("LATE_CONVERSION_SCHEDULER_TZ") or "Asia/Jerusalem").strip()
 try:
-    KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = int((os.getenv("KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC") or "6").strip())
+    LATE_CONVERSION_SCHEDULER_HOUR_LOCAL = int(
+        (os.getenv("LATE_CONVERSION_SCHEDULER_HOUR_LOCAL") or "10").strip()
+    )
 except Exception:
-    KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = 6
+    LATE_CONVERSION_SCHEDULER_HOUR_LOCAL = 10
+LATE_CONVERSION_SCHEDULER_HOUR_LOCAL = max(0, min(23, LATE_CONVERSION_SCHEDULER_HOUR_LOCAL))
+
+# Yadore daily sales postbacks (conversion/detail → SaleOur, payout=0). Clicks stay manual via postbacks UI.
+YADORE_SALES_SCHEDULER_ENABLED = (
+    os.getenv("YADORE_SALES_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+)
+YADORE_SALES_SCHEDULER_TZ = (os.getenv("YADORE_SALES_SCHEDULER_TZ") or "Asia/Jerusalem").strip()
+try:
+    YADORE_SALES_SCHEDULER_HOUR_LOCAL = int((os.getenv("YADORE_SALES_SCHEDULER_HOUR_LOCAL") or "10").strip())
+except Exception:
+    YADORE_SALES_SCHEDULER_HOUR_LOCAL = 10
+YADORE_SALES_SCHEDULER_HOUR_LOCAL = max(0, min(23, YADORE_SALES_SCHEDULER_HOUR_LOCAL))
+
+# Legacy UTC hour (unused when ``LATE_CONVERSION_SCHEDULER_*`` is set); kept for env compatibility.
+try:
+    KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = int((os.getenv("KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC") or "7").strip())
+except Exception:
+    KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = 7
 KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = max(0, min(23, KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC))
 # After sales tabs are built, run late-sales diff and apply GET postbacks (not dry-run).
 KELKOO_LATE_SALES_APPLY_ENABLED = (

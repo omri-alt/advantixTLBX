@@ -1,20 +1,77 @@
 """
 Keitaro conversion log (``POST admin_api/v1/conversions/log``).
 
-Used to see which ``sub_id`` values already received ``SaleOur`` vs ``LateSale`` postbacks.
+Used to see which ``sub_id`` values already received sale postbacks (``SaleOur`` / ``LateSale``)
+with a given ``params.payout``.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from urllib.parse import parse_qs
 
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 
 logger = logging.getLogger(__name__)
 
-_LOG_COLUMNS = ["sub_id", "status", "revenue", "datetime"]
+_LOG_COLUMNS = [
+    "sub_id",
+    "sub_id_6",
+    "campaign",
+    "offer",
+    "datetime",
+    "status",
+    "conversion_type",
+    "params",
+]
 _DEFAULT_PAGE_SIZE = 5000
+_SALE_POSTBACK_STATUSES = frozenset({"SaleOur", "LateSale"})
+
+
+def normalize_payout(value: Any) -> str:
+    """Normalize monetary payout for comparison (handles commas, trailing zeros)."""
+    s = str(value if value is not None else "0").strip().replace(",", ".")
+    if not s:
+        return "0"
+    try:
+        n = float(s)
+        if abs(n - round(n)) < 1e-9:
+            return str(int(round(n)))
+        out = f"{n:.6f}".rstrip("0").rstrip(".")
+        return out or "0"
+    except ValueError:
+        return s
+
+
+def payout_from_keitaro_params(params: Any) -> Optional[str]:
+    """Extract ``payout`` from Keitaro log ``params`` (dict, JSON string, or query string)."""
+    if params is None:
+        return None
+    if isinstance(params, dict):
+        for key in ("payout", "Payout", "revenue"):
+            if key in params and params[key] is not None and str(params[key]).strip():
+                return normalize_payout(params[key])
+        return None
+    if isinstance(params, str):
+        s = params.strip()
+        if not s:
+            return None
+        if s.startswith("{"):
+            try:
+                parsed = json.loads(s)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                return payout_from_keitaro_params(parsed)
+        qs = parse_qs(s, keep_blank_values=True)
+        if "payout" in qs and qs["payout"]:
+            return normalize_payout(qs["payout"][0])
+        for part in s.split("&"):
+            if part.lower().startswith("payout="):
+                return normalize_payout(part.split("=", 1)[-1])
+    return None
 
 
 def _status_filter_expression(status: str) -> List[Dict[str, str]]:
@@ -105,6 +162,50 @@ def collect_subids_by_status(
         except KeitaroClientError as e:
             logger.warning("Keitaro conversions/log status=%s failed: %s", st, e)
     return out
+
+
+def collect_sale_postback_keys(
+    *,
+    date_from: date,
+    date_to: date,
+    client: Optional[KeitaroClient] = None,
+    statuses: Optional[Iterable[str]] = None,
+) -> Set[Tuple[str, str]]:
+    """
+    Set of ``(sub_id, normalized_payout)`` for sale postbacks already in Keitaro.
+
+    Only ``SaleOur`` and ``LateSale`` rows with a parseable ``params.payout`` are included.
+    """
+    if client is None:
+        client = KeitaroClient()
+    want = tuple(statuses or _SALE_POSTBACK_STATUSES)
+    keys: Set[Tuple[str, str]] = set()
+    for st in want:
+        st_clean = (st or "").strip()
+        if not st_clean:
+            continue
+        try:
+            for row in iter_conversion_log(client, date_from=date_from, date_to=date_to, status=st_clean):
+                sid = str(row.get("sub_id") or "").strip()
+                po = payout_from_keitaro_params(row.get("params"))
+                if sid and po is not None:
+                    keys.add((sid, po))
+        except KeitaroClientError as e:
+            logger.warning("Keitaro sale postback scan status=%s failed: %s", st_clean, e)
+    return keys
+
+
+def has_matching_sale_postback(
+    sub_id: str,
+    payout: str,
+    known: Set[Tuple[str, str]],
+) -> bool:
+    """True if Keitaro already logged a sale postback for this sub_id + payout."""
+    sid = (sub_id or "").strip()
+    if not sid:
+        return False
+    po = normalize_payout(payout)
+    return (sid, po) in known
 
 
 def collect_keitaro_conversion_subids_by_status(

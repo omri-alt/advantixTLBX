@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """
-CLI: print new late-sale rows + postback URLs (dry-run only; use UI or code for apply).
-
-Delegates to ``kelkoo_late_sales`` (same logic as ``/kelkoo/late-sales``).
+CLI: late conversion sales (MTD refresh + Keitaro check + optional LateSale apply).
 
   python tools/kelkoo_late_sales_7day_diff.py
-  python tools/kelkoo_late_sales_7day_diff.py --spreadsheet-id <id>
-  python tools/kelkoo_late_sales_7day_diff.py --as-of 2026-04-12
+  python tools/kelkoo_late_sales_7day_diff.py --dry-run
+  python tools/kelkoo_late_sales_7day_diff.py --apply
+  python tools/kelkoo_late_sales_7day_diff.py --prune-tabs
 """
 from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,15 +25,16 @@ from kelkoo_late_sales import prune_old_sales_workbook_tabs, run_late_sales_flow
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Kelkoo late-sales 7-day diff (dry-run or apply).")
+    ap = argparse.ArgumentParser(description="Late conversion sales (MTD feeds vs Keitaro log).")
     ap.add_argument("--spreadsheet-id", default="", help="Override spreadsheet id.")
-    ap.add_argument("--as-of", default="", help="Generation date YYYY-MM-DD of newer 7-day tab (default: latest).")
-    ap.add_argument("--apply", action="store_true", help="Send LateSale GET postbacks and append monthly log.")
     ap.add_argument(
-        "--prune-tabs",
+        "--dry-run",
         action="store_true",
-        help="Delete SalesReport tabs older than KELKOO_SALES_TAB_RETENTION_DAYS (default 14).",
+        help="Default: refresh MTD sheets, list LateSale URLs, do not send GETs (same as omitting --apply).",
     )
+    ap.add_argument("--apply", action="store_true", help="Send LateSale GET postbacks.")
+    ap.add_argument("--no-refresh", action="store_true", help="Skip MTD sheet refresh.")
+    ap.add_argument("--prune-tabs", action="store_true", help="Delete legacy SalesReport / old MTD tabs.")
     ap.add_argument("--prune-dry-run", action="store_true", help="List tabs that would be pruned only.")
     args = ap.parse_args()
 
@@ -61,48 +60,42 @@ def main() -> None:
         if args.prune_dry_run or (args.prune_tabs and not args.apply):
             return
 
+    if args.apply and args.dry_run:
+        print("ERROR: use either --dry-run or --apply, not both.")
+        sys.exit(2)
+
+    mode = "apply" if args.apply else "dry-run"
+    print(f"Late conversion ({mode}): starting ... (feeds + Keitaro log + sheets; often 3-15 min)", flush=True)
+
     res = run_late_sales_flow(
         credentials_path=creds_path,
         spreadsheet_id=sid,
         postback_base=LATE_SALES_POSTBACK_BASE,
-        as_of_str=args.as_of,
-        apply=bool(args.apply),
+        as_of_str="",
+        apply=bool(args.apply) and not args.dry_run,
+        refresh_sheets=not args.no_refresh,
+        prune_tabs=not args.no_refresh,
     )
     if res.get("error"):
         print("ERROR:", res["error"])
         sys.exit(1)
 
-    utc_today = datetime.now(timezone.utc).date()
-    print("UTC today (reference):", utc_today)
     print("Spreadsheet:", res.get("spreadsheet_title"), "| id:", res.get("spreadsheet_id"))
-    print("NEWER:", res.get("tab_new"), "gen", res.get("d_new"), "| sale dates", res.get("window_new"))
-    print("OLDER:", res.get("tab_old"), "gen", res.get("d_old"), "| sale dates", res.get("window_old"))
+    print("Month:", res.get("month_key"), "| sale window:", res.get("sale_window"))
     print(
-        f"Filtered: newer dropped={res.get('drop_new')} older dropped={res.get('drop_old')} dup={res.get('dup_new')}"
-    )
-    print(
-        f"Candidates: total={res.get('candidate_count', res.get('new_count', 0))} "
-        f"diff={res.get('diff_count', 0)} skipped_daily_at_source={res.get('skipped_daily_at_source', 0)} "
-        f"missed_on_sheet={res.get('missed_on_sheet', 0)} raw_backfill={res.get('raw_backfill', 0)}"
-    )
-    print(f"Late-sale rows (eligible pipeline): {res.get('new_count', 0)}\n")
-
-    print(
-        f"Mode={res.get('mode')} skipped_keitaro={res.get('skipped_keitaro', 0)} "
-        f"skipped_daily={res.get('skipped_daily', 0)} skipped_log={res.get('skipped_logged', 0)} "
-        f"eligible={res.get('eligible_count', 0)} sent_ok={res.get('postbacks_ok')} sent_fail={res.get('postbacks_fail')} "
-        f"log_tab={res.get('log_sheet')} log_rows={res.get('log_rows_appended')}"
+        f"Mode={res.get('mode')} keitaro_keys={res.get('keitaro_keys_loaded')} "
+        f"skipped_keitaro={res.get('skipped_keitaro')} eligible={res.get('eligible_count')} "
+        f"sent_ok={res.get('postbacks_ok')} sent_fail={res.get('postbacks_fail')}"
     )
     print()
     for r in res.get("rows") or []:
-        sr = r.get("skip_reason") or ""
-        if sr:
-            print(f"(skip {sr}) {r.get('postback_url')}")
+        if r.get("skip_reason"):
+            print(f"(skip {r.get('skip_reason')}) {r.get('postback_url')}")
         else:
             print(r.get("postback_url"))
         print(
-            f"  click_id={r.get('click_id')} date={r.get('date')} merchant={r.get('merchant')} "
-            f"sale_value_usd={r.get('sale_value_usd')} country={r.get('country')}"
+            f"  feed={r.get('feed')} sub_id={r.get('click_id')} date={r.get('date')} "
+            f"payout={r.get('sale_value_usd')} merchant={r.get('merchant')}"
         )
         print()
 

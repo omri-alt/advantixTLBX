@@ -76,6 +76,7 @@ def postback_sources_enabled() -> list[str]:
         out.append("adexa")
     if (YADORE_API_KEY or "").strip():
         out.append("yadore")
+        out.append("yadore_sales")
     return out
 
 
@@ -84,7 +85,8 @@ _SOURCE_LABELS = {
     "kelkoo2": "Kelkoo feed 2",
     "kelkoo5": "Kelkoo feed 5",
     "adexa": "Adexa",
-    "yadore": "Yadore",
+    "yadore": "Yadore (clicks)",
+    "yadore_sales": "Yadore (sales)",
 }
 
 

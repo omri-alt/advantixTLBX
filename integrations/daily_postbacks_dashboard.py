@@ -19,7 +19,8 @@ FEED_META: Tuple[Tuple[str, str], ...] = (
     ("kelkoo2", "Kelkoo feed 2"),
     ("kelkoo5", "Kelkoo feed 5"),
     ("adexa", "Adexa (feed 4)"),
-    ("yadore", "Yadore (feed 3)"),
+    ("yadore", "Yadore clicks (feed 3)"),
+    ("yadore_sales", "Yadore sales (feed 3)"),
 )
 
 
@@ -162,7 +163,7 @@ def build_dashboard_cards(state_path: Path) -> List[Dict[str, Any]]:
                     "partial_count": 0,
                     "not_started_count": len(geo_order),
                 }
-        elif key in ("adexa", "yadore"):
+        elif key in ("adexa", "yadore", "yadore_sales"):
             if primary:
                 fd = flat_state_detail(data, key, primary)
                 state_ts = fd.get("max_state_ts")

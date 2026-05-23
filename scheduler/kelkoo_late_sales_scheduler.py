@@ -4,98 +4,85 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
 _started = False
 
 
-def _seconds_until_hour_utc(hour_utc: int) -> float:
-    now = datetime.now(timezone.utc)
-    target = now.replace(hour=hour_utc, minute=0, second=0, microsecond=0)
+def _seconds_until_local_hour(hour_local: int, tz_name: str) -> float:
+    tz = ZoneInfo(tz_name)
+    now = datetime.now(tz)
+    target = now.replace(hour=hour_local, minute=0, second=0, microsecond=0)
     if now >= target:
         target += timedelta(days=1)
     return max(1.0, (target - now).total_seconds())
 
 
 def _run_once() -> None:
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-
     from config import (
         KELKOO_LATE_SALES_APPLY_ENABLED,
         KELKOO_LATE_SALES_SPREADSHEET_ID,
+        LATE_CONVERSION_SCHEDULER_HOUR_LOCAL,
+        LATE_CONVERSION_SCHEDULER_TZ,
         LATE_SALES_POSTBACK_BASE,
     )
     from kelkoo_late_sales import run_late_sales_flow
-    from workflows.kelkoo_sales_report import run_yesterday_sales_reports
 
     sid = (KELKOO_LATE_SALES_SPREADSHEET_ID or "").strip()
     if not sid:
-        logger.warning("Kelkoo late-sales prep scheduler: KELKOO_LATE_SALES_SPREADSHEET_ID is empty")
+        logger.warning("Late conversion scheduler: KELKOO_LATE_SALES_SPREADSHEET_ID is empty")
         return
     cred = Path(__file__).resolve().parents[1] / "credentials.json"
     if not cred.is_file():
-        logger.warning("Kelkoo late-sales prep scheduler: credentials.json missing at %s", cred)
-        return
-    creds = service_account.Credentials.from_service_account_file(str(cred))
-    service = build("sheets", "v4", credentials=creds).spreadsheets()
-    res = run_yesterday_sales_reports(service, dry_run=False)
-    seven = res.get("seven_day") if isinstance(res, dict) else {}
-    logger.info(
-        "Kelkoo late-sales prep done: daily_tabs=%s seven_day_tab=%s seven_day_rows=%s",
-        len((res.get("tabs") or []) if isinstance(res, dict) else []),
-        (seven or {}).get("tab"),
-        (seven or {}).get("rows"),
-    )
-
-    if not KELKOO_LATE_SALES_APPLY_ENABLED:
-        logger.info("Kelkoo late-sales apply disabled (KELKOO_LATE_SALES_APPLY_ENABLED=0)")
+        logger.warning("Late conversion scheduler: credentials.json missing at %s", cred)
         return
 
+    apply = bool(KELKOO_LATE_SALES_APPLY_ENABLED)
     ls = run_late_sales_flow(
         credentials_path=cred,
         spreadsheet_id=sid,
         postback_base=LATE_SALES_POSTBACK_BASE,
         as_of_str="",
-        apply=True,
+        apply=apply,
+        refresh_sheets=True,
+        prune_tabs=True,
     )
     if ls.get("ok"):
         logger.info(
-            "Kelkoo late-sales apply done: eligible=%s sent_ok=%s sent_fail=%s skipped_keitaro=%s skipped_log=%s log=%s",
+            "Late conversion run done: window=%s eligible=%s sent_ok=%s sent_fail=%s skipped_keitaro=%s",
+            ls.get("sale_window"),
             ls.get("eligible_count"),
             ls.get("postbacks_ok"),
             ls.get("postbacks_fail"),
             ls.get("skipped_keitaro"),
-            ls.get("skipped_logged"),
-            ls.get("log_sheet"),
         )
     else:
-        logger.error("Kelkoo late-sales apply failed: %s", ls.get("error"))
-
-    from kelkoo_late_sales import prune_old_sales_workbook_tabs
-
-    try:
-        removed = prune_old_sales_workbook_tabs(service, sid, dry_run=False)
-        if removed:
-            logger.info("Kelkoo sales tab prune: removed %s tab(s)", len(removed))
-    except Exception:
-        logger.exception("Kelkoo sales tab prune failed")
+        logger.error("Late conversion run failed: %s", ls.get("error"))
 
 
 def _loop() -> None:
-    from config import KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC
+    from config import LATE_CONVERSION_SCHEDULER_HOUR_LOCAL, LATE_CONVERSION_SCHEDULER_TZ
 
     while True:
         try:
-            delay = _seconds_until_hour_utc(int(KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC))
-            logger.info("Kelkoo late-sales prep scheduler: sleeping %.0fs", delay)
+            delay = _seconds_until_local_hour(
+                int(LATE_CONVERSION_SCHEDULER_HOUR_LOCAL),
+                LATE_CONVERSION_SCHEDULER_TZ,
+            )
+            logger.info(
+                "Late conversion scheduler: sleeping %.0fs until %02d:00 %s",
+                delay,
+                int(LATE_CONVERSION_SCHEDULER_HOUR_LOCAL),
+                LATE_CONVERSION_SCHEDULER_TZ,
+            )
             time.sleep(delay)
             _run_once()
         except Exception:
-            logger.exception("Kelkoo late-sales prep scheduler run failed")
+            logger.exception("Late conversion scheduler run failed")
             time.sleep(60)
 
 
@@ -104,21 +91,22 @@ def start_kelkoo_late_sales_scheduler() -> None:
     from config import (
         KELKOO_LATE_SALES_APPLY_ENABLED,
         KELKOO_LATE_SALES_SCHEDULER_ENABLED,
-        KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC,
+        LATE_CONVERSION_SCHEDULER_HOUR_LOCAL,
+        LATE_CONVERSION_SCHEDULER_TZ,
     )
 
     if not KELKOO_LATE_SALES_SCHEDULER_ENABLED:
-        logger.info("Kelkoo late-sales prep scheduler disabled (KELKOO_LATE_SALES_SCHEDULER_ENABLED)")
+        logger.info("Late conversion scheduler disabled (KELKOO_LATE_SALES_SCHEDULER_ENABLED)")
         return
-    # Skip only Werkzeug reloader parent process.
     if os.getenv("FLASK_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") == "false":
         return
     if _started:
         return
-    threading.Thread(target=_loop, name="kelkoo-late-sales-prep-scheduler", daemon=True).start()
+    threading.Thread(target=_loop, name="late-conversion-scheduler", daemon=True).start()
     _started = True
     logger.info(
-        "Kelkoo late-sales scheduler started (daily at %02d:00 UTC: sales tabs + apply=%s)",
-        int(KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC),
+        "Late conversion scheduler started (daily %02d:00 %s; apply=%s)",
+        int(LATE_CONVERSION_SCHEDULER_HOUR_LOCAL),
+        LATE_CONVERSION_SCHEDULER_TZ,
         "on" if KELKOO_LATE_SALES_APPLY_ENABLED else "off",
     )

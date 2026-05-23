@@ -1232,15 +1232,15 @@ def ui_kelkoo_late_sales():
     if request.method == "POST":
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         apply = mode == "apply"
-        as_of = (request.form.get("as_of") or "").strip()
         creds = ROOT_DIR / "credentials.json"
         try:
             late_sales_result = run_late_sales_flow(
                 credentials_path=creds,
                 spreadsheet_id=KELKOO_LATE_SALES_SPREADSHEET_ID,
                 postback_base=LATE_SALES_POSTBACK_BASE,
-                as_of_str=as_of,
                 apply=apply,
+                refresh_sheets=True,
+                prune_tabs=True,
             )
         except Exception as e:
             logger.exception("Kelkoo late-sales flow")
@@ -1252,7 +1252,7 @@ def ui_kelkoo_late_sales():
     return render_template("late_sales.html", late_sales_result=late_sales_result)
 
 
-DAILY_POSTBACK_FEED_KEYS = frozenset(list(KELKOO_POSTBACK_FEED_TAGS) + ["adexa", "yadore"])
+DAILY_POSTBACK_FEED_KEYS = frozenset(list(KELKOO_POSTBACK_FEED_TAGS) + ["adexa", "yadore", "yadore_sales"])
 
 
 @app.route("/kelkoo/daily-postbacks", methods=["GET"])

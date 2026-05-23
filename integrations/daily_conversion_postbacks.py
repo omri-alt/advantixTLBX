@@ -547,6 +547,178 @@ def _yadore_click_actions(click: Dict[str, Any]) -> Optional[Tuple[str, str, boo
     return (cid, cpc, is_sale, sale_val)
 
 
+def _yadore_conversion_to_sale(conv: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
+    """
+    Parse ``/v2/conversion/detail`` row when ``sales`` >= 1.
+
+    Returns ``(placementId/sub_id, payout, merchant_name, market)``.
+    Yadore does not expose reliable per-sale payout on this endpoint — use ``0`` unless an
+    explicit order/sale value field is present (never click ``revenue`` / CPC).
+    """
+    try:
+        sale_count = int(conv.get("sales") or 0)
+    except (TypeError, ValueError):
+        sale_count = 0
+    if sale_count < 1:
+        return None
+
+    sub_id = ""
+    for k in ("placementId", "placement_id", "subId", "subid"):
+        v = conv.get(k)
+        if v is not None and str(v).strip():
+            sub_id = str(v).strip()
+            break
+    if not sub_id:
+        for k in ("publisherClickId", "clickId", "click_id"):
+            v = conv.get(k)
+            if v is not None and str(v).strip():
+                sub_id = str(v).strip()
+                break
+    if not sub_id:
+        return None
+
+    merchant = conv.get("merchant")
+    if isinstance(merchant, dict):
+        merchant_name = str(merchant.get("name") or "").strip()
+    else:
+        merchant_name = str(merchant or "").strip()
+
+    market = str(conv.get("market") or "").strip().lower()[:2]
+
+    payout = _money_scalar(
+        conv,
+        (
+            "saleValue",
+            "saleValueUsd",
+            "conversionValue",
+            "orderValue",
+            "conversionRevenue",
+            "saleRevenue",
+            "orderRevenue",
+        ),
+    )
+    if not payout or payout == "0":
+        payout = "0"
+
+    return (sub_id, payout, merchant_name, market)
+
+
+def _yadore_conversion_sales_for_date(report_date: str) -> List[Tuple[str, str, str, str]]:
+    """All conversion/detail sales on ``report_date`` (per configured markets)."""
+    from integrations.yadore import YadoreClientError, fetch_conversion_detail_clicks
+
+    mkts = [m for m in (YADORE_REPORT_DETAIL_MARKETS or []) if str(m).strip()]
+    if not mkts:
+        mkts = ["fr", "de", "uk", "us"]
+    out: List[Tuple[str, str, str, str]] = []
+    for mkt in mkts:
+        for conv in fetch_conversion_detail_clicks(report_date, markets=[mkt]):
+            if not isinstance(conv, dict):
+                continue
+            parsed = _yadore_conversion_to_sale(conv)
+            if parsed:
+                out.append(parsed)
+    return out
+
+
+def run_yadore_conversion_sale_postbacks(
+    report_date: str,
+    *,
+    state_path: Path,
+    dry_run: bool,
+    no_resume: bool,
+    session: requests.Session,
+) -> Dict[str, Any]:
+    """
+    Yesterday (or any day) Yadore **sales** from ``/v2/conversion/detail`` → ``SaleOur`` GET only.
+
+    ``payout=0`` when the API has no order value. No click postbacks (those stay on ``yadore`` / report/detail).
+  """
+    source_key = "yadore_sales"
+    summary: Dict[str, Any] = {"source": source_key, "report_date": report_date, "sales": 0, "sent": 0}
+
+    try:
+        sales = _yadore_conversion_sales_for_date(report_date)
+    except YadoreClientError as e:
+        return {"ok": False, "error": str(e), **summary}
+
+    summary["sales"] = len(sales)
+    if not sales:
+        summary["ok"] = True
+        logger.info("Yadore sales %s: 0 conversion rows", report_date)
+        return summary
+
+    snap: Optional[Dict[str, Any]] = copy.deepcopy(load_state(state_path)) if dry_run else None
+
+    def _state_root() -> Dict[str, Any]:
+        return snap if snap is not None else load_state(state_path)
+
+    def commit(mutator: Callable[[Dict[str, Any]], None]) -> None:
+        if snap is not None:
+            mutator(snap)
+            return
+        d = load_state(state_path)
+        mutator(d)
+        save_state_atomic(state_path, d)
+
+    def read_flat() -> Dict[str, Any]:
+        return _bucket(_state_root(), source_key, report_date).setdefault("flat", default_flat_run_state())
+
+    if not no_resume and read_flat().get("status") == "done":
+        summary["skipped_done"] = True
+        summary["ok"] = True
+        summary["sent"] = int(read_flat().get("postbacks_sent") or 0)
+        return summary
+
+    if no_resume:
+
+        def _reset(d: Dict[str, Any]) -> None:
+            _bucket(d, source_key, report_date)["flat"] = default_flat_run_state()
+
+        commit(_reset)
+
+    total = len(sales)
+    failed = 0
+    sent = 0
+
+    def write_flat(**kwargs: Any) -> None:
+        def _w(d: Dict[str, Any]) -> None:
+            fl = _bucket(d, source_key, report_date).setdefault("flat", default_flat_run_state())
+            for k, v in kwargs.items():
+                fl[k] = v
+            fl["last_updated_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        commit(_w)
+
+    write_flat(total_items=total, status="partial", fetch_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    next_idx = 0 if no_resume else int(read_flat().get("next_index") or 0)
+    for idx in range(next_idx, total):
+        sub_id, payout, _merchant, _market = sales[idx]
+        url = build_daily_postback_url(
+            subid=sub_id,
+            payout="0",
+            status=DAILY_CONVERSION_POSTBACK_SALE_STATUS,
+        )
+        code = send_postback_get(session, url, dry_run=dry_run, dry_run_log=dry_run)
+        if code < 400:
+            sent += 1
+        else:
+            failed += 1
+        write_flat(
+            next_index=idx + 1,
+            postbacks_sent=sent,
+            status="partial" if idx + 1 < total else "done",
+            completed_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if idx + 1 >= total else None,
+            last_error=(f"HTTP {code} subid={sub_id[:48]}" if code >= 400 else None),
+        )
+
+    summary["sent"] = sent
+    summary["failed"] = failed
+    summary["ok"] = failed == 0
+    return summary
+
+
 def run_flat_report_postbacks(
     source_key: str,
     report_date: str,
@@ -978,6 +1150,17 @@ def run_daily_conversion_postbacks_batch(
                 rc = 1
         elif t == "yadore":
             out = run_yadore_postbacks(
+                report_date,
+                state_path=state_path,
+                dry_run=dry_run,
+                no_resume=no_resume,
+                session=session,
+            )
+            results.append({"target": t, "summary": out})
+            if not out.get("ok"):
+                rc = 1
+        elif t == "yadore_sales":
+            out = run_yadore_conversion_sale_postbacks(
                 report_date,
                 state_path=state_path,
                 dry_run=dry_run,

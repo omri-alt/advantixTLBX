@@ -19,10 +19,9 @@ Optional: ``--run-daily-conversion-postbacks`` runs ``run_daily_conversion_postb
 workflow (Kelkoo per-geo + Adexa + Yadore → Keitaro GET postbacks). Use ``--postback-report-date YYYY-MM-DD`` to
 override the stats date (default: yesterday UTC).
 
-After PLA / Keitaro / Blend (or when skipped): **8)** yesterday Kelkoo sales report tabs on the late-sales workbook
-(``workflows.kelkoo_sales_report``), then **9)** Kelkoo late-sales diff/dry-run (use ``--late-sales-apply`` to send
-GET postbacks). Use ``--skip-sales-report`` / ``--skip-late-sales`` to bypass. Global ``--dry-run`` skips sheet writes
-for the sales report and forces late-sales dry-run.
+After PLA / Keitaro / Blend (or when skipped): **8)** late conversion sales — refresh ``SalesMTD_*`` sheets (all feeds),
+compare month-to-date sales to Keitaro log, optional LateSale GETs (``--late-sales-apply``). Use ``--skip-late-sales``
+to bypass; ``--skip-sales-report`` skips sheet refresh only. Global ``--dry-run`` forces late-sales dry-run (no GETs).
 
 Requires .env: KEITARO_BASE_URL, KEITARO_API_KEY, FEED1_API_KEY, FEED2_API_KEY; credentials.json.
 Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) for step 0b/7a; feeds without an API key are skipped.
@@ -671,20 +670,7 @@ def _run_post_pla_automation_tail(service: Any, pa: dict) -> None:
         print("   (--dry-run: sales report will not write sheets; late-sales will not apply GETs.)")
 
     print()
-    print("8. Kelkoo yesterday sales report (late-sales workbook) ...")
-    if pa.get("skip_sales_report"):
-        print("   Skipped (--skip-sales-report).")
-    else:
-        try:
-            from workflows.kelkoo_sales_report import run_yesterday_sales_reports
-
-            run_yesterday_sales_reports(service, dry_run=dry)
-            print("   Done.")
-        except Exception as e:
-            print(f"   Sales report step error (non-fatal): {e}")
-
-    print()
-    print("9. Kelkoo late-sales detection ...")
+    print("8. Late conversion sales (MTD refresh + Keitaro check) ...")
     if pa.get("skip_late_sales"):
         print("   Skipped (--skip-late-sales).")
         return
@@ -696,20 +682,30 @@ def _run_post_pla_automation_tail(service: Any, pa: dict) -> None:
         root = Path(__file__).resolve().parent
         cred = root / "credentials.json"
         apply_ls = bool(pa.get("late_sales_apply")) and not dry
+        refresh_sheets = not pa.get("skip_sales_report") and not dry
+        if pa.get("skip_sales_report"):
+            print("   Sheet refresh skipped (--skip-sales-report).")
+        elif dry:
+            print("   Sheet refresh skipped (--dry-run).")
         res = run_late_sales_flow(
             credentials_path=cred,
             spreadsheet_id=KELKOO_LATE_SALES_SPREADSHEET_ID,
             postback_base=LATE_SALES_POSTBACK_BASE,
             as_of_str="",
             apply=apply_ls,
+            refresh_sheets=refresh_sheets,
+            prune_tabs=refresh_sheets,
         )
         if res.get("ok"):
             mode = "apply" if apply_ls else "dry-run"
-            print(f"   Late-sales ({mode}): ok.")
+            print(
+                f"   Late conversion ({mode}): window {res.get('sale_window')}; "
+                f"eligible={res.get('eligible_count')}; skipped_keitaro={res.get('skipped_keitaro')}."
+            )
         else:
-            print(f"   Late-sales: {res.get('error', 'failed')}")
+            print(f"   Late conversion: {res.get('error', 'failed')}")
     except Exception as e:
-        print(f"   Late-sales step error (non-fatal): {e}")
+        print(f"   Late conversion step error (non-fatal): {e}")
 
 
 def run_pla_offers_keitaro_blend_tail(

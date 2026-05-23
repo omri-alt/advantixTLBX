@@ -63,6 +63,7 @@ def start_background_schedulers() -> None:
 
     from scheduler.autoserver_scheduler import start_autoserver_scheduler
     from scheduler.kelkoo_late_sales_scheduler import start_kelkoo_late_sales_scheduler
+    from scheduler.yadore_sales_scheduler import start_yadore_sales_scheduler
     from integrations.overview_snapshot import (
         start_daily_overview_scheduler,
         start_overview_snapshot_bootstrap,
@@ -71,6 +72,7 @@ def start_background_schedulers() -> None:
     for label, fn in (
         ("AutoServer", start_autoserver_scheduler),
         ("Kelkoo late-sales prep", start_kelkoo_late_sales_scheduler),
+        ("Yadore daily sales postbacks", start_yadore_sales_scheduler),
         ("Overview snapshot", start_daily_overview_scheduler),
         ("Overview bootstrap", start_overview_snapshot_bootstrap),
     ):
