@@ -20,7 +20,10 @@ Behavior:
      in ``url=`` / ``market=`` with ``placementId={subid}`` (Keitaro macros preserved in ``rain=``).
      Set ``BLEND_YADORE_OFFER_USE_SUB_MACROS=1`` for ``url={sub_id_3}&market={sub_id_2}&placementId={subid}``
      (campaign must pass those subs).
-  3) Attach offers to the geo flow with weighted shares proportional to clickCap.
+  3) Per geo, attach offers to ``{geo}_desktop`` and ``{geo}_mobile`` streams (device_type
+     filters; tablet counts as mobile) with weights from clickCap / device_mode. Legacy rows
+     (neither CPC >= BLEND_DEVICE_CPC_MIN) use full clickCap on both streams. Undivided
+     legacy geo flows are zeroed when device streams exist.
 
 Usage:
   python blend_sync_from_sheet.py
@@ -58,11 +61,18 @@ from assistance import (
     get_campaigns_data,
     find_campaign_by_alias_or_name,
     get_campaign_streams,
-    add_country_flow,
     flow_name_to_geo,
-    set_flow_offers,
+    parse_blend_stream_geo_channel,
+    ensure_blend_device_stream,
+    set_blend_device_stream_filters,
     set_flow_offers_weighted,
     set_flow_offers_weighted_keep_zeros,
+)
+from integrations.blend_device import (
+    DEVICE_MODE_LEGACY,
+    blend_stream_weight_for_channel,
+    device_mode_from_sheet_row,
+    normalize_device_mode,
 )
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
@@ -122,6 +132,9 @@ class BlendRow:
     auto_flag: str = "x"
     feed_tag: str = "kelkoo1"
     merchant_id: Optional[str] = None
+    device_mode: str = DEVICE_MODE_LEGACY
+    weight_desktop: float = 0.0
+    weight_mobile: float = 0.0
 
     @property
     def offer_name(self) -> str:
@@ -168,6 +181,9 @@ def ensure_blend_sheet_headers(service) -> None:
         header.append("auto")
     if "feed" not in header:
         header.append("feed")
+    for col in ("device_mode", "weight_desktop", "weight_mobile", "cpc_desktop", "cpc_mobile"):
+        if col not in header:
+            header.append(col)
     service.values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=f"'{quoted}'!A1",
@@ -200,6 +216,9 @@ def read_blend_rows(service, only_geo: Optional[str] = None) -> List[BlendRow]:
         auto_flag = (get_cell(row, "auto") or "x").strip().lower()
         feed_tag = (get_cell(row, "feed") or "kelkoo1").strip().lower()
         mid = get_cell(row, "merchantId") if "merchantId" in idx else ""
+        mode_raw = get_cell(row, "device_mode")
+        cpc_d = get_cell(row, "cpc_desktop") if "cpc_desktop" in idx else ""
+        cpc_m = get_cell(row, "cpc_mobile") if "cpc_mobile" in idx else ""
 
         if not brand or not url or not geo or cap is None:
             continue
@@ -207,6 +226,12 @@ def read_blend_rows(service, only_geo: Optional[str] = None) -> List[BlendRow]:
             continue
         if only_geo and geo != only_geo:
             continue
+        mode, w_d, w_m = device_mode_from_sheet_row(mode_raw, cap, cpc_d, cpc_m)
+        wd_cell = _parse_click_cap(get_cell(row, "weight_desktop"))
+        wm_cell = _parse_click_cap(get_cell(row, "weight_mobile"))
+        if wd_cell is not None and wm_cell is not None and normalize_device_mode(mode_raw or mode) == mode:
+            if mode != DEVICE_MODE_LEGACY:
+                w_d, w_m = wd_cell, wm_cell
         out.append(
             BlendRow(
                 brand_name=brand,
@@ -216,6 +241,9 @@ def read_blend_rows(service, only_geo: Optional[str] = None) -> List[BlendRow]:
                 auto_flag=auto_flag,
                 feed_tag=feed_tag,
                 merchant_id=mid or None,
+                device_mode=mode,
+                weight_desktop=w_d,
+                weight_mobile=w_m,
             )
         )
     return out
@@ -495,14 +523,130 @@ def _get_campaign_id_by_alias(alias: str) -> int:
     return int(c["id"])
 
 
-def _streams_by_geo(campaign_id: int) -> Dict[str, Dict[str, Any]]:
+def _streams_by_geo_channel(campaign_id: int) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """``geo -> {desktop|mobile|legacy: stream}``."""
     streams = get_campaign_streams(campaign_id)
-    out: Dict[str, Dict[str, Any]] = {}
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for s in streams:
-        g = flow_name_to_geo(s.get("name") or "")
-        if g:
-            out[g] = s
+        geo, channel = parse_blend_stream_geo_channel(s.get("name") or "")
+        if geo and channel:
+            out.setdefault(geo, {})[channel] = s
     return out
+
+
+def _build_channel_offer_weights(
+    offer_id_to_row: Dict[int, BlendRow],
+    channel: str,
+) -> Dict[int, float]:
+    weights: Dict[int, float] = {}
+    for oid, row in offer_id_to_row.items():
+        w = blend_stream_weight_for_channel(
+            row.device_mode,
+            channel,
+            click_cap=row.click_cap,
+            weight_desktop=row.weight_desktop,
+            weight_mobile=row.weight_mobile,
+        )
+        if w is not None and w > 0:
+            weights[oid] = w
+    return weights
+
+
+def _zero_blend_offers_on_stream(
+    client: KeitaroClient,
+    stream: Dict[str, Any],
+    *,
+    all_offers_by_id: Dict[int, str],
+) -> None:
+    """Set share=0 for blend_* offers on a legacy undivided geo stream."""
+    sid = stream.get("id")
+    if sid is None:
+        return
+    offers_payload: List[Dict[str, Any]] = []
+    for slot in stream.get("offers") or []:
+        oid_raw = slot.get("offer_id")
+        if oid_raw is None:
+            continue
+        oid = int(oid_raw)
+        name = all_offers_by_id.get(oid, "")
+        if not name.startswith("blend_"):
+            continue
+        offers_payload.append({"offer_id": oid, "state": "active", "share": 0})
+    if offers_payload:
+        client.update_stream(int(sid), {"offers": offers_payload})
+
+
+def _sync_geo_device_streams(
+    client: KeitaroClient,
+    campaign_id: int,
+    geo: str,
+    offer_id_to_row: Dict[int, BlendRow],
+    streams_map: Dict[str, Dict[str, Dict[str, Any]]],
+    all_offers_by_id: Dict[int, str],
+) -> Tuple[int, int]:
+    """Upsert desktop/mobile streams for one geo. Returns (flows_created, streams_updated)."""
+    created_flows = 0
+    streams_updated = 0
+    geo_streams = streams_map.setdefault(geo, {})
+
+    for channel in ("desktop", "mobile"):
+        stream = geo_streams.get(channel)
+        if not stream:
+            stream = ensure_blend_device_stream(campaign_id, geo, channel, skip_if_exists=True)
+            if stream.get("_skipped"):
+                created_flows += 0
+            else:
+                created_flows += 1
+            geo_streams[channel] = stream
+            streams_map[geo] = geo_streams
+        else:
+            sid = stream.get("id")
+            if sid is not None:
+                try:
+                    set_blend_device_stream_filters(int(sid), geo, channel)
+                except KeitaroClientError as e:
+                    print(f"  Warning: could not refresh {geo}/{channel} filters: {e}")
+
+        offer_id_to_weight = _build_channel_offer_weights(offer_id_to_row, channel)
+        sid = stream.get("id")
+        if sid is None:
+            continue
+        sid_i = int(sid)
+        active_ids = set(offer_id_to_weight.keys())
+        existing_attached: Set[int] = set()
+        for slot in stream.get("offers") or []:
+            oidr = slot.get("offer_id")
+            if oidr is not None:
+                existing_attached.add(int(oidr))
+        zero_keep_ids: List[int] = []
+        for oid in existing_attached:
+            if oid in active_ids:
+                continue
+            name = all_offers_by_id.get(oid, "")
+            if name.startswith("blend_"):
+                zero_keep_ids.append(oid)
+
+        if offer_id_to_weight:
+            if zero_keep_ids:
+                set_flow_offers_weighted_keep_zeros(sid_i, offer_id_to_weight, zero_keep_ids)
+            else:
+                set_flow_offers_weighted(sid_i, offer_id_to_weight)
+            streams_updated += 1
+            print(
+                f"  {geo}/{channel}: {len(offer_id_to_weight)} offer(s) weighted; "
+                f"+{len(zero_keep_ids)} at share=0"
+            )
+        elif zero_keep_ids or existing_attached:
+            _zero_blend_offers_on_stream(client, stream, all_offers_by_id=all_offers_by_id)
+            streams_updated += 1
+            print(f"  {geo}/{channel}: no active offers; zeroed blend_* on stream")
+
+    legacy = geo_streams.get("legacy")
+    if legacy:
+        _zero_blend_offers_on_stream(client, legacy, all_offers_by_id=all_offers_by_id)
+        print(f"  {geo}: legacy stream blend_* offers set to share=0 (device streams active)")
+
+    return created_flows, streams_updated
 
 
 def _get_offer_id_by_name(client: KeitaroClient, name: str) -> Optional[int]:
@@ -822,7 +966,7 @@ def main() -> None:
         rows_by_geo.setdefault(r.geo, []).append(r)
 
     client = KeitaroClient()
-    streams_by_geo = _streams_by_geo(campaign_id)
+    streams_map = _streams_by_geo_channel(campaign_id)
 
     created_offers = 0
     updated_offers = 0
@@ -841,79 +985,37 @@ def main() -> None:
         print(f"Warning: could not list offers for share-0 keep-alive logic: {e}")
 
     for geo, geo_rows in sorted(rows_by_geo.items()):
-        # 1) Ensure offers exist
-        offer_id_to_weight: Dict[int, float] = {}
+        offer_id_to_row: Dict[int, BlendRow] = {}
         for r in geo_rows:
             name = r.offer_name
             before = _get_offer_id_by_name(client, name)
             action_payload = _blend_keitaro_action_payload(r.geo, r.offer_url, r.feed_tag)
             oid = _upsert_offer(client, name, action_payload)
-            offer_id_to_weight[oid] = r.click_cap
+            offer_id_to_row[oid] = r
             if before is None:
                 created_offers += 1
             else:
                 updated_offers += 1
 
-        # 2) Ensure flow exists
-        stream = streams_by_geo.get(geo)
-        if not stream:
-            created = add_country_flow(
-                campaign_id=campaign_id,
-                country_code=geo,
-                flow_name=geo,
-                offer_ids=list(offer_id_to_weight.keys()),
-                skip_if_exists=True,
-            )
-            created_flows += 0 if created.get("_skipped") else 1
-            stream = created
-            streams_by_geo[geo] = stream
+        cf, _su = _sync_geo_device_streams(
+            client,
+            campaign_id,
+            geo,
+            offer_id_to_row,
+            streams_map,
+            all_offers_by_id,
+        )
+        created_flows += cf
 
-        # 3) Determine "keep with share=0" set: currently-attached blend_ offers
-        # for this geo's flow that aren't in offer_id_to_weight.
-        active_ids = set(offer_id_to_weight.keys())
-        existing_attached_ids: Set[int] = set()
-        for slot in (stream.get("offers") or []):
-            oidr = slot.get("offer_id")
-            if oidr is None:
-                continue
-            existing_attached_ids.add(int(oidr))
-        zero_keep_ids: List[int] = []
-        for oid in existing_attached_ids:
-            if oid in active_ids:
-                continue
-            name = all_offers_by_id.get(oid, "")
-            # Only carry forward Blend-managed offers; leave anything else for
-            # operators to handle manually.
-            if name.startswith("blend_"):
-                zero_keep_ids.append(oid)
-
-        # 4) Set weighted shares on flow, preserving demonetized blend_ offers at share=0
-        sid = int(stream["id"])
-        if zero_keep_ids:
-            set_flow_offers_weighted_keep_zeros(sid, offer_id_to_weight, zero_keep_ids)
-            print(
-                f"  {geo}: {len(offer_id_to_weight)} offers attached (weighted by clickCap); "
-                f"+{len(zero_keep_ids)} demonetized kept with share=0"
-            )
-        else:
-            set_flow_offers_weighted(sid, offer_id_to_weight)
-            print(f"  {geo}: {len(offer_id_to_weight)} offers attached (weighted by clickCap)")
-
-    # If after auto-deletion a geo has no remaining rows in the sheet,
-    # disable all currently attached offers for that geo so we don't keep traffic alive.
-    for geo, stream in streams_by_geo.items():
+    # Geos with no sheet rows: zero blend_* on all device + legacy streams for that geo.
+    for geo, ch_streams in streams_map.items():
         if geo in rows_by_geo:
             continue
-        sid = int(stream.get("id"))
-        attached_offers = stream.get("offers") or []
-        offers_payload = []
-        for o in attached_offers:
-            oid = o.get("offer_id")
-            if oid is None:
+        for channel, stream in ch_streams.items():
+            if channel not in ("desktop", "mobile", "legacy"):
                 continue
-            offers_payload.append({"offer_id": int(oid), "state": "active", "share": 0})
-        if offers_payload:
-            client.update_stream(sid, {"offers": offers_payload})
+            _zero_blend_offers_on_stream(client, stream, all_offers_by_id=all_offers_by_id)
+            print(f"  {geo}/{channel}: no Blend rows — zeroed blend_* offers")
 
     # Archive stale Blend offers (offers named like "blend_...") that are not attached to any Blend flow.
     expected_names = {r.offer_name for r in rows}

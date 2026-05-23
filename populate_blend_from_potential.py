@@ -39,6 +39,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import BLEND_FEED_CHOICES, BLEND_SHEETS_SPREADSHEET_ID
+from integrations.blend_device import DEVICE_MODE_LEGACY, normalize_device_mode
 
 BLEND_SPREADSHEET_ID = BLEND_SHEETS_SPREADSHEET_ID
 BLEND_SHEET = "Blend"
@@ -81,7 +82,20 @@ def ensure_blend_headers(service) -> List[str]:
     header = [str(c or "").strip() for c in (rows[0] if rows else [])]
     if not header or all(not h for h in header):
         header = ["brandName", "offerUrl", "clickCap", "geo", "merchantId", "auto", "feed"]
-    required = ["brandName", "offerUrl", "clickCap", "geo", "merchantId", "auto", "feed"]
+    required = [
+        "brandName",
+        "offerUrl",
+        "clickCap",
+        "geo",
+        "merchantId",
+        "auto",
+        "feed",
+        "device_mode",
+        "weight_desktop",
+        "weight_mobile",
+        "cpc_desktop",
+        "cpc_mobile",
+    ]
     for r in required:
         if r not in header:
             header.append(r)
@@ -170,6 +184,11 @@ def main() -> None:
     i_domain = pot_idx("domain")
     i_geo = pot_idx("geo_origin")
     i_monet = pot_idx("kelkoo_monetization")
+    i_mode = pot_idx("device_mode")
+    i_wd = pot_idx("weight_desktop")
+    i_wm = pot_idx("weight_mobile")
+    i_cpc_d = pot_idx("cpc_desktop")
+    i_cpc_m = pot_idx("cpc_mobile")
     if min(i_mid, i_name, i_domain, i_geo, i_monet) < 0:
         print(f"Potential sheet header missing required columns: {pot_vals[0]}")
         return
@@ -234,6 +253,20 @@ def main() -> None:
         new_row[b_i("merchantid")] = mid
         new_row[b_i("auto")] = "v"
         new_row[b_i("feed")] = args.feed
+        if i_mode >= 0 and i_mode < len(row):
+            mode = normalize_device_mode(str(row[i_mode] or ""))
+        else:
+            mode = DEVICE_MODE_LEGACY
+        if b_i("device_mode") >= 0:
+            new_row[b_i("device_mode")] = mode
+        if i_wd >= 0 and i_wd < len(row) and b_i("weight_desktop") >= 0:
+            new_row[b_i("weight_desktop")] = str(row[i_wd] or "")
+        if i_wm >= 0 and i_wm < len(row) and b_i("weight_mobile") >= 0:
+            new_row[b_i("weight_mobile")] = str(row[i_wm] or "")
+        if i_cpc_d >= 0 and i_cpc_d < len(row) and b_i("cpc_desktop") >= 0:
+            new_row[b_i("cpc_desktop")] = str(row[i_cpc_d] or "")
+        if i_cpc_m >= 0 and i_cpc_m < len(row) and b_i("cpc_mobile") >= 0:
+            new_row[b_i("cpc_mobile")] = str(row[i_cpc_m] or "")
         candidates.append(new_row[: len(blend_header)])
         existing.add(key)
 

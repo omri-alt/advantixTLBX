@@ -4,7 +4,7 @@ to verify campaign creation / campaign_setup flow.
 """
 import logging
 from urllib.parse import quote
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from config import KELKOO_ACCOUNT_ID, FEED1_KELKOO_ACCOUNT_ID
@@ -703,19 +703,143 @@ def set_flow_offers_weighted_keep_zeros(
     return client.update_stream(stream_id, {"offers": offers})
 
 
-def flow_name_to_geo(flow_name: str) -> Optional[str]:
-    """Return geo code for a flow name (e.g. Spain -> es, or es -> es). Uses GEO_LABELS."""
+def blend_device_stream_name(geo: str, channel: str) -> str:
+    """Keitaro flow name for Blend device split: ``de_desktop``, ``de_mobile``."""
+    g = normalize_geo(geo)
+    ch = (channel or "").strip().lower()
+    if ch == "desktop":
+        return f"{g}_desktop"
+    if ch == "mobile":
+        return f"{g}_mobile"
+    raise ValueError(f"Invalid blend device channel {channel!r}")
+
+
+def _flow_name_to_geo_label_only(flow_name: str) -> Optional[str]:
+    """Map flow name to geo via SUPPORTED_GEOS or GEO_LABELS (no device suffix parsing)."""
     try:
-        from geos import GEO_LABELS, SUPPORTED_GEOS
+        from geos import GEO_LABELS, SUPPORTED_GEOS as _GEOS
     except ImportError:
         return None
     name_lower = (flow_name or "").strip().lower()
-    if name_lower in SUPPORTED_GEOS:
+    if name_lower in _GEOS:
         return name_lower
     for geo, label in GEO_LABELS.items():
         if (label or "").strip().lower() == name_lower:
             return geo
     return None
+
+
+def parse_blend_stream_geo_channel(flow_name: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Parse a Blend campaign stream name into (geo, channel).
+
+    channel is ``desktop``, ``mobile``, or ``legacy`` (undivided geo flow).
+    """
+    name = (flow_name or "").strip()
+    if not name:
+        return None, None
+    lower = name.lower()
+    for suffix, channel in (("_desktop", "desktop"), ("_mobile", "mobile")):
+        if lower.endswith(suffix):
+            base = lower[: -len(suffix)]
+            if base and (not SUPPORTED_GEOS or base in SUPPORTED_GEOS):
+                return base, channel
+    geo = _flow_name_to_geo_label_only(name)
+    if geo:
+        return geo, "legacy"
+    return None, None
+
+
+def flow_name_to_geo(flow_name: str) -> Optional[str]:
+    """Return geo code for a flow name (e.g. Spain -> es, or es -> es). Uses GEO_LABELS."""
+    geo, _ch = parse_blend_stream_geo_channel(flow_name)
+    return geo
+
+
+def _blend_device_type_filter(channel: str) -> Dict[str, Any]:
+    from integrations.blend_device import KEITARO_DEVICE_DESKTOP, KEITARO_DEVICE_MOBILE
+
+    ch = (channel or "").strip().lower()
+    if ch == "desktop":
+        payload = list(KEITARO_DEVICE_DESKTOP)
+    elif ch == "mobile":
+        payload = list(KEITARO_DEVICE_MOBILE)
+    else:
+        raise ValueError(f"Invalid device channel {channel!r}")
+    return {"name": "device_type", "mode": "accept", "payload": payload}
+
+
+def ensure_blend_device_stream(
+    campaign_id: int,
+    geo: str,
+    channel: str,
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    skip_if_exists: bool = True,
+) -> Dict[str, Any]:
+    """
+    Country + device_type filtered flow for Blend Option B (one offer, split streams).
+    """
+    from integrations.blend_device import KEITARO_DEVICE_DESKTOP, KEITARO_DEVICE_MOBILE  # noqa: F401
+
+    client = KeitaroClient(base_url=base_url, api_key=api_key)
+    flow_name = blend_device_stream_name(geo, channel)
+    if skip_if_exists:
+        name_lower = flow_name.lower()
+        for s in client.get_streams(int(campaign_id)):
+            if (s.get("name") or "").strip().lower() == name_lower:
+                out = dict(s)
+                out["_skipped"] = True
+                return out
+    geo_code = _geo_for_api(geo)
+    if not geo_code:
+        raise ValueError(f"Invalid country code {geo!r}")
+    filters = [
+        {"name": "country", "mode": "accept", "payload": [geo_code]},
+        _blend_device_type_filter(channel),
+    ]
+    payload = {
+        "campaign_id": int(campaign_id),
+        "type": "regular",
+        "name": flow_name,
+        "schema": "landings",
+        "action_type": "http",
+        "state": "active",
+        "weight": 100,
+        "filter_or": False,
+        "collect_clicks": True,
+        "offer_selection": "before_click",
+        "filters": filters,
+        "offers": [],
+    }
+    result = client.create_stream(payload)
+    logger.info(
+        "Created Blend device flow %s (geo=%s channel=%s) id=%s",
+        flow_name,
+        geo,
+        channel,
+        result.get("id"),
+    )
+    return result
+
+
+def set_blend_device_stream_filters(
+    stream_id: int,
+    geo: str,
+    channel: str,
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Ensure country + device_type filters on an existing Blend device stream."""
+    client = KeitaroClient(base_url=base_url, api_key=api_key)
+    geo_code = _geo_for_api(geo)
+    filters = [
+        {"name": "country", "mode": "accept", "payload": [geo_code]},
+        _blend_device_type_filter(channel),
+    ]
+    return client.update_stream(int(stream_id), {"filters": filters})
 
 
 if __name__ == "__main__":

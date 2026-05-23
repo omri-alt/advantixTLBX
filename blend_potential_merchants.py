@@ -46,6 +46,7 @@ from config import (
 from workflows.kelkoo_daily import download_merchants_feed, REPORTS_AGGREGATED_URL, _headers
 from integrations.kelkoo_search import kelkoo_merchant_link_check, format_kelkoo_monetization_status
 from integrations.monetization_geo import geo_for_yadore
+from integrations.blend_device import DEVICE_MODE_LEGACY, potential_device_columns
 
 BLEND_SPREADSHEET_ID = BLEND_SHEETS_SPREADSHEET_ID
 
@@ -102,6 +103,35 @@ def _default_output_sheet(feed: str) -> str:
 def _cr_percent_str(sales: int, leads: int) -> str:
     cr = (sales / max(leads, 1)) * 100.0
     return f"{cr:.2f}%"
+
+
+def _potential_header_with_device() -> List[str]:
+    return [
+        "merchantId",
+        "merchant",
+        "domain",
+        "geo_origin",
+        "leads",
+        "sales",
+        "cr",
+        "merchantTier",
+        "kelkoo_monetization",
+        "cpc_desktop",
+        "cpc_mobile",
+        "device_mode",
+        "weight_desktop",
+        "weight_mobile",
+    ]
+
+
+def _potential_row_device_suffix(
+    desktop_raw: Any,
+    mobile_raw: Any,
+) -> List[str]:
+    """Adexa/Yadore: no feed CPC — always legacy with empty CPC cells."""
+    _d, _m, mode, w_d, w_m = potential_device_columns("", "", default_click_cap=50.0)
+    # Force legacy when no CPC data
+    return ["", "", DEVICE_MODE_LEGACY, w_d, w_m]
 
 
 def _is_static_tier(merchant_tier: str) -> bool:
@@ -287,17 +317,7 @@ def run_potential_adexa(
             url_by_geo_mid[(geo, mid)] = url
 
     min_cr = 0.01
-    header = [
-        "merchantId",
-        "merchant",
-        "domain",
-        "geo_origin",
-        "leads",
-        "sales",
-        "cr",
-        "merchantTier",
-        "kelkoo_monetization",
-    ]
+    header = _potential_header_with_device()
     rows_out: List[List[str]] = []
     checked = 0
     for (geo, mid), rec in sorted(agg.items(), key=lambda kv: kv[0]):
@@ -334,6 +354,7 @@ def run_potential_adexa(
                 tier,
                 monetization,
             ]
+            + _potential_row_device_suffix("", "")
         )
 
     def sort_key(r: List[str]) -> Tuple[float, int, int]:
@@ -423,17 +444,7 @@ def run_potential_yadore(
             agg[key]["url"] = str(row.get("merchant_url") or "").strip()
 
     min_cr = 0.01
-    header = [
-        "merchantId",
-        "merchant",
-        "domain",
-        "geo_origin",
-        "leads",
-        "sales",
-        "cr",
-        "merchantTier",
-        "kelkoo_monetization",
-    ]
+    header = _potential_header_with_device()
     rows_out: List[List[str]] = []
     checked = 0
     for (geo, mid), rec in sorted(agg.items(), key=lambda kv: kv[0]):
@@ -473,6 +484,7 @@ def run_potential_yadore(
                 tier,
                 monetization,
             ]
+            + _potential_row_device_suffix("", "")
         )
 
     def sort_key_y(r: List[str]) -> Tuple[float, int, int]:
@@ -554,23 +566,15 @@ def main() -> None:
             "domain": str(m.get("url") or "").strip(),
             "geo_origin": str(m.get("geo_origin") or "").strip().lower()[:2],
             "merchantTier": str(m.get("merchantTier") or "").strip(),
+            "merchantEstimatedCpc": m.get("merchantEstimatedCpc"),
+            "merchantMobileEstimatedCpc": m.get("merchantMobileEstimatedCpc"),
         }
         for k in keys:
             prev = feed_by_id.get(k)
             if prev is None or ((not prev.get("domain")) and info.get("domain")):
                 feed_by_id[k] = info
 
-    header = [
-        "merchantId",
-        "merchant",
-        "domain",
-        "geo_origin",
-        "leads",
-        "sales",
-        "cr",
-        "merchantTier",
-        "kelkoo_monetization",
-    ]
+    header = _potential_header_with_device()
     rows_out: List[List[str]] = []
     checked = 0
 
@@ -606,17 +610,26 @@ def main() -> None:
         if only_monetized and not is_monetized:
             continue
 
-        rows_out.append([
-            mid,
-            merchant,
-            domain,
-            geo_origin,
-            str(leads),
-            str(sales),
-            _cr_percent_str(sales, leads),
-            tier,
-            monetization,
-        ])
+        dev_cols = list(
+            potential_device_columns(
+                info.get("merchantEstimatedCpc"),
+                info.get("merchantMobileEstimatedCpc"),
+            )
+        )
+        rows_out.append(
+            [
+                mid,
+                merchant,
+                domain,
+                geo_origin,
+                str(leads),
+                str(sales),
+                _cr_percent_str(sales, leads),
+                tier,
+                monetization,
+            ]
+            + dev_cols
+        )
 
     # Sort by CR desc, then sales desc, then leads desc
     def sort_key(r: List[str]):

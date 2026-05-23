@@ -203,6 +203,15 @@ except Exception:
     BLEND_POPULATE_MAX_ADD = 5000
 BLEND_POPULATE_MAX_ADD = max(1, min(20000, BLEND_POPULATE_MAX_ADD))
 
+try:
+    BLEND_DEVICE_CPC_MIN = float((os.getenv("BLEND_DEVICE_CPC_MIN") or "0.05").strip())
+except Exception:
+    BLEND_DEVICE_CPC_MIN = 0.05
+BLEND_DEVICE_CPC_MIN = max(0.0, BLEND_DEVICE_CPC_MIN)
+
+_blend_cap_split = (os.getenv("BLEND_DEVICE_CAP_SPLIT_BY_CPC") or "1").strip().lower()
+BLEND_DEVICE_CAP_SPLIT_BY_CPC = _blend_cap_split not in ("0", "false", "no", "off")
+
 # Kelkoo
 FEED1_API_KEY = (os.getenv("FEED1_API_KEY") or "").strip()
 FEED2_API_KEY = (os.getenv("FEED2_API_KEY") or "").strip()
