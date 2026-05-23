@@ -1,3 +1,5 @@
+# Production:  docker compose up -d --build   OR   bash scripts/deploy.sh
+# Dev watch:  docker compose watch            (requires develop.watch below)
 services:
   klblend:
     build: .
@@ -9,5 +11,28 @@ services:
       - "5000:5000"
     volumes:
       - ./runtime:/app/runtime
-      # Keep credentials under ./secrets to avoid host path confusion.
       - ./secrets/credentials.json:/app/credentials.json:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+          ignore:
+            - runtime/
+            - .git/
+            - data/
+            - secrets/
+            - "**/__pycache__/"
+            - "**/*.csv"
+            - "**/*.json"
