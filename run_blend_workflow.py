@@ -31,7 +31,7 @@ def main() -> None:
         "--feed",
         default="both",
         choices=["kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore", "both", "all"],
-        help="Potential source: kelkoo*/adexa/yadore; both=kelkoo1+kelkoo2; all=BLEND_POTENTIAL_FEEDS from .env.",
+        help="Potential source: kelkoo*/adexa/yadore; both=kelkoo1+kelkoo2; all=BLEND_POTENTIAL_FEEDS from .env (default includes kelkoo5).",
     )
     p.add_argument("--geo", default=None, help="Passed to blend_sync_from_sheet.")
     p.add_argument("--skip-potential", action="store_true", help="Skip blend_potential_merchants.")

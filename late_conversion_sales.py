@@ -467,7 +467,7 @@ def refresh_mtd_sales_sheets(
     return {
         "ok": True,
         "month_key": month_key,
-        "sale_window": f"{month_start.isoformat()} .. {end.isoformat()}",
+        "sale_window": f"{month_start.isoformat()} .. {hi_date.isoformat()}",
         "yesterday": yesterday.isoformat(),
         "feeds": feed_summaries,
     }
@@ -815,7 +815,7 @@ def run_late_sales_flow(
         "spreadsheet_id": spreadsheet_id,
         "spreadsheet_title": ss_title,
         "month_key": month_key,
-        "sale_window": f"{month_start.isoformat()} .. {end.isoformat()}",
+        "sale_window": f"{month_start.isoformat()} .. {hi_date.isoformat()}",
         "yesterday": yesterday.isoformat(),
         "feeds": refresh_summary.get("feeds") or {f: {"rows": len(rows)} for f, rows in sales_by_feed.items()},
         "keitaro_keys_loaded": len(keitaro_keys),

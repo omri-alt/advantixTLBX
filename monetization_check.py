@@ -235,6 +235,7 @@ def main() -> None:
                 ax_note,
                 str(bool(k1.get("found"))),
                 str(bool(k2.get("found"))),
+                str(bool(k5.get("found"))),
                 str(y_nc_cpc),
                 str(y_nc_cur),
                 str(y_c_cpc),

@@ -186,7 +186,7 @@ def _parse_blend_potential_feeds() -> tuple[str, ...]:
     ``potentialAdexa``, ``potentialYadore``) and ``populate_blend_from_potential``.
     Default includes all four feeds; missing API keys for a feed are skipped in the daily workflow.
     """
-    raw = (os.getenv("BLEND_POTENTIAL_FEEDS") or "kelkoo1,kelkoo2,adexa,yadore").strip().lower()
+    raw = (os.getenv("BLEND_POTENTIAL_FEEDS") or "kelkoo1,kelkoo2,kelkoo5,adexa,yadore").strip().lower()
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     allowed = {"kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore"}
     out = tuple(p for p in parts if p in allowed)
@@ -223,14 +223,49 @@ except Exception:
     BLEND_CAP_PROGRESS_INTERVAL_HOURS = 3.0
 BLEND_CAP_PROGRESS_INTERVAL_HOURS = max(0.5, min(24.0, BLEND_CAP_PROGRESS_INTERVAL_HOURS))
 
+BLEND_CPC_REFRESH_STATE_PATH = (
+    os.getenv("BLEND_CPC_REFRESH_STATE_PATH") or "runtime/blend_cpc_refresh_state.json"
+).strip()
+BLEND_CPC_REFRESH_SCHEDULER_ENABLED = (
+    os.getenv("BLEND_CPC_REFRESH_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+)
+BLEND_CPC_REFRESH_SCHEDULER_TZ = (os.getenv("BLEND_CPC_REFRESH_SCHEDULER_TZ") or "Asia/Jerusalem").strip()
+try:
+    BLEND_CPC_REFRESH_SCHEDULER_HOUR_LOCAL = int(
+        (os.getenv("BLEND_CPC_REFRESH_SCHEDULER_HOUR_LOCAL") or "14").strip()
+    )
+except Exception:
+    BLEND_CPC_REFRESH_SCHEDULER_HOUR_LOCAL = 14
+BLEND_CPC_REFRESH_SCHEDULER_HOUR_LOCAL = max(0, min(23, BLEND_CPC_REFRESH_SCHEDULER_HOUR_LOCAL))
+try:
+    BLEND_CPC_REFRESH_SCHEDULER_MINUTE_LOCAL = int(
+        (os.getenv("BLEND_CPC_REFRESH_SCHEDULER_MINUTE_LOCAL") or "0").strip()
+    )
+except Exception:
+    BLEND_CPC_REFRESH_SCHEDULER_MINUTE_LOCAL = 0
+BLEND_CPC_REFRESH_SCHEDULER_MINUTE_LOCAL = max(0, min(59, BLEND_CPC_REFRESH_SCHEDULER_MINUTE_LOCAL))
+try:
+    BLEND_CPC_REFRESH_LOOKBACK_DAYS = int((os.getenv("BLEND_CPC_REFRESH_LOOKBACK_DAYS") or "4").strip())
+except Exception:
+    BLEND_CPC_REFRESH_LOOKBACK_DAYS = 4
+BLEND_CPC_REFRESH_LOOKBACK_DAYS = max(1, min(14, BLEND_CPC_REFRESH_LOOKBACK_DAYS))
+
 # Kelkoo
 FEED1_API_KEY = (os.getenv("FEED1_API_KEY") or "").strip()
 FEED2_API_KEY = (os.getenv("FEED2_API_KEY") or "").strip()
-# Kelkoo feed 5 (Blend tag ``kelkoo5``): ``FEED5_API_KEY`` or legacy ``KLFEED3_API_KEY`` in .env
-FEED5_API_KEY = (os.getenv("FEED5_API_KEY") or os.getenv("KLFEED3_API_KEY") or "").strip()
+# Kelkoo feed 5 (Blend tag ``kelkoo5``): ``FEED5_API_KEY`` or legacy aliases in .env
+FEED5_API_KEY = (
+    os.getenv("FEED5_API_KEY")
+    or os.getenv("FEED5_API_KEY_KL")
+    or os.getenv("KLFEED3_API_KEY")
+    or ""
+).strip()
 if not FEED5_API_KEY:
     FEED5_API_KEY = (
-        _read_env_fallback("FEED5_API_KEY") or _read_env_fallback("KLFEED3_API_KEY") or ""
+        _read_env_fallback("FEED5_API_KEY")
+        or _read_env_fallback("FEED5_API_KEY_KL")
+        or _read_env_fallback("KLFEED3_API_KEY")
+        or ""
     ).strip()
 FEED5_API_KEY = (FEED5_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
 

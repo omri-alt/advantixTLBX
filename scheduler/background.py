@@ -69,6 +69,7 @@ def start_background_schedulers() -> None:
         start_overview_snapshot_bootstrap,
     )
     from scheduler.blend_cap_progress_scheduler import start_blend_cap_progress_scheduler
+    from scheduler.blend_cpc_refresh_scheduler import start_blend_cpc_refresh_scheduler
 
     for label, fn in (
         ("AutoServer", start_autoserver_scheduler),
@@ -77,6 +78,7 @@ def start_background_schedulers() -> None:
         ("Overview snapshot", start_daily_overview_scheduler),
         ("Overview bootstrap", start_overview_snapshot_bootstrap),
         ("Blend cap progress", start_blend_cap_progress_scheduler),
+        ("Blend CPC refresh", start_blend_cpc_refresh_scheduler),
     ):
         try:
             fn()

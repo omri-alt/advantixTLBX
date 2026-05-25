@@ -24,7 +24,7 @@ compare month-to-date sales to Keitaro log, optional LateSale GETs (``--late-sal
 to bypass; ``--skip-sales-report`` skips sheet refresh only. Global ``--dry-run`` forces late-sales dry-run (no GETs).
 
 Requires .env: KEITARO_BASE_URL, KEITARO_API_KEY, FEED1_API_KEY, FEED2_API_KEY; credentials.json.
-Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2``) for step 0b/7a; feeds without an API key are skipped.
+Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2,kelkoo5``) for step 0b/7a; feeds without an API key are skipped.
 
   python run_daily_workflow.py
   python run_daily_workflow.py --date 2026-04-03
