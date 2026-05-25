@@ -222,6 +222,17 @@ try:
 except Exception:
     BLEND_CAP_PROGRESS_INTERVAL_HOURS = 3.0
 BLEND_CAP_PROGRESS_INTERVAL_HOURS = max(0.5, min(24.0, BLEND_CAP_PROGRESS_INTERVAL_HOURS))
+ZEROPARK_BLEND_CAP_SPREADSHEET_ID = (
+    os.getenv("ZEROPARK_BLEND_CAP_SPREADSHEET_ID")
+    or "1iqoRssaf3ub-ETGtHphIe_RtK_e-BT-QoGfwe1BY6vw"
+).strip()
+ZEROPARK_BLEND_CAP_SHEET_NAME = (
+    os.getenv("ZEROPARK_BLEND_CAP_SHEET_NAME") or "ZP BLEND campaignsID"
+).strip()
+ZEROPARK_BLEND_CAP_GUARD_ENABLED = (
+    os.getenv("ZEROPARK_BLEND_CAP_GUARD_ENABLED", "1").strip().lower()
+    not in ("0", "false", "no", "off")
+)
 
 BLEND_CPC_REFRESH_STATE_PATH = (
     os.getenv("BLEND_CPC_REFRESH_STATE_PATH") or "runtime/blend_cpc_refresh_state.json"
