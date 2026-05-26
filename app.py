@@ -1032,6 +1032,36 @@ def ui_automations():
     return render_template("automations.html")
 
 
+@app.route("/nipuhim/zp-target-review", methods=["GET", "POST"])
+def ui_nipuhim_zp_target_review():
+    from integrations.nipuhim_zp_blacklist_review import (
+        build_nipuhim_zp_blacklist_review,
+        default_analysis_date,
+        parse_analysis_date,
+    )
+
+    run_day = default_analysis_date()
+    result: Optional[Dict[str, Any]] = None
+    error_msg: Optional[str] = None
+    if request.method == "POST":
+        raw_day = (request.form.get("run_date") or "").strip()
+        try:
+            run_day = parse_analysis_date(raw_day)
+        except ValueError:
+            error_msg = "Enter a valid analysis date in YYYY-MM-DD format."
+        else:
+            try:
+                result = build_nipuhim_zp_blacklist_review(run_day=run_day)
+            except Exception as e:
+                error_msg = str(e)
+    return render_template(
+        "nipuhim_zp_target_review.html",
+        analysis_date=run_day.isoformat(),
+        result=result,
+        error_msg=error_msg,
+    )
+
+
 @app.route("/help", methods=["GET"])
 def ui_help():
     """Help Center: flags, examples, and caveats moved out of tool pages."""

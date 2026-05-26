@@ -860,6 +860,13 @@ def run_pla_offers_keitaro_blend_tail(
 
     print("5. Creating combined offers sheet ...")
     create_combined_offers_sheet(service, date_str)
+    try:
+        from integrations.nipuhim_zp_blacklist_review import snapshot_offer_slots_for_day
+
+        snap = snapshot_offer_slots_for_day(datetime.strptime(date_str, "%Y-%m-%d").date())
+        print(f"   Saved Nipuhim offer-slot snapshot ({snap.get('offer_slots', 0)} slots).")
+    except Exception as e:
+        print(f"   Nipuhim offer-slot snapshot skipped: {e}")
     print()
 
     if skip_keitaro:

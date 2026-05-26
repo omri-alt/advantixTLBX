@@ -1,0 +1,268 @@
+{% from "macros/page_header.html" import tool_header %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nipuhim Zeropark target review</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a2b;
+      --line: #27324a;
+      --text: #eaf1fb;
+      --muted: #9aa4b2;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --accent: #4f8cff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, Segoe UI, Arial, sans-serif; background: linear-gradient(180deg, #0b1020, #0d1426 35%, #0b1020); color: var(--text); }
+    .wrap { max-width: 1240px; margin: 0 auto; padding: 24px; }
+    .muted { color: var(--muted); }
+    .back { color: #93c5fd; text-decoration: none; font-size: 14px; }
+    .back:hover { text-decoration: underline; }
+    .panel { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 16px; }
+    .form-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-top: 12px; }
+    label { display: block; font-size: 13px; color: #cbd5e1; }
+    input[type="date"] { padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: #0f172a; color: var(--text); }
+    button { padding: 9px 14px; border-radius: 10px; border: 1px solid #1d4ed8; background: #2563eb; color: white; cursor: pointer; font: inherit; }
+    button:hover { background: #1d4ed8; }
+    .err { margin-top: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(239,68,68,.35); background: rgba(239,68,68,.12); color: #fecaca; }
+    .warnbox { margin-top: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(245,158,11,.35); background: rgba(245,158,11,.12); color: #fde68a; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0; }
+    .summary-card { border: 1px solid var(--line); border-radius: 12px; background: #151f33; padding: 12px 14px; }
+    .summary-card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .summary-card .value { font-size: 22px; font-weight: 700; margin-top: 6px; }
+    .country { margin-top: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
+    .country-head { padding: 14px 16px; border-bottom: 1px solid var(--line); background: #11192b; }
+    .country-head h3 { margin: 0 0 6px; font-size: 1.05rem; }
+    .country-meta { font-size: 13px; color: var(--muted); }
+    .copy-box { margin-top: 10px; }
+    .copy-box textarea {
+      width: 100%; min-height: 70px; resize: vertical; padding: 10px 12px;
+      border-radius: 10px; border: 1px solid var(--line); background: #0f172a; color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .empty { padding: 20px 16px; color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: #cbd5e1; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tr:last-child td { border-bottom: 0; }
+    .pill { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+    .pill.ok { background: rgba(34,197,94,.18); color: #86efac; }
+    .pill.warn { background: rgba(245,158,11,.18); color: #fcd34d; }
+    .pill.bad { background: rgba(239,68,68,.18); color: #fca5a5; }
+    .pill.neutral { background: #334155; color: #cbd5e1; }
+    details.target-details { margin: 10px 0 0; }
+    details.target-details > summary { cursor: pointer; color: #93c5fd; }
+    .offers-wrap { margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; background: #101827; }
+    .offers-wrap table { min-width: 860px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p><a class="back" href="{{ url_for('ui_home') }}">← Control Center</a> · <a class="back" href="{{ url_for('ui_help') }}">Help</a></p>
+    {{ tool_header("Nipuhim Zeropark target review", "Yesterday's Nipuhim traffic by geo, target, and offer, filtered to merchants still monetized.", "daily-automations") }}
+
+    <section class="panel">
+      <p class="muted" style="margin:0 0 8px;">
+        Rules: review only countries with <code>>50</code> clicks yesterday and targets with <code>>10</code> clicks.
+        Suggest a blacklist candidate when monetized-offer clicks are <code>>=10</code> and
+        <code>valid_clicks / clicks &lt; 0.3</code>.
+      </p>
+      <form method="post">
+        <div class="form-row">
+          <div>
+            <label for="run_date">Analysis date (UTC yesterday by default)</label>
+            <input id="run_date" name="run_date" type="date" value="{{ analysis_date }}">
+          </div>
+          <div>
+            <button type="submit">Analyze</button>
+          </div>
+        </div>
+      </form>
+      {% if error_msg %}
+        <div class="err">{{ error_msg }}</div>
+      {% endif %}
+    </section>
+
+    {% if result %}
+      <section class="summary-grid" aria-label="Summary">
+        <div class="summary-card">
+          <div class="label">Analysis date</div>
+          <div class="value">{{ result.analysis_date }}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Countries reviewed</div>
+          <div class="value">{{ result.summary.countries_reviewed }}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Targets reviewed</div>
+          <div class="value">{{ result.summary.targets_reviewed }}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Blacklist candidates</div>
+          <div class="value">{{ result.summary.blacklist_candidates }}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Mapped offer rows</div>
+          <div class="value">{{ result.summary.mapped_offer_rows }}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Generated</div>
+          <div class="value" style="font-size:16px;">{{ result.generated_utc }}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Val-click metric</div>
+          <div class="value" style="font-size:16px;">{{ result.valid_click_metric or "unknown" }}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Slot mapping</div>
+          <div class="value" style="font-size:16px;">{{ result.slot_mapping_source }}{% if result.slot_mapping_date %} · {{ result.slot_mapping_date }}{% endif %}</div>
+        </div>
+      </section>
+
+      {% if result.warnings %}
+        {% for warning in result.warnings %}
+          <div class="warnbox">{{ warning }}</div>
+        {% endfor %}
+      {% endif %}
+
+      {% if result.countries %}
+        {% for country in result.countries %}
+          <section class="country">
+            <div class="country-head">
+              <h3>{{ country.geo | upper }}</h3>
+              <div class="country-meta">
+                Country clicks: <strong>{{ country.country_clicks }}</strong> ·
+                reviewed targets: <strong>{{ country.target_count }}</strong> ·
+                blacklist candidates: <strong>{{ country.candidate_count }}</strong>
+              </div>
+              {% if country.candidate_targets %}
+                <div class="copy-box">
+                  <label for="copy-{{ country.geo }}">Suggested targets to blacklist manually</label>
+                  <textarea id="copy-{{ country.geo }}" readonly>{{ country.candidate_copy_block }}</textarea>
+                </div>
+              {% endif %}
+            </div>
+            <div style="overflow-x:auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Target</th>
+                    <th class="num">Target clicks</th>
+                    <th class="num">Valid</th>
+                    <th class="num">Valid ratio</th>
+                    <th class="num">Monetized clicks</th>
+                    <th class="num">Monetized valid</th>
+                    <th class="num">Monetized ratio</th>
+                    <th>Status</th>
+                    <th>Merchants</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for target in country.targets %}
+                    <tr>
+                      <td>
+                        <strong>{{ target.target }}</strong>
+                        <details class="target-details">
+                          <summary>Offer breakdown</summary>
+                          <div class="offers-wrap">
+                            <table>
+                              <thead>
+                                <tr>
+                                  <th>Offer</th>
+                                  <th>Feed</th>
+                                  <th>Merchant</th>
+                                  <th>Monetization</th>
+                                  <th class="num">Clicks</th>
+                                  <th class="num">Valid</th>
+                                  <th class="num">Ratio</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {% for offer in target.offers %}
+                                  <tr>
+                                    <td>{{ offer.offer_name }}</td>
+                                    <td>{{ offer.feed if offer.feed else "—" }}</td>
+                                    <td>
+                                      {% if offer.merchant_name %}{{ offer.merchant_name }}{% elif offer.merchant_id %}{{ offer.merchant_id }}{% else %}<span class="muted">unmapped</span>{% endif %}
+                                      {% if offer.merchant_id and offer.merchant_name %}<div class="muted" style="font-size:12px;">{{ offer.merchant_id }}</div>{% endif %}
+                                    </td>
+                                    <td>
+                                      {% if offer.mapped %}
+                                        {{ offer.monetization_status or "unknown" }}
+                                      {% else %}
+                                        <span class="muted">unmapped slot</span>
+                                      {% endif %}
+                                    </td>
+                                    <td class="num">{{ offer.clicks }}</td>
+                                    <td class="num">{{ offer.valid_clicks }}</td>
+                                    <td class="num">
+                                      {% if offer.valid_ratio is not none %}
+                                        {{ "%.3f"|format(offer.valid_ratio) }}
+                                      {% else %}
+                                        —
+                                      {% endif %}
+                                    </td>
+                                  </tr>
+                                {% endfor %}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      </td>
+                      <td class="num">{{ target.target_clicks }}</td>
+                      <td class="num">{{ target.target_valid_clicks }}</td>
+                      <td class="num">
+                        {% if target.target_valid_ratio is not none %}
+                          {{ "%.3f"|format(target.target_valid_ratio) }}
+                        {% else %}
+                          —
+                        {% endif %}
+                      </td>
+                      <td class="num">{{ target.monetized_clicks }}</td>
+                      <td class="num">{{ target.monetized_valid_clicks }}</td>
+                      <td class="num">
+                        {% if target.monetized_valid_ratio is not none %}
+                          {{ "%.3f"|format(target.monetized_valid_ratio) }}
+                        {% else %}
+                          —
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% if target.candidate %}
+                          <span class="pill bad">blacklist</span>
+                        {% elif target.eligible %}
+                          <span class="pill ok">keep</span>
+                        {% else %}
+                          <span class="pill warn">not enough monetized data</span>
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% if target.merchant_labels %}
+                          {{ target.merchant_labels | join(", ") }}
+                        {% else %}
+                          <span class="muted">No monetized merchants matched</span>
+                        {% endif %}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        {% endfor %}
+      {% else %}
+        <section class="panel" style="margin-top:18px;">
+          <div class="empty">No countries met the yesterday click threshold for review.</div>
+        </section>
+      {% endif %}
+    {% endif %}
+  </div>
+</body>
+</html>
