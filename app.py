@@ -92,6 +92,7 @@ from automations.autoserver.run_log import last_run_by_automation, read_entries_
 from scheduler.autoserver_scheduler import (
     ensure_automations_initialized,
     get_automation_listeners,
+    schedule_trigger_action,
     schedule_trigger_all,
     schedule_trigger_one,
     scheduler_running,
@@ -2234,6 +2235,7 @@ def _api_automations_payload() -> Dict[str, Any]:
     for spec in AUTOMATION_SPECS:
         cn = spec["class_name"]
         lr = last_map.get(cn)
+        actions = spec.get("actions") or [{"id": "default", "label": "Trigger"}]
         rows.append(
             {
                 "class_name": cn,
@@ -2241,6 +2243,7 @@ def _api_automations_payload() -> Dict[str, Any]:
                 "schedule": spec["schedule"],
                 "registered": cn in by_class,
                 "last_run": lr,
+                "actions": actions,
             }
         )
     return {"scheduler_running": scheduler_running(), "automations": rows}
@@ -2279,8 +2282,32 @@ def api_automations_trigger_one(name: str):
     """Queue one automation by class name (case-insensitive)."""
     ensure_automations_initialized()
     key = (name or "").strip().lower()
+    action = (request.args.get("action") or "default").strip().lower()
     for automation in get_automation_listeners():
         if automation.__class__.__name__.lower() == key:
+            if action and action != "default":
+                if not hasattr(automation, "run_manual_action"):
+                    return jsonify(
+                        {
+                            "status": "error",
+                            "message": (
+                                f'Automation "{automation.__class__.__name__}" does not support '
+                                f'manual action "{action}"'
+                            ),
+                        }
+                    ), 400
+                schedule_trigger_action(automation, action)
+                return jsonify(
+                    {
+                        "status": "scheduled",
+                        "message": (
+                            f"Automation {automation.__class__.__name__} action {action} "
+                            "scheduled in the background"
+                        ),
+                        "automation": automation.__class__.__name__,
+                        "action": action,
+                    }
+                ), 202
             schedule_trigger_one(automation)
             return jsonify(
                 {

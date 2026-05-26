@@ -12,28 +12,45 @@ logger = logging.getLogger(__name__)
 
 
 class BlendZpCapGuard(BaseAutomation):
-    """Hourly: pause mapped Zeropark Blend campaigns once geo/device cap is filled."""
+    """Every 20 minutes: pause over-cap campaigns; manual action can resume under-cap."""
 
     def on_hourly_signal(self, hour: int) -> None:
         if not ZEROPARK_BLEND_CAP_GUARD_ENABLED:
             return
-        logger.info("BlendZpCapGuard hourly at hour %s", hour)
-        self._wrap_run("scheduler", self._execute)
+        logger.info("BlendZpCapGuard scheduler tick at hour %s", hour)
+        self._wrap_run("scheduler", self._execute_pause_over_cap)
 
     def run_manually(self) -> dict[str, Any]:
-        logger.info("BlendZpCapGuard manual trigger")
+        logger.info("BlendZpCapGuard manual trigger: pause_over_cap")
         if not ZEROPARK_BLEND_CAP_GUARD_ENABLED:
             return {
                 "status": "skipped",
                 "reason": "disabled",
                 "timestamp": datetime.now().isoformat(),
             }
-        out = self._wrap_run("manual", self._execute)
+        out = self._wrap_run("manual", self._execute_pause_over_cap)
         out["timestamp"] = datetime.now().isoformat()
         return out
 
-    def _execute(self) -> None:
-        payload = run_blend_zp_cap_guard(dry_run=False, reason="autoserver")
+    def run_manual_action(self, action: str) -> dict[str, Any]:
+        logger.info("BlendZpCapGuard manual action: %s", action)
+        if not ZEROPARK_BLEND_CAP_GUARD_ENABLED:
+            return {
+                "status": "skipped",
+                "reason": "disabled",
+                "timestamp": datetime.now().isoformat(),
+            }
+        action_key = (action or "").strip().lower()
+        if action_key == "resume_under_cap":
+            out = self._wrap_run(
+                "manual:resume_under_cap",
+                self._execute_resume_under_cap,
+            )
+            out["timestamp"] = datetime.now().isoformat()
+            return out
+        raise ValueError(f"Unsupported BlendZpCapGuard action: {action}")
+
+    def _log_payload(self, payload: dict[str, Any]) -> None:
         if payload.get("errors"):
             logger.warning(
                 "BlendZpCapGuard completed with %s error(s): %s",
@@ -41,8 +58,25 @@ class BlendZpCapGuard(BaseAutomation):
                 payload["errors"][:3],
             )
         logger.info(
-            "BlendZpCapGuard paused=%s reached=%s unmapped=%s",
-            payload.get("paused"),
-            payload.get("segments_reached_cap"),
+            "BlendZpCapGuard mode=%s performed=%s matched=%s unmapped=%s",
+            payload.get("mode"),
+            payload.get("performed"),
+            payload.get("segments_matched"),
             payload.get("skipped_unmapped"),
         )
+
+    def _execute_pause_over_cap(self) -> None:
+        payload = run_blend_zp_cap_guard(
+            dry_run=False,
+            reason="autoserver",
+            mode="pause_over_cap",
+        )
+        self._log_payload(payload)
+
+    def _execute_resume_under_cap(self) -> None:
+        payload = run_blend_zp_cap_guard(
+            dry_run=False,
+            reason="manual_resume_under_cap",
+            mode="resume_under_cap",
+        )
+        self._log_payload(payload)

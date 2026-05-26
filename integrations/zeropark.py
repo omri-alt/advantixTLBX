@@ -6,7 +6,7 @@ Campaign state actions:
   POST https://panel.zeropark.com/api/campaign/{campaignId}/pause
   Header: api-token
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -20,6 +20,13 @@ class ZeroparkClientError(Exception):
         super().__init__(message)
 
 
+def _decode_json_response(r: requests.Response) -> Dict[str, Any]:
+    try:
+        return r.json() if r.text else {}
+    except Exception:
+        return {}
+
+
 def _campaign_state_action(
     campaign_id: str,
     action: str,
@@ -29,10 +36,7 @@ def _campaign_state_action(
     url = f"{base_url.rstrip('/')}/api/campaign/{campaign_id}/{action}"
     headers = {"accept": "*/*", "api-token": api_token}
     r = requests.post(url, headers=headers, timeout=30)
-    try:
-        body = r.json() if r.text else {}
-    except Exception:
-        body = {}
+    body = _decode_json_response(r)
     if r.status_code != 200:
         raise ZeroparkClientError(
             f"Zeropark API error: {r.status_code}",
@@ -40,6 +44,38 @@ def _campaign_state_action(
             response_body=r.text[:500] if r.text else None,
         )
     return body
+
+
+def list_campaign_rows_today(
+    api_token: str,
+    *,
+    base_url: str = ZEROPARK_BASE_URL,
+    page_size: int = 100,
+) -> List[Dict[str, Any]]:
+    headers = {"accept": "application/json", "api-token": api_token}
+    page = 0
+    rows: List[Dict[str, Any]] = []
+    while True:
+        url = (
+            f"{base_url.rstrip('/')}/api/stats/campaign/all"
+            f"?interval=TODAY&page={page}&limit={page_size}"
+        )
+        r = requests.get(url, headers=headers, timeout=45)
+        body = _decode_json_response(r)
+        if r.status_code != 200:
+            raise ZeroparkClientError(
+                f"Zeropark API error: {r.status_code}",
+                status_code=r.status_code,
+                response_body=r.text[:500] if r.text else None,
+            )
+        elems = body.get("elements") or []
+        if not isinstance(elems, list) or not elems:
+            break
+        rows.extend(x for x in elems if isinstance(x, dict))
+        if len(elems) < page_size:
+            break
+        page += 1
+    return rows
 
 
 def resume_campaign(campaign_id: str, api_token: str, base_url: str = ZEROPARK_BASE_URL) -> Dict[str, Any]:

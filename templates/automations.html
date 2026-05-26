@@ -68,7 +68,7 @@
     <p><a class="back" href="{{ url_for('ui_home') }}">← Control Center</a></p>
     <div class="top">
       <div style="flex:1;min-width:0;">
-        {{ tool_header("AutoServer automations", "Hourly jobs + manual triggers + run log.", "automations-ui", "GET /api/automations") }}
+        {{ tool_header("AutoServer automations", "Scheduled jobs + manual triggers + run log.", "automations-ui", "GET /api/automations") }}
       </div>
       <div>
         <span id="sched-ind"><span class="dot off"></span><span id="sched-txt">Scheduler …</span></span>
@@ -135,26 +135,36 @@
         var errHtml = lr && lr.error
           ? "<details class=\"errcoll\"><summary>Error detail</summary><div class=\"errbox\">" + esc(lr.error) + "</div></details>"
           : "";
-        var url = trigPrefix + encodeURIComponent(a.class_name);
+        var actionButtons = (a.actions || []).map(function(action) {
+          var actionId = action && action.id ? String(action.id) : "default";
+          var actionLabel = action && action.label ? String(action.label) : "Trigger";
+          var url = trigPrefix + encodeURIComponent(a.class_name);
+          if (actionId && actionId !== "default") {
+            url += "?action=" + encodeURIComponent(actionId);
+          }
+          var flightKey = String(a.class_name) + ":" + actionId;
+          return '<button type="button" class="btn btn-sm trigger-action" data-flight-key="' + esc(flightKey) + '" data-url="' + esc(url) + '" data-default-label="' + esc(actionLabel) + '">' + esc(actionLabel) + '</button>';
+        }).join(" ");
         return (
           '<div class="card">' +
             "<h3>" + esc(a.label) + "</h3>" +
             '<div class="muted" style="margin-bottom:6px;">' + esc(a.class_name) + " · " + esc(a.schedule) + "</div>" +
             "<div><strong>Last run</strong> " + esc(ts) + " " + badge + "</div>" +
             errHtml +
-            '<p style="margin-top:10px;"><button type="button" class="btn btn-sm trigger-one" data-key="' + esc(a.class_name) + '" data-url="' + esc(url) + '">Trigger</button></p>' +
+            '<p style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">' + actionButtons + "</p>" +
           "</div>"
         );
       }).join("");
-      cardsEl.querySelectorAll(".trigger-one").forEach(function(btn) {
-        var key = btn.getAttribute("data-key");
+      cardsEl.querySelectorAll(".trigger-action").forEach(function(btn) {
+        var key = btn.getAttribute("data-flight-key");
         if (key && triggerInFlight[key]) {
           btn.disabled = true;
           btn.classList.add("loading");
           btn.textContent = "Running...";
         }
         btn.addEventListener("click", function() {
-          var k = btn.getAttribute("data-key");
+          var k = btn.getAttribute("data-flight-key");
+          var defaultLabel = btn.getAttribute("data-default-label") || "Trigger";
           if (k) triggerInFlight[k] = true;
           btn.disabled = true;
           btn.classList.add("loading");
@@ -169,7 +179,7 @@
             .finally(function() {
               if (k) triggerInFlight[k] = false;
               btn.classList.remove("loading");
-              btn.textContent = "Trigger";
+              btn.textContent = defaultLabel;
               btn.disabled = false;
             });
         });

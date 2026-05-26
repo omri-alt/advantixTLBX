@@ -233,6 +233,15 @@ ZEROPARK_BLEND_CAP_GUARD_ENABLED = (
     os.getenv("ZEROPARK_BLEND_CAP_GUARD_ENABLED", "1").strip().lower()
     not in ("0", "false", "no", "off")
 )
+try:
+    ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES = int(
+        (os.getenv("ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES") or "20").strip()
+    )
+except Exception:
+    ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES = 20
+ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES = max(
+    5, min(60, ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES)
+)
 
 BLEND_CPC_REFRESH_STATE_PATH = (
     os.getenv("BLEND_CPC_REFRESH_STATE_PATH") or "runtime/blend_cpc_refresh_state.json"

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List
 
 # Human-facing metadata for dashboard + API (class_name must match automation class).
-AUTOMATION_SPECS: List[Dict[str, str]] = [
+AUTOMATION_SPECS: List[Dict[str, Any]] = [
     {
         "class_name": "MehilotAuto",
         "label": "Mehilot + Ecomnia tracks",
@@ -47,7 +47,11 @@ AUTOMATION_SPECS: List[Dict[str, str]] = [
     {
         "class_name": "BlendZpCapGuard",
         "label": "Pause Blend Zeropark campaigns on cap",
-        "schedule": "Every hour",
+        "schedule": "Every 20 minutes",
+        "actions": [
+            {"id": "default", "label": "Pause over cap"},
+            {"id": "resume_under_cap", "label": "Activate under-cap"},
+        ],
     },
     {
         "class_name": "NipuhimUnmonRepair",

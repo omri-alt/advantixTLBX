@@ -99,7 +99,7 @@ def _current_scheduler_hour() -> int:
 def _run_automation_hourly(automation: Any) -> None:
     hour = _current_scheduler_hour()
     name = automation.__class__.__name__
-    logger.info("=== AUTOSERVER hourly %s (hour=%s tz) ===", name, hour)
+    logger.info("=== AUTOSERVER scheduled %s (hour=%s tz) ===", name, hour)
     try:
         automation.on_hourly_signal(hour)
     except Exception:
@@ -144,6 +144,22 @@ def _run_single_automation_job(automation: Any) -> None:
         automation.run_manually()
     except Exception:
         logger.exception("Error running %s", automation.__class__.__name__)
+
+
+def _run_single_automation_action_job(automation: Any, action: str) -> None:
+    try:
+        logger.info(
+            "=== AUTOSERVER MANUAL ACTION: %s (%s) ===",
+            automation.__class__.__name__,
+            action,
+        )
+        automation.run_manual_action(action)
+    except Exception:
+        logger.exception(
+            "Error running %s action %s",
+            automation.__class__.__name__,
+            action,
+        )
 
 
 def ensure_automations_initialized() -> None:
@@ -216,6 +232,10 @@ def schedule_trigger_one(automation: Any) -> None:
     _trigger_background(_run_single_automation_job, automation)
 
 
+def schedule_trigger_action(automation: Any, action: str) -> None:
+    _trigger_background(_run_single_automation_action_job, automation, action)
+
+
 def start_autoserver_scheduler() -> None:
     global _scheduler, _started
     from config import AUTOSERVER_SCHEDULER_ENABLED
@@ -230,7 +250,12 @@ def start_autoserver_scheduler() -> None:
 
     from apscheduler.schedulers.background import BackgroundScheduler
 
-    from config import ZEROPARK_CLOSE_HOUR, ZEROPARK_CLOSE_MINUTE, ZEROPARK_CLOSE_TZ
+    from config import (
+        ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES,
+        ZEROPARK_CLOSE_HOUR,
+        ZEROPARK_CLOSE_MINUTE,
+        ZEROPARK_CLOSE_TZ,
+    )
 
     _ensure_listeners()
     _scheduler = BackgroundScheduler()
@@ -238,16 +263,26 @@ def start_autoserver_scheduler() -> None:
         name = automation.__class__.__name__
         if name == "CloseNipuhimAuto":
             continue
+        trigger_kwargs: dict[str, Any] = {"minute": 0}
+        job_id = f"autoserver_hourly_{name}"
+        if name == "BlendZpCapGuard":
+            interval_m = int(ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES)
+            trigger_kwargs = (
+                {"minute": 0}
+                if interval_m >= 60
+                else {"minute": f"*/{interval_m}"}
+            )
+            job_id = f"autoserver_interval_{name}"
         _scheduler.add_job(
             _run_automation_hourly,
             trigger="cron",
-            minute=0,
             args=[automation],
-            id=f"autoserver_hourly_{name}",
+            id=job_id,
             replace_existing=True,
             max_instances=1,
             coalesce=True,
             misfire_grace_time=900,
+            **trigger_kwargs,
         )
     try:
         from zoneinfo import ZoneInfo
@@ -291,8 +326,12 @@ def start_autoserver_scheduler() -> None:
         logger.info("AutoServer APScheduler scheduled per-automation startup catch-up")
     _started = True
     logger.info(
-        "AutoServer APScheduler started (%s hourly jobs at :00; Zeropark close at %02d:%02d %s)",
+        (
+            "AutoServer APScheduler started (%s scheduled jobs; "
+            "BlendZpCapGuard every %d minutes; Zeropark close at %02d:%02d %s)"
+        ),
         len(_automation_listeners) - 1,
+        int(ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES),
         int(ZEROPARK_CLOSE_HOUR),
         int(ZEROPARK_CLOSE_MINUTE),
         ZEROPARK_CLOSE_TZ,
