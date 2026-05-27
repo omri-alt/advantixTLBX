@@ -1,7 +1,7 @@
 """
-Traffic-source spend for the overview dashboard (Zeropark, SourceKnowledge, Ecomnia).
+Traffic-source spend for the overview dashboard (Zeropark, SourceKnowledge, Ecomnia, Trillion).
 
-Uses account-level APIs for Zeropark / Ecomnia; SourceKnowledge falls back to per-campaign
+Uses account-level APIs for Zeropark / Ecomnia / Trillion; SourceKnowledge falls back to per-campaign
 ``by-publisher`` only when no aggregate URL is configured.
 
 Each public ``fetch_*`` returns::
@@ -25,6 +25,7 @@ from config import (
     EC_AUTH_KEY,
     EC_SECRET_KEY,
     ECOMNIA_REPORT_BASE,
+    KEYTR,
     KEYZP,
     SK_ACCOUNT_STATS_URL,
     SK_OVERVIEW_MAX_CAMPAIGNS,
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 ZEROPARK_PANEL = "https://panel.zeropark.com"
 SK_API_BASE = "https://api.sourceknowledge.com/affiliate/v2"
+TRILLION_API_URL = "https://www.trillion.com/api.html"
 # Tight timeouts so a hung SK node does not block the whole dashboard for minutes.
 _SK_HTTP_TIMEOUT = 22
 
@@ -464,3 +466,84 @@ def fetch_ecomnia_cost(*, yesterday: date, mtd_start: date, mtd_end: date) -> Di
         m_tot = _ec_sum_range_account(mtd_start, mtd_end)
 
     return {"yesterday": round(y_tot, 4), "mtd": round(m_tot, 4), "error": None}
+
+
+def _tr_sum_cost_rows(rows: List[Dict[str, Any]]) -> float:
+    total = 0.0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cost = row.get("Cost")
+        if cost is None or cost == "":
+            continue
+        try:
+            total += float(cost)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _tr_report_rows(api_key: str, **query: str) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    """
+    POST ``api.html?mode=report&type=json`` with Bearer token.
+    ``query`` may include ``period`` or ``from_date`` + ``to_date``, plus ``groupby``.
+    """
+    params: Dict[str, str] = {"mode": "report", "type": "json", **{k: v for k, v in query.items() if v}}
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    try:
+        r = requests.post(TRILLION_API_URL, params=params, headers=headers, timeout=90)
+    except requests.RequestException as e:
+        logger.warning("Trillion report API: %s", e)
+        return [], str(e)
+    if not r.ok:
+        snippet = (r.text or "")[:200]
+        logger.warning("Trillion report API HTTP %s: %s", r.status_code, snippet)
+        return [], f"Trillion API HTTP {r.status_code}"
+    try:
+        data = r.json()
+    except Exception:
+        return [], "Trillion API returned non-JSON"
+    if not isinstance(data, dict):
+        return [], "Unexpected Trillion response"
+    results = data.get("results")
+    if not isinstance(results, list):
+        return [], "Trillion response missing results[]"
+    rows = [x for x in results if isinstance(x, dict)]
+    if len(rows) == 1 and rows[0].get("Status") == "Processing":
+        return [], "Trillion report still processing (use a smaller date range)"
+    if rows and all("Cost" not in r for r in rows) and any(r.get("error") or r.get("Error") for r in rows):
+        msg = str(rows[0].get("error") or rows[0].get("Error") or "Trillion API error")
+        return [], msg
+    return rows, None
+
+
+def fetch_trillion_cost(*, yesterday: date, mtd_start: date, mtd_end: date) -> Dict[str, Any]:
+    api_key = (KEYTR or "").strip()
+    if not api_key:
+        return {"yesterday": None, "mtd": None, "error": "KEYTR not set"}
+
+    y_rows, y_err = _tr_report_rows(api_key, period="yesterday", groupby="date")
+    y_cost: Optional[float] = None if y_err else _tr_sum_cost_rows(y_rows)
+
+    m_err: Optional[str] = None
+    if mtd_start > mtd_end:
+        m_cost: Optional[float] = 0.0
+    else:
+        m_rows, m_err = _tr_report_rows(
+            api_key,
+            from_date=mtd_start.isoformat(),
+            to_date=mtd_end.isoformat(),
+            groupby="date",
+        )
+        m_cost = None if m_err else _tr_sum_cost_rows(m_rows)
+
+    err_parts = [x for x in (y_err, m_err) if x]
+    err: Optional[str] = " · ".join(err_parts) if err_parts else None
+    if y_cost is None and m_cost is None and not err:
+        err = "Trillion report returned no cost rows"
+
+    return {
+        "yesterday": None if y_cost is None else round(float(y_cost), 4),
+        "mtd": None if m_cost is None else round(float(m_cost), 4),
+        "error": err,
+    }

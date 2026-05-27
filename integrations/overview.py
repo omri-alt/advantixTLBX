@@ -14,6 +14,7 @@ from config import KEITARO_API_KEY, KEITARO_BASE_URL
 from integrations.overview_costs import (
     fetch_ecomnia_cost,
     fetch_sk_cost,
+    fetch_trillion_cost,
     fetch_zeropark_cost,
 )
 from integrations.overview_revenue import fetch_keitaro_revenue_overview
@@ -100,6 +101,15 @@ def slice_ecomnia() -> Dict[str, Any]:
     return _slice_envelope("ecomnia", ec)
 
 
+def slice_trillion() -> Dict[str, Any]:
+    yesterday, mtd_start, mtd_end = overview_period()
+    try:
+        tr = fetch_trillion_cost(yesterday=yesterday, mtd_start=mtd_start, mtd_end=mtd_end)
+    except Exception as e:
+        tr = {"yesterday": None, "mtd": None, "error": str(e)}
+    return _slice_envelope("trillion", tr)
+
+
 def build_overview_json() -> Dict[str, Any]:
     yesterday, mtd_start, mtd_end = overview_period()
 
@@ -121,18 +131,20 @@ def build_overview_json() -> Dict[str, Any]:
         except Exception as e:
             return {"yesterday": None, "mtd": None, "error": str(e)}
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         f_rev = pool.submit(safe_revenue)
         f_zp = pool.submit(safe_cost, fetch_zeropark_cost)
         f_sk = pool.submit(safe_cost, fetch_sk_cost)
         f_ec = pool.submit(safe_cost, fetch_ecomnia_cost)
+        f_tr = pool.submit(safe_cost, fetch_trillion_cost)
         revenue = f_rev.result()
         zp = f_zp.result()
         sk = f_sk.result()
         ec = f_ec.result()
+        tr = f_tr.result()
 
-    ty = _nz(zp.get("yesterday")) + _nz(sk.get("yesterday")) + _nz(ec.get("yesterday"))
-    tm = _nz(zp.get("mtd")) + _nz(sk.get("mtd")) + _nz(ec.get("mtd"))
+    ty = _nz(zp.get("yesterday")) + _nz(sk.get("yesterday")) + _nz(ec.get("yesterday")) + _nz(tr.get("yesterday"))
+    tm = _nz(zp.get("mtd")) + _nz(sk.get("mtd")) + _nz(ec.get("mtd")) + _nz(tr.get("mtd"))
 
     ry = revenue.get("yesterday")
     rm = revenue.get("mtd")
@@ -149,7 +161,7 @@ def build_overview_json() -> Dict[str, Any]:
             "zeropark": zp,
             "sourceknowledge": sk,
             "ecomnia": ec,
-            "thrillion": None,
+            "trillion": tr,
             "yesshh": None,
         },
         "total_cost": {"yesterday": round(ty, 4), "mtd": round(tm, 4)},

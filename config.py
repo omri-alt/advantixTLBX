@@ -525,6 +525,15 @@ except ValueError:
 # Optional JSON from ``cli/build_sk_overview_skip_campaign_ids.py`` — extra campaign IDs to skip (merged with ``active: false`` from the API).
 SK_OVERVIEW_SKIP_CAMPAIGN_IDS_FILE = (os.getenv("SK_OVERVIEW_SKIP_CAMPAIGN_IDS_FILE") or "").strip()
 
+# Trillion Direct (traffic source — Bearer token on POST ``https://www.trillion.com/api.html``)
+KEYTR = (os.getenv("KEYTR") or os.getenv("keyTR") or "").strip()
+if not KEYTR:
+    KEYTR = _read_env_fallback("KEYTR") or _read_env_fallback("keyTR")
+if not KEYTR:
+    KEYTR = _read_env_fallback("KEY")
+KEYTR = (KEYTR or "").strip()
+TRILLION_API_KEY = KEYTR
+
 # Overview snapshot (``GET /api/overview`` reads from disk; rebuild via ``POST /api/overview/refresh`` or scheduler)
 OVERVIEW_SNAPSHOT_PATH = (os.getenv("OVERVIEW_SNAPSHOT_PATH") or "").strip()
 OVERVIEW_SNAPSHOT_TZ = (os.getenv("OVERVIEW_SNAPSHOT_TZ") or "UTC").strip()

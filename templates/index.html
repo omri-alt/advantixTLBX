@@ -168,7 +168,7 @@
           <div id="tile-zeropark"></div>
           <div id="tile-sourceknowledge"></div>
           <div id="tile-ecomnia"></div>
-          <div class="ov-card placeholder"><h4>Cost · Thrillion</h4><span class="ov-badge wait">—</span><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>
+          <div id="tile-trillion"></div>
           <div class="ov-card placeholder"><h4>Cost · Yesshh</h4><span class="ov-badge wait">—</span><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>
           <div id="tile-total"></div>
         </div>
@@ -304,12 +304,13 @@
     var refreshUrl = {{ url_for("api_overview_refresh") | tojson }};
     var refreshStatusUrl = {{ url_for("api_overview_refresh_status") | tojson }};
 
-    var TILE_KEYS = ["revenue", "zeropark", "sourceknowledge", "ecomnia"];
+    var TILE_KEYS = ["revenue", "zeropark", "sourceknowledge", "ecomnia", "trillion"];
     var TITLES = {
       revenue: "Revenue (Keitaro)",
       zeropark: "Cost · Zeropark",
       sourceknowledge: "Cost · SourceKnowledge",
       ecomnia: "Cost · Ecomnia",
+      trillion: "Cost · Trillion (TR)",
     };
 
     if (!rangesEl || !failEl) return;
@@ -331,7 +332,7 @@
       var netEl = document.getElementById("tile-net");
       var totEl = document.getElementById("tile-total");
       if (netEl) netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Loading snapshot…", false, "wait");
-      if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", null, null, "Loading snapshot…", false, "wait");
+      if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC + TR)", null, null, "Loading snapshot…", false, "wait");
     }
 
     function setTilesLoading() {
@@ -342,7 +343,7 @@
       var netEl = document.getElementById("tile-net");
       var totEl = document.getElementById("tile-total");
       if (netEl) netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Refreshing…", false, "wait");
-      if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", null, null, "Refreshing…", false, "wait");
+      if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC + TR)", null, null, "Refreshing…", false, "wait");
     }
 
     function renderFromSnapshot(data) {
@@ -375,15 +376,16 @@
       costTile("zeropark", TITLES.zeropark);
       costTile("sourceknowledge", TITLES.sourceknowledge);
       costTile("ecomnia", TITLES.ecomnia);
+      costTile("trillion", TITLES.trillion);
 
       var tc = data.total_cost || {};
       var net = data.net || {};
-      var terr = [rev.error, (c.zeropark || {}).error, (c.sourceknowledge || {}).error, (c.ecomnia || {}).error]
+      var terr = [rev.error, (c.zeropark || {}).error, (c.sourceknowledge || {}).error, (c.ecomnia || {}).error, (c.trillion || {}).error]
         .filter(Boolean)
         .join(" · ") || null;
       var totEl = document.getElementById("tile-total");
       if (totEl) {
-        totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC)", tc.yesterday, tc.mtd, terr, false, terr ? "err" : "ok");
+        totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC + TR)", tc.yesterday, tc.mtd, terr, false, terr ? "err" : "ok");
       }
       var netEl = document.getElementById("tile-net");
       if (netEl) {
