@@ -158,6 +158,12 @@ def read_sheet_values_raw(
             or []
         )
     except Exception as e:
+        msg = str(e)
+        # Sheets returns "Unable to parse range" when a tab is missing.
+        # For the daily workflow, missing yesterday offers tabs is expected on some days.
+        if "Unable to parse range" in msg:
+            logger.info("read_sheet %s range=%s: tab missing (treated as empty)", sheet_name, range_a1)
+            return []
         logger.warning("read_sheet %s range=%s: %s", sheet_name, range_a1, e)
         return []
 
