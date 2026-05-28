@@ -173,7 +173,6 @@ def _last_run_time_ui(last_run: Dict[str, Any]) -> Tuple[str, str]:
 
 
 _WORKFLOW_THREADS_LOCK = threading.Lock()
-_WORKFLOW_THREADS: dict[str, threading.Thread] = {}
 _DAILY_POSTBACK_THREADS_LOCK = threading.Lock()
 _DAILY_POSTBACK_THREADS: dict[str, threading.Thread] = {}
 PUBLISHERS_DB_PATH = ROOT_DIR / "runtime" / "publishers.db"
@@ -607,6 +606,29 @@ def _save_last_run(workflow_key: str, data: Dict[str, Any]) -> None:
     p.write_text(json.dumps(data, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
+def _pid_is_running(pid: Any) -> bool:
+    try:
+        p = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if p <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {p}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            text = ((out.stdout or "") + "\n" + (out.stderr or "")).lower()
+            return f" {p} " in text or text.strip().endswith(str(p))
+        os.kill(p, 0)
+        return True
+    except Exception:
+        return False
+
+
 def _run_workflow(workflow_key: str, extra_args: str = "") -> Dict[str, Any]:
     wf = WORKFLOWS[workflow_key]
     script = ROOT_DIR / wf["script"]
@@ -653,20 +675,38 @@ def _run_workflow_in_background(workflow_key: str, extra_args: str = "") -> Dict
     cmd = [sys.executable, str(script)] + args
 
     with _WORKFLOW_THREADS_LOCK:
-        existing = _WORKFLOW_THREADS.get(workflow_key)
-        if existing and existing.is_alive():
-            last = _load_last_run(workflow_key)
-            if last:
-                return last
-
+        last = _load_last_run(workflow_key)
+        if (
+            last
+            and str(last.get("status") or "").strip().lower() == "running"
+            and _pid_is_running(last.get("pid"))
+        ):
+            return last
         started = time.time()
         started_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        runner = ROOT_DIR / "cli" / "run_workflow_job.py"
         proc = subprocess.Popen(
-            cmd,
+            [
+                sys.executable,
+                str(runner),
+                "--workflow-key",
+                workflow_key,
+                "--workflow-title",
+                wf["title"],
+                "--runs-dir",
+                str(RUNS_DIR),
+                "--cwd",
+                str(ROOT_DIR),
+                "--started-at-utc",
+                started_iso,
+                "--",
+                *cmd,
+            ],
             cwd=str(ROOT_DIR),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=False,
+            start_new_session=True,
         )
 
         running_result = {
@@ -683,50 +723,6 @@ def _run_workflow_in_background(workflow_key: str, extra_args: str = "") -> Dict
             "log": "Workflow started in background. Refresh to see final logs.",
         }
         _save_last_run(workflow_key, running_result)
-
-        def _wait_and_store() -> None:
-            try:
-                out, err = proc.communicate()
-                finished = time.time()
-                finished_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                output = (out or "") + ("\n" if out and err else "") + (err or "")
-                output = output.strip()
-                result = {
-                    "workflow_key": workflow_key,
-                    "workflow_title": wf["title"],
-                    "status": "success" if proc.returncode == 0 else "failed",
-                    "exit_code": proc.returncode,
-                    "started_at_utc": started_iso,
-                    "finished_at_utc": finished_iso,
-                    "duration_seconds": round(finished - started, 2),
-                    "command": cmd,
-                    "args": args,
-                    "pid": proc.pid,
-                    "log": output[-20000:],
-                }
-                _save_last_run(workflow_key, result)
-            except Exception as e:
-                failed = {
-                    "workflow_key": workflow_key,
-                    "workflow_title": wf["title"],
-                    "status": "failed",
-                    "exit_code": -1,
-                    "started_at_utc": started_iso,
-                    "finished_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "duration_seconds": 0,
-                    "command": cmd,
-                    "args": args,
-                    "pid": proc.pid,
-                    "log": f"Background workflow runner error: {e}",
-                }
-                _save_last_run(workflow_key, failed)
-            finally:
-                with _WORKFLOW_THREADS_LOCK:
-                    _WORKFLOW_THREADS.pop(workflow_key, None)
-
-        t = threading.Thread(target=_wait_and_store, daemon=True, name=f"wf-{workflow_key}")
-        _WORKFLOW_THREADS[workflow_key] = t
-        t.start()
         return running_result
 
 
