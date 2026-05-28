@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -42,19 +43,32 @@ def main() -> int:
     started_iso = (ns.started_at_utc or "").strip() or _utc_now_iso()
 
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(Path(ns.cwd)),
-            capture_output=True,
-            text=True,
-        )
+        popen_kwargs: dict[str, Any] = {
+            "cwd": str(Path(ns.cwd)),
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+        }
+        if os.name == "nt":
+            # Keep workflow alive even if starter process/job wrapper is recycled.
+            creationflags = 0
+            creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+            creationflags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+            if creationflags:
+                popen_kwargs["creationflags"] = creationflags
+        else:
+            popen_kwargs["start_new_session"] = True
+        child = subprocess.Popen(cmd, **popen_kwargs)
+        out, err = child.communicate()
+        rc = int(child.returncode or 0)
         finished = time.time()
-        output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
+        output = (out or "") + ("\n" if out and err else "") + (err or "")
         result = {
             "workflow_key": ns.workflow_key,
             "workflow_title": ns.workflow_title,
-            "status": "success" if proc.returncode == 0 else "failed",
-            "exit_code": proc.returncode,
+            "status": "success" if rc == 0 else "failed",
+            "exit_code": rc,
             "started_at_utc": started_iso,
             "finished_at_utc": _utc_now_iso(),
             "duration_seconds": round(finished - started, 2),

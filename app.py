@@ -685,29 +685,39 @@ def _run_workflow_in_background(workflow_key: str, extra_args: str = "") -> Dict
         started = time.time()
         started_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         runner = ROOT_DIR / "cli" / "run_workflow_job.py"
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                str(runner),
-                "--workflow-key",
-                workflow_key,
-                "--workflow-title",
-                wf["title"],
-                "--runs-dir",
-                str(RUNS_DIR),
-                "--cwd",
-                str(ROOT_DIR),
-                "--started-at-utc",
-                started_iso,
-                "--",
-                *cmd,
-            ],
-            cwd=str(ROOT_DIR),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=False,
-            start_new_session=True,
-        )
+        launch_cmd = [
+            sys.executable,
+            str(runner),
+            "--workflow-key",
+            workflow_key,
+            "--workflow-title",
+            wf["title"],
+            "--runs-dir",
+            str(RUNS_DIR),
+            "--cwd",
+            str(ROOT_DIR),
+            "--started-at-utc",
+            started_iso,
+            "--",
+            *cmd,
+        ]
+        popen_kwargs: Dict[str, Any] = {
+            "cwd": str(ROOT_DIR),
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "text": False,
+        }
+        if os.name == "nt":
+            # Break away from parent Windows job objects (IIS/host wrappers may kill children).
+            creationflags = 0
+            creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+            creationflags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+            if creationflags:
+                popen_kwargs["creationflags"] = creationflags
+        else:
+            popen_kwargs["start_new_session"] = True
+        proc = subprocess.Popen(launch_cmd, **popen_kwargs)
 
         running_result = {
             "workflow_key": workflow_key,
