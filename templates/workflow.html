@@ -16,6 +16,13 @@
     button { padding: 8px 12px; background: #22c55e; border: 1px solid #16a34a; border-radius: 6px; color: #052e16; font-weight: 700; cursor: pointer; }
     button:hover { background: #16a34a; }
     pre { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px; max-height: 420px; overflow: auto; white-space: pre-wrap; }
+    .stages { margin: 12px 0; padding: 0; list-style: none; }
+    .stages li { padding: 6px 10px; margin: 4px 0; border-radius: 6px; background: #0f172a; border: 1px solid #334155; font-size: 13px; }
+    .stages .stage-success { border-color: #166534; color: #86efac; }
+    .stages .stage-failed { border-color: #7f1d1d; color: #fca5a5; }
+    .stages .stage-running { border-color: #1d4ed8; color: #93c5fd; }
+    .stages .stage-skipped { color: #6b7280; }
+    .stages .stage-pending { color: #9ca3af; }
     a { color: #86efac; text-decoration: none; }
     a:hover { text-decoration: underline; }
     .run-finished { cursor: help; border-bottom: 1px dotted rgba(154, 164, 178, 0.55); }
@@ -184,12 +191,34 @@
     <h2>Last Run</h2>
     <div class="row">
       Status: <span class="status-{{ last_run.status }}">{{ last_run.status }}</span><br>
+      {% if last_run.engine == 'daily_v2' %}
+      Engine: staged v2{% if last_run.run_id %} · run <code>{{ last_run.run_id }}</code>{% endif %}<br>
+      {% if last_run.current_stage %}Current stage: <code>{{ last_run.current_stage }}</code><br>{% endif %}
+      {% endif %}
       Started: {{ last_run.started_at_utc }}<br>
       Finished: {{ last_run | workflow_run_time }}<br>
       Exit code: {{ last_run.exit_code }}
     </div>
+    {% if last_run.stages %}
+    <div class="row"><strong>Stages</strong></div>
+    <ul class="stages" id="workflow-stages">
+      {% for st in last_run.stages %}
+      <li class="stage-{{ st.status or 'pending' }}">
+        {% if st.status == 'success' %}✓{% elif st.status == 'failed' %}✗{% elif st.status == 'running' %}…{% elif st.status == 'skipped' %}−{% else %}○{% endif %}
+        {{ st.title }}
+        {% if st.duration_seconds %}<span class="muted"> · {{ st.duration_seconds }}s</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
     <div class="row"><strong>Log</strong></div>
-    <pre>{{ last_run.log or "(No output)" }}</pre>
+    <pre id="workflow-log">{{ last_run.log or "(No output)" }}</pre>
+    {% if last_run.status == 'running' %}
+    <p class="muted" style="font-size:12px;">Auto-refreshing while the run is in progress…</p>
+    <script>
+      setTimeout(function() { window.location.reload(); }, 8000);
+    </script>
+    {% endif %}
   {% else %}
     <p>No run yet for this workflow.</p>
   {% endif %}

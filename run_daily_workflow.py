@@ -945,6 +945,13 @@ def run_pla_offers_keitaro_blend_tail(
 
 def main() -> None:
     argv = sys.argv[1:]
+    if "--legacy" not in argv:
+        from workflows.daily_v2.orchestrator import run_orchestrator
+
+        filtered = [a for a in argv if a != "--legacy"]
+        raise SystemExit(run_orchestrator(filtered))
+
+    argv = [a for a in argv if a != "--legacy"]
     pa = _parse_daily_workflow_argv(argv)
     date_str = pa["date_str"]
     skip_keitaro = pa["skip_keitaro"]

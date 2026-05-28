@@ -49,7 +49,7 @@ Primary stack: Python 3, `requests`, `python-dotenv`, Google APIs where noted. C
 
 ## Daily Kelkoo → Keitaro workflow
 
-**Script:** `run_daily_workflow.py` (wrapper: `cli/run_daily_workflow.py`).
+**Script:** `run_daily_workflow_v2.py` (staged; default via `run_daily_workflow.py` and `cli/run_daily_workflow.py`). Legacy single-process: `python run_daily_workflow.py --legacy`.
 
 Rough order: monthly log for yesterday → optional Blend potential refresh → delete previous day’s dated tabs → download feeds → reports/color fixim → pick merchants (default **top 3** per geo, rank-weighted PLA interleave) → PLA offers → combined sheet → Keitaro sync for both feeds → Blend block → **yesterday sales report** tabs on the late-sales workbook → **Kelkoo late-sales** diff (dry-run unless `--late-sales-apply`).
 
@@ -73,6 +73,8 @@ Monthly log upserts (`workflows/monthly_log_monetization.py`) **clear the tab th
 - `--merchant-override 1:uk=15248713` — repeatable; forces feed `1` or `2`, geo `uk`, merchant id list (comma = fallback order). Manual wins over auto-pick if both are set.
 - `--merchant-auto-override 1:uk` — platform picks rank **2** for that feed+geo from fixim-ranked candidates; `1:uk:3` picks rank 3, etc.
 - `--offers-and-keitaro-only` — skips monthly log 0a, Blend potential 0b, tab delete 0, and **does not rewrite fixim from a fresh feed download**; still downloads feeds for PLA id alternates, refetches reports + recolors existing `{date}_fixim_*`, then steps 3–6 only (no step 4b monthly log “today”, no Blend step 7).
+
+**Daily workflow v2:** Each step runs as its own subprocess (`workflows/daily_v2/`, state under `runtime/daily_v2/runs/<run_id>/`). UI progress: `runtime/workflow_runs/daily.json` includes a `stages` checklist. Resume: `python run_daily_workflow_v2.py --resume-run-dir runtime/daily_v2/runs/<id>` or `--from-stage merchant_pick`.
 
 **Control Center (Flask):** `/workflows/daily` exposes geo + merchant-mode dropdowns; they normalize args so users do not have to type raw flags. The homepage loads `GET /api/postback-status` (UTC “today” rollup from `runtime/daily_postbacks_last_run.json`) for the slim postback banner above the overview. **Long-form UI copy** (flags, caveats, examples) lives in `**/help`** (Help Center); tool pages keep a one-line subtitle + `?` link to the matching anchor.
 

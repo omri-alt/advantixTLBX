@@ -475,8 +475,8 @@ def ui_require_auth():
 WORKFLOWS: Dict[str, Dict[str, Any]] = {
     "daily": {
         "title": "Nipuhim-Keitaro workflow",
-        "script": "run_daily_workflow.py",
-        "description": "Full daily pipeline: feeds, reports, offers, and Keitaro sync.",
+        "script": "run_daily_workflow_v2.py",
+        "description": "Full daily pipeline (v2 staged): feeds, reports, offers, Keitaro, Blend — one subprocess per stage.",
         "group": "daily-automations",
         "args_hint": "Optional args, e.g. --date 2026-03-08 --skip-keitaro (country/blend sync use controls below)",
         "args_templates": [
