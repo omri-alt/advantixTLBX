@@ -242,6 +242,20 @@ except Exception:
 ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES = max(
     5, min(60, ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES)
 )
+TRILLION_BLEND_CAP_FOLDER = (os.getenv("TRILLION_BLEND_CAP_FOLDER") or "Blend").strip()
+TRILLION_BLEND_CAP_GUARD_ENABLED = (
+    os.getenv("TRILLION_BLEND_CAP_GUARD_ENABLED", "1").strip().lower()
+    not in ("0", "false", "no", "off")
+)
+try:
+    TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES = int(
+        (os.getenv("TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES") or "20").strip()
+    )
+except Exception:
+    TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES = 20
+TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES = max(
+    5, min(60, TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES)
+)
 
 BLEND_CPC_REFRESH_STATE_PATH = (
     os.getenv("BLEND_CPC_REFRESH_STATE_PATH") or "runtime/blend_cpc_refresh_state.json"
