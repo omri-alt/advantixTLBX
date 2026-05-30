@@ -1208,6 +1208,15 @@ def ui_sk():
     return render_template("sk_console_hub.html", active_page="hub", **ctx)
 
 
+@app.route("/api/sk/exploration-costs", methods=["GET"])
+def api_sk_exploration_costs():
+    """JSON: SKtrackExploration spend — yesterday + last 7 UTC days (snapshot + background refresh)."""
+    refresh = (request.args.get("refresh") or "").strip().lower() in ("1", "true", "yes", "on")
+    from integrations.sk_exploration_costs import payload_for_api
+
+    return jsonify(payload_for_api(force_refresh=refresh))
+
+
 @app.route("/sk/bulk-open", methods=["GET", "POST"])
 def ui_sk_bulk_open():
     """Bulk-create SK campaigns from a Google Sheet tab; optionally register rows on SKtrackExploration."""

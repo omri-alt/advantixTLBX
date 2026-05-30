@@ -91,6 +91,36 @@ Observed object response (minimum known fields):
 
 ## 3) Campaign Publisher Stats
 
+### GET `/affiliate/v2/stats/by-campaign?from={YYYY-MM-DD}&to={YYYY-MM-DD}&page={n}`
+
+Account-wide stats per campaign for a date range (paginated, typically 1000 items/page).
+Used by the SK console exploration cost widget: one paginated call **per UTC day** (`from=to`),
+then filter `items[].id` to `SKtrackExploration` campaign IDs and sum `spend`.
+
+Observed list response:
+
+```json
+{
+  "itemsCount": 1000,
+  "items": [
+    {
+      "id": 12345,
+      "name": "brand-uk-KLFIX-c12345",
+      "spend": 1.23,
+      "revenue": 0.0,
+      "clicks": 10,
+      "impressions": 100,
+      "conversions": 0,
+      "advertiser": { "id": 128119, "name": "brand-UK-KLFLEX" }
+    }
+  ],
+  "hasMore": true,
+  "page": 1
+}
+```
+
+Optional query: `advertiserId` (integer) to filter by advertiser.
+
 ### GET `/affiliate/v2/stats/campaigns/{campaignId}/by-publisher?from={YYYY-MM-DD}&to={YYYY-MM-DD}`
 ### GET `/affiliate/v2/stats/campaigns/{campaignId}/by-publisher` with params `from,to,subid`
 

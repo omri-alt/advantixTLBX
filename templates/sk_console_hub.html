@@ -1,8 +1,174 @@
 {% extends "sk_console_base.html" %}
 {% from "macros/page_header.html" import tool_header %}
 {% block title %}SourceKnowledge console · Hub{% endblock %}
+{% block extra_head %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+  <style>
+    .sk-cost-widget {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+      padding: 18px 20px 16px; margin: 20px 0 8px;
+    }
+    .sk-cost-widget h2 { margin: 0 0 4px; font-size: 1.05rem; border: none; padding: 0; }
+    .sk-cost-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .sk-cost-kpis { display: flex; flex-wrap: wrap; gap: 20px 28px; margin: 14px 0 8px; }
+    .sk-cost-kpi .val { font-size: 1.65rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
+    .sk-cost-kpi .lbl { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .sk-cost-chart-wrap { position: relative; height: 220px; margin-top: 12px; }
+    .sk-cost-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .sk-cost-actions button {
+      padding: 6px 12px; font-size: 12px; font-weight: 600; border-radius: 8px;
+      border: 1px solid var(--line); background: #0f172a; color: var(--text); cursor: pointer;
+    }
+    .sk-cost-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .sk-cost-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .sk-cost-err { color: #fca5a5; font-size: 13px; margin-top: 8px; }
+  </style>
+{% endblock %}
 {% block tool_body %}
 {{ tool_header("SourceKnowledge console", "Bulk open, tracking sheets, QualityWL.", "sk-console", "") }}
+
+<section class="sk-cost-widget" id="sk-exploration-cost" aria-live="polite">
+  <div class="sk-cost-head">
+    <div>
+      <h2>Exploration spend (SKtrackExploration)</h2>
+      <p class="muted" style="margin:4px 0 0;font-size:13px;">
+        Cost only — campaigns listed on <code>SKtrackExploration</code> · UTC calendar days ·
+        <span id="sk-cost-meta">Loading…</span>
+      </p>
+    </div>
+    <div class="sk-cost-actions">
+      <button type="button" id="sk-cost-refresh" title="Bypass cache and refetch from SK API">Refresh</button>
+    </div>
+  </div>
+  <div class="sk-cost-kpis">
+    <div class="sk-cost-kpi">
+      <div class="val" id="sk-cost-yesterday">—</div>
+      <div class="lbl">Yesterday (<span id="sk-cost-yday-label">UTC</span>)</div>
+    </div>
+    <div class="sk-cost-kpi">
+      <div class="val" id="sk-cost-7d">—</div>
+      <div class="lbl">Last 7 days total</div>
+    </div>
+    <div class="sk-cost-kpi">
+      <div class="val" id="sk-cost-campaigns">—</div>
+      <div class="lbl">Tracked campaigns</div>
+    </div>
+  </div>
+  <div class="sk-cost-chart-wrap">
+    <canvas id="sk-cost-chart" aria-label="Daily exploration spend chart"></canvas>
+  </div>
+  <div class="sk-cost-err" id="sk-cost-error" style="display:none;"></div>
+</section>
+
+<script>
+(function() {
+  var apiUrl = {{ url_for('api_sk_exploration_costs') | tojson }};
+  var chart = null;
+  var refreshBtn = document.getElementById('sk-cost-refresh');
+  var errEl = document.getElementById('sk-cost-error');
+  var metaEl = document.getElementById('sk-cost-meta');
+
+  function fmtMoney(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function renderChart(daily) {
+    var canvas = document.getElementById('sk-cost-chart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    var labels = (daily || []).map(function(d) { return d.label || d.date; });
+    var values = (daily || []).map(function(d) { return Number(d.spend) || 0; });
+    if (chart) { chart.destroy(); chart = null; }
+    chart = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Spend (USD)',
+          data: values,
+          backgroundColor: 'rgba(74, 222, 128, 0.55)',
+          borderColor: 'rgba(74, 222, 128, 0.95)',
+          borderWidth: 1,
+          borderRadius: 6,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) { return ' ' + fmtMoney(ctx.parsed.y); }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#9ca3af', font: { size: 11 } },
+            grid: { color: 'rgba(55, 65, 81, 0.35)' }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: {
+              color: '#9ca3af',
+              font: { size: 11 },
+              callback: function(v) { return '$' + v; }
+            },
+            grid: { color: 'rgba(55, 65, 81, 0.35)' }
+          }
+        }
+      }
+    });
+  }
+
+  function load(refresh) {
+    if (refreshBtn) refreshBtn.disabled = true;
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (metaEl) metaEl.textContent = refresh ? 'Refreshing from SK API…' : 'Loading…';
+    var url = apiUrl + (refresh ? '?refresh=1' : '');
+    fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.status === 'building' || data.refresh_running) {
+          if (metaEl) metaEl.textContent = data.message || 'Background refresh running…';
+          setTimeout(function() { load(false); }, 5000);
+          return;
+        }
+        document.getElementById('sk-cost-yesterday').textContent = fmtMoney(data.yesterday);
+        document.getElementById('sk-cost-7d').textContent = fmtMoney(data.total_7d);
+        document.getElementById('sk-cost-campaigns').textContent = String(data.campaign_count != null ? data.campaign_count : '—');
+        var ydl = document.getElementById('sk-cost-yday-label');
+        if (ydl && data.yesterday_date) ydl.textContent = data.yesterday_date;
+        renderChart(data.daily || []);
+        var parts = [];
+        if (data.range_start && data.range_end) parts.push(data.range_start + ' → ' + data.range_end);
+        if (data.as_of_utc) parts.push('as of ' + data.as_of_utc);
+        if (data.status === 'stale') parts.push('refreshing…');
+        if (data.active_only) parts.push('active rows only');
+        if (data.fetch_seconds != null) parts.push(data.fetch_seconds + 's fetch');
+        if (metaEl) metaEl.textContent = parts.join(' · ') || 'OK';
+        if (data.error && errEl) {
+          errEl.style.display = 'block';
+          errEl.textContent = data.error;
+        }
+      })
+      .catch(function(e) {
+        if (errEl) {
+          errEl.style.display = 'block';
+          errEl.textContent = 'Failed to load exploration costs: ' + (e && e.message ? e.message : String(e));
+        }
+        if (metaEl) metaEl.textContent = 'Error';
+      })
+      .finally(function() {
+        if (refreshBtn) refreshBtn.disabled = false;
+      });
+  }
+
+  if (refreshBtn) refreshBtn.addEventListener('click', function() { load(true); });
+  load(false);
+})();
+</script>
 
 <section class="tool-section">
   <h2>Tools</h2>
