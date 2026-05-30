@@ -1036,6 +1036,30 @@ def run_yadore_postbacks(
     )
 
 
+def run_effinity_mtd_postbacks(
+    report_date: str,
+    *,
+    dry_run: bool,
+) -> Dict[str, Any]:
+    """
+    Effinity MTD sales → ``CPAsale`` GET postbacks with ``payout=commissionAmount``.
+
+    ``report_date`` caps the conversion window end (defaults to yesterday when omitted in batch).
+    """
+    from datetime import datetime as _dt
+
+    from late_conversion_sales import apply_effinity_mtd_cpasale_backlog
+
+    end: Optional[date] = None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", (report_date or "").strip()):
+        end = _dt.strptime(report_date.strip(), "%Y-%m-%d").date()
+
+    out = apply_effinity_mtd_cpasale_backlog(dry_run=dry_run, end_date=end)
+    out.setdefault("source", "effinity")
+    out.setdefault("report_date", report_date)
+    return out
+
+
 def run_daily_conversion_postbacks_batch(
     *,
     report_date: str,
@@ -1167,6 +1191,11 @@ def run_daily_conversion_postbacks_batch(
                 no_resume=no_resume,
                 session=session,
             )
+            results.append({"target": t, "summary": out})
+            if not out.get("ok"):
+                rc = 1
+        elif t == "effinity":
+            out = run_effinity_mtd_postbacks(report_date, dry_run=dry_run)
             results.append({"target": t, "summary": out})
             if not out.get("ok"):
                 rc = 1

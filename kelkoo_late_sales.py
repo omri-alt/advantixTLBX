@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from late_conversion_sales import (  # noqa: F401
     LateSaleDiffRow,
+    apply_effinity_mtd_cpasale_backlog,
     apply_yadore_saleour_backlog,
     build_postback_url,
     late_sale_date_window,

@@ -43,7 +43,7 @@ def main() -> None:
     ap.add_argument(
         "--only",
         default="all",
-        help="kelkoo1 | kelkoo2 | kelkoo5 | adexa | yadore | yadore_sales | all",
+        help="kelkoo1 | kelkoo2 | kelkoo5 | adexa | yadore | yadore_sales | effinity | all",
     )
     ap.add_argument("--geo", default="", help="Kelkoo only: process a single country code (e.g. uk).")
     ap.add_argument(

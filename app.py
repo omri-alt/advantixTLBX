@@ -1298,7 +1298,7 @@ def ui_kelkoo_late_sales():
     return render_template("late_sales.html", late_sales_result=late_sales_result)
 
 
-DAILY_POSTBACK_FEED_KEYS = frozenset(list(KELKOO_POSTBACK_FEED_TAGS) + ["adexa", "yadore", "yadore_sales"])
+DAILY_POSTBACK_FEED_KEYS = frozenset(list(KELKOO_POSTBACK_FEED_TAGS) + ["adexa", "yadore", "yadore_sales", "effinity"])
 
 
 @app.route("/kelkoo/daily-postbacks", methods=["GET"])

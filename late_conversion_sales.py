@@ -647,6 +647,91 @@ def apply_yadore_saleour_backlog(
     }
 
 
+def apply_effinity_mtd_cpasale_backlog(
+    *,
+    dry_run: bool = False,
+    end_date: Optional[date] = None,
+) -> Dict[str, Any]:
+    """
+    Send ``CPAsale`` postbacks (``payout=commissionAmount``) for Effinity sales missing from Keitaro.
+
+    Default range: month start through **yesterday** (UTC). Keitaro dedup uses ``(sub_id, payout)`` for
+    status ``CPAsale`` (see ``EFFINITY_SALE_POSTBACK_STATUS``).
+    """
+    from config import EFFINITY_SALE_POSTBACK_STATUS
+    from integrations.daily_conversion_postbacks import build_daily_postback_url
+    from integrations.effinity import (
+        EffinityClientError,
+        _conversion_commission,
+        _conversion_sub_id,
+        fetch_mtd_sale_conversions,
+    )
+    from integrations.keitaro_conversions import collect_sale_postback_keys, has_matching_sale_postback
+
+    month_start, _hi_date, yesterday, month_key = late_sale_date_window()
+    today = datetime.now(timezone.utc).date()
+    end = end_date or yesterday
+
+    try:
+        raw_rows, api_err = fetch_mtd_sale_conversions(month_start, end, sales_only=True)
+    except EffinityClientError as e:
+        return {"ok": False, "error": str(e), "eligible": 0}
+    if api_err and not raw_rows:
+        return {"ok": False, "error": api_err, "eligible": 0}
+
+    sale_status = (EFFINITY_SALE_POSTBACK_STATUS or "salecpa").strip()
+    try:
+        keys = collect_sale_postback_keys(
+            date_from=month_start,
+            date_to=today,
+            statuses=[sale_status],
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"Keitaro log: {e}", "eligible": 0}
+
+    to_send: List[Tuple[str, str, str]] = []
+    skipped = 0
+    for row in raw_rows:
+        sid = _conversion_sub_id(row)
+        payout = _conversion_commission(row)
+        if has_matching_sale_postback(sid, payout, keys):
+            skipped += 1
+            continue
+        conv_dt = str(row.get("conversionDate") or "")[:10]
+        to_send.append((sid, payout, conv_dt))
+
+    urls = [
+        build_daily_postback_url(subid=sid, payout=payout, status=sale_status)
+        for sid, payout, _ in to_send
+    ]
+
+    postbacks_ok = 0
+    postbacks_fail = 0
+    if not dry_run and urls:
+        for u in urls:
+            pr = send_postback_gets([u])[0]
+            code = pr.get("http_status")
+            if code is not None and 200 <= int(code) < 400 and not pr.get("http_error"):
+                postbacks_ok += 1
+            else:
+                postbacks_fail += 1
+
+    return {
+        "ok": dry_run or postbacks_fail == 0,
+        "mode": "dry-run" if dry_run else "apply",
+        "source": "effinity",
+        "month_key": month_key,
+        "sale_window": f"{month_start.isoformat()} .. {end.isoformat()}",
+        "effinity_sales_found": len(raw_rows),
+        "skipped_keitaro": skipped,
+        "eligible": len(to_send),
+        "postbacks_ok": postbacks_ok if not dry_run else None,
+        "postbacks_fail": postbacks_fail if not dry_run else None,
+        "sample_urls": urls[:5],
+        "api_warning": api_err,
+    }
+
+
 def run_late_sales_flow(
     *,
     credentials_path: Path,

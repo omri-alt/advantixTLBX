@@ -103,6 +103,8 @@ DAILY_CONVERSION_POSTBACK_BASE = (
 ).strip()
 DAILY_CONVERSION_POSTBACK_CLICK_STATUS = (os.getenv("DAILY_CONVERSION_POSTBACK_CLICK_STATUS") or "click").strip()
 DAILY_CONVERSION_POSTBACK_SALE_STATUS = (os.getenv("DAILY_CONVERSION_POSTBACK_SALE_STATUS") or "SaleOur").strip()
+# Effinity affiliate sale postbacks use status=salecpa (not SaleOur).
+EFFINITY_SALE_POSTBACK_STATUS = (os.getenv("EFFINITY_SALE_POSTBACK_STATUS") or "salecpa").strip()
 _dcp_state = (os.getenv("DAILY_CONVERSION_POSTBACK_STATE_PATH") or "").strip()
 DAILY_CONVERSION_POSTBACK_STATE_PATH = _dcp_state or str(
     Path(__file__).resolve().parent / "runtime" / "daily_conversion_postbacks_state.json"
@@ -621,6 +623,13 @@ if not ADEXA_API_KEY:
         or _read_env_fallback("KEY_ADEX")
     )
 ADEXA_API_KEY = (ADEXA_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
+
+# Effinity publisher API (``KEYEFFINITY`` — key is path segment after ``/apiv3/``)
+EFFINITY_API_KEY = (os.getenv("KEYEFFINITY") or os.getenv("EFFINITY_API_KEY") or "").strip()
+if not EFFINITY_API_KEY:
+    EFFINITY_API_KEY = _read_env_fallback("KEYEFFINITY") or _read_env_fallback("EFFINITY_API_KEY")
+EFFINITY_API_KEY = (EFFINITY_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
+EFFINITY_API_BASE = (os.getenv("EFFINITY_API_BASE") or "https://api.effinity.fr/apiv3").strip().rstrip("/")
 
 # --- AutoServer (migrated APScheduler + libz automations) ---
 # Hourly jobs at minute 0; manual triggers return 202 and run in background (see ``scheduler/autoserver_scheduler.py``).

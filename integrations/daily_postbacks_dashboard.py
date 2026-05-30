@@ -21,6 +21,7 @@ FEED_META: Tuple[Tuple[str, str], ...] = (
     ("adexa", "Adexa (feed 4)"),
     ("yadore", "Yadore clicks (feed 3)"),
     ("yadore_sales", "Yadore sales (feed 3)"),
+    ("effinity", "Effinity MTD sales"),
 )
 
 
@@ -183,6 +184,15 @@ def build_dashboard_cards(state_path: Path) -> List[Dict[str, Any]]:
                     "next_index": None,
                     "total_items": None,
                 }
+        elif key == "effinity":
+            summ = hist.get("summary") if isinstance(hist.get("summary"), dict) else {}
+            flat_extra = {
+                "primary_date": summ.get("sale_window") or hist.get("report_date"),
+                "run_status": "mtd",
+                "postbacks_sent": summ.get("postbacks_ok"),
+                "next_index": None,
+                "total_items": summ.get("effinity_sales_found"),
+            }
 
         display_ts = last_at or state_ts
 
@@ -220,7 +230,7 @@ def feed_detail_context(
     flat_detail: Optional[Dict[str, Any]] = None
     if feed_key in KELKOO_POSTBACK_FEED_TAGS and rd and geo_order:
         kelkoo_detail = kelkoo_state_detail(data, feed_key, rd, geo_order)
-    elif feed_key in ("adexa", "yadore") and rd:
+    elif feed_key in ("adexa", "yadore", "yadore_sales") and rd:
         flat_detail = flat_state_detail(data, feed_key, rd)
 
     title = dict(FEED_META).get(feed_key, feed_key)

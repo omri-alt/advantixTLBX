@@ -62,8 +62,8 @@ def record_last_run(
 
 
 def postback_sources_enabled() -> list[str]:
-    """Sources that would run under ``--only all`` when credentials exist (Kelkoo / Adexa / Yadore)."""
-    from config import ADEXA_API_KEY, ADEXA_SITE_ID, FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY, YADORE_API_KEY
+    """Sources that would run under ``--only all`` when credentials exist (Kelkoo / Adexa / Yadore / Effinity)."""
+    from config import ADEXA_API_KEY, ADEXA_SITE_ID, EFFINITY_API_KEY, FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY, YADORE_API_KEY
 
     out: list[str] = []
     if (FEED1_API_KEY or "").strip():
@@ -77,6 +77,8 @@ def postback_sources_enabled() -> list[str]:
     if (YADORE_API_KEY or "").strip():
         out.append("yadore")
         out.append("yadore_sales")
+    if (EFFINITY_API_KEY or "").strip():
+        out.append("effinity")
     return out
 
 
@@ -87,6 +89,7 @@ _SOURCE_LABELS = {
     "adexa": "Adexa",
     "yadore": "Yadore (clicks)",
     "yadore_sales": "Yadore (sales)",
+    "effinity": "Effinity (MTD sales)",
 }
 
 
