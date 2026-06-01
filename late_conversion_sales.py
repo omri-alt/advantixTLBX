@@ -93,6 +93,22 @@ def late_sale_date_window(
     return month_start, hi_date, yesterday, month_key
 
 
+def effinity_sale_date_range(
+    today: Optional[date] = None,
+    end_date: Optional[date] = None,
+) -> Tuple[date, date, str]:
+    """
+    Effinity fetch + Keitaro dedup window: calendar month of ``end`` through ``end`` (default yesterday).
+
+    On the 1st of a month, ``late_sale_date_window``'s ``month_start`` can be after ``yesterday``;
+    this uses ``min(month_start, end.replace(day=1))`` so May 31 is still included on June 1.
+    """
+    month_start, _, yesterday, month_key = late_sale_date_window(today)
+    end = end_date or yesterday
+    range_start = min(month_start, end.replace(day=1))
+    return range_start, end, month_key
+
+
 def mtd_tab_title(feed: str, month_key: str) -> str:
     return f"SalesMTD_{(feed or '').strip().lower()}_{month_key}"
 
@@ -653,10 +669,10 @@ def apply_effinity_mtd_cpasale_backlog(
     end_date: Optional[date] = None,
 ) -> Dict[str, Any]:
     """
-    Send ``CPAsale`` postbacks (``payout=commissionAmount``) for Effinity sales missing from Keitaro.
+    Send ``salecpa`` postbacks (``payout=commissionAmount``) for Effinity sales missing from Keitaro.
 
-    Default range: month start through **yesterday** (UTC). Keitaro dedup uses ``(sub_id, payout)`` for
-    status ``CPAsale`` (see ``EFFINITY_SALE_POSTBACK_STATUS``).
+    Default range: month of ``end`` (through yesterday) inclusive. Keitaro dedup uses ``(sub_id, payout)``
+    for status ``salecpa`` (see ``EFFINITY_SALE_POSTBACK_STATUS``).
     """
     from config import EFFINITY_SALE_POSTBACK_STATUS
     from integrations.daily_conversion_postbacks import build_daily_postback_url
@@ -668,12 +684,11 @@ def apply_effinity_mtd_cpasale_backlog(
     )
     from integrations.keitaro_conversions import collect_sale_postback_keys, has_matching_sale_postback
 
-    month_start, _hi_date, yesterday, month_key = late_sale_date_window()
+    range_start, end, month_key = effinity_sale_date_range(end_date=end_date)
     today = datetime.now(timezone.utc).date()
-    end = end_date or yesterday
 
     try:
-        raw_rows, api_err = fetch_mtd_sale_conversions(month_start, end, sales_only=True)
+        raw_rows, api_err = fetch_mtd_sale_conversions(range_start, end, sales_only=True)
     except EffinityClientError as e:
         return {"ok": False, "error": str(e), "eligible": 0}
     if api_err and not raw_rows:
@@ -682,7 +697,7 @@ def apply_effinity_mtd_cpasale_backlog(
     sale_status = (EFFINITY_SALE_POSTBACK_STATUS or "salecpa").strip()
     try:
         keys = collect_sale_postback_keys(
-            date_from=month_start,
+            date_from=range_start,
             date_to=today,
             statuses=[sale_status],
         )
@@ -721,7 +736,7 @@ def apply_effinity_mtd_cpasale_backlog(
         "mode": "dry-run" if dry_run else "apply",
         "source": "effinity",
         "month_key": month_key,
-        "sale_window": f"{month_start.isoformat()} .. {end.isoformat()}",
+        "sale_window": f"{range_start.isoformat()} .. {end.isoformat()}",
         "effinity_sales_found": len(raw_rows),
         "skipped_keitaro": skipped,
         "eligible": len(to_send),

@@ -135,6 +135,21 @@ except Exception:
     YADORE_SALES_SCHEDULER_HOUR_LOCAL = 10
 YADORE_SALES_SCHEDULER_HOUR_LOCAL = max(0, min(23, YADORE_SALES_SCHEDULER_HOUR_LOCAL))
 
+# Effinity MTD salecpa postbacks (publisher conversions API → Keitaro). Same daily slot as Yadore by default.
+EFFINITY_SALES_SCHEDULER_ENABLED = (
+    os.getenv("EFFINITY_SALES_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+)
+EFFINITY_SALES_SCHEDULER_TZ = (
+    os.getenv("EFFINITY_SALES_SCHEDULER_TZ") or os.getenv("YADORE_SALES_SCHEDULER_TZ") or "Asia/Jerusalem"
+).strip()
+try:
+    EFFINITY_SALES_SCHEDULER_HOUR_LOCAL = int(
+        (os.getenv("EFFINITY_SALES_SCHEDULER_HOUR_LOCAL") or os.getenv("YADORE_SALES_SCHEDULER_HOUR_LOCAL") or "10").strip()
+    )
+except Exception:
+    EFFINITY_SALES_SCHEDULER_HOUR_LOCAL = 10
+EFFINITY_SALES_SCHEDULER_HOUR_LOCAL = max(0, min(23, EFFINITY_SALES_SCHEDULER_HOUR_LOCAL))
+
 # Legacy UTC hour (unused when ``LATE_CONVERSION_SCHEDULER_*`` is set); kept for env compatibility.
 try:
     KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = int((os.getenv("KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC") or "7").strip())
