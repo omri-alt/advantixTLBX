@@ -865,6 +865,46 @@ def ensure_blend_device_stream(
     return result
 
 
+def _blend_stream_filters_for_update(
+    client: KeitaroClient,
+    stream_id: int,
+    geo: str,
+    channel: str,
+) -> List[Dict[str, Any]]:
+    """
+    Build filter rows for PUT ``streams/{id}``, preserving existing filter ids (Keitaro
+    requires ids on update — same shape as reference flow 142 ``ch_mobile``).
+    """
+    geo_code = _geo_for_api(geo)
+    if not geo_code:
+        raise ValueError(f"Invalid country code {geo!r}")
+    resp = client._session.get(client._api_path(f"streams/{int(stream_id)}"), timeout=30)
+    if not resp.ok:
+        raise KeitaroClientError(
+            f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text
+        )
+    current = resp.json() if resp.content else {}
+    existing_by_name: Dict[str, Dict[str, Any]] = {}
+    for f in current.get("filters") or []:
+        key = (f.get("name") or "").strip().lower()
+        if key:
+            existing_by_name[key] = f
+
+    specs = [
+        {"name": "country", "mode": "accept", "payload": [geo_code]},
+        _blend_device_type_filter(channel),
+    ]
+    out: List[Dict[str, Any]] = []
+    for spec in specs:
+        key = (spec.get("name") or "").strip().lower()
+        row = dict(spec)
+        ex = existing_by_name.get(key)
+        if ex and ex.get("id") is not None:
+            row["id"] = int(ex["id"])
+        out.append(row)
+    return out
+
+
 def set_blend_device_stream_filters(
     stream_id: int,
     geo: str,
@@ -875,11 +915,7 @@ def set_blend_device_stream_filters(
 ) -> Dict[str, Any]:
     """Ensure country + device_type filters on an existing Blend device stream."""
     client = KeitaroClient(base_url=base_url, api_key=api_key)
-    geo_code = _geo_for_api(geo)
-    filters = [
-        {"name": "country", "mode": "accept", "payload": [geo_code]},
-        _blend_device_type_filter(channel),
-    ]
+    filters = _blend_stream_filters_for_update(client, int(stream_id), geo, channel)
     return client.update_stream(int(stream_id), {"filters": filters})
 
 

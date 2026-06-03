@@ -24,7 +24,7 @@ VALID_DEVICE_MODES = frozenset(
     }
 )
 
-# Keitaro stream filter payloads (device type names from tracker docs).
+# Keitaro stream filter payloads (match manually configured flows, e.g. ch_mobile id=142).
 KEITARO_DEVICE_DESKTOP = ["desktop"]
 KEITARO_DEVICE_MOBILE = ["mobile phone", "tablet"]
 
