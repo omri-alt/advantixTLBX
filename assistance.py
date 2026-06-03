@@ -792,17 +792,122 @@ def flow_name_to_geo(flow_name: str) -> Optional[str]:
     return geo
 
 
-def _blend_device_type_filter(channel: str) -> Dict[str, Any]:
-    from integrations.blend_device import KEITARO_DEVICE_DESKTOP, KEITARO_DEVICE_MOBILE
+def _normalize_filter_payload(payload: Any) -> List[str]:
+    if not isinstance(payload, list):
+        return []
+    return [(str(p) or "").strip().lower() for p in payload if str(p or "").strip()]
+
+
+def _blend_filter_specs(geo_code: str, channel: str) -> List[Dict[str, Any]]:
+    """
+    Filter rows for a Blend device stream (no ids).
+
+    Mobile (flow 142): device_type IS NOT desktop + country IS geo (2 filters, AND).
+    Desktop: country IS geo + device_type IS desktop (2 filters).
+    """
+    from integrations.blend_device import KEITARO_DEVICE_DESKTOP
 
     ch = (channel or "").strip().lower()
+    country = {"name": "country", "mode": "accept", "payload": [geo_code]}
     if ch == "desktop":
-        payload = list(KEITARO_DEVICE_DESKTOP)
+        return [
+            country,
+            {"name": "device_type", "mode": "accept", "payload": list(KEITARO_DEVICE_DESKTOP)},
+        ]
+    if ch == "mobile":
+        return [
+            {
+                "name": "device_type",
+                "mode": "reject",
+                "payload": list(KEITARO_DEVICE_DESKTOP),
+            },
+            country,
+        ]
+    raise ValueError(f"Invalid device channel {channel!r}")
+
+
+def _assign_blend_filter_ids(
+    specs: List[Dict[str, Any]],
+    current_filters: List[Dict[str, Any]],
+    channel: str,
+) -> List[Dict[str, Any]]:
+    """Attach Keitaro filter ids from the existing stream where possible."""
+    country_ex: Optional[Dict[str, Any]] = None
+    device_reject_desktop_id: Optional[int] = None
+    device_accept_desktop_id: Optional[int] = None
+    for f in current_filters or []:
+        name = (f.get("name") or "").strip().lower()
+        if name == "country":
+            country_ex = f
+        elif name == "device_type":
+            fid = f.get("id")
+            if fid is None:
+                continue
+            mode = (f.get("mode") or "").strip().lower()
+            payload = _normalize_filter_payload(f.get("payload"))
+            if payload == ["desktop"] and mode == "reject":
+                device_reject_desktop_id = int(fid)
+            elif payload == ["desktop"] and mode == "accept":
+                device_accept_desktop_id = int(fid)
+
+    ch = (channel or "").strip().lower()
+    out: List[Dict[str, Any]] = []
+    for spec in specs:
+        row = dict(spec)
+        sname = (spec.get("name") or "").strip().lower()
+        smode = (spec.get("mode") or "").strip().lower()
+        spayload = _normalize_filter_payload(spec.get("payload"))
+        if sname == "country" and country_ex and country_ex.get("id") is not None:
+            row["id"] = int(country_ex["id"])
+        elif sname == "device_type":
+            if ch == "desktop" and smode == "accept" and device_accept_desktop_id is not None:
+                row["id"] = device_accept_desktop_id
+            elif ch == "mobile" and smode == "reject" and device_reject_desktop_id is not None:
+                row["id"] = device_reject_desktop_id
+        out.append(row)
+    return out
+
+
+def assert_blend_stream_filters_sane(
+    filters: List[Dict[str, Any]],
+    channel: str,
+    *,
+    geo_code: str,
+) -> None:
+    """Raise if filters do not match the expected Blend device-stream shape."""
+    ch = (channel or "").strip().lower()
+    if ch == "desktop":
+        if len(filters) != 2:
+            raise ValueError(f"desktop stream expected 2 filters, got {len(filters)}")
     elif ch == "mobile":
-        payload = list(KEITARO_DEVICE_MOBILE)
+        if len(filters) != 2:
+            raise ValueError(f"mobile stream expected 2 filters, got {len(filters)}")
     else:
-        raise ValueError(f"Invalid device channel {channel!r}")
-    return {"name": "device_type", "mode": "accept", "payload": payload}
+        raise ValueError(f"Invalid channel {channel!r}")
+
+    countries = [f for f in filters if (f.get("name") or "").lower() == "country"]
+    if len(countries) != 1:
+        raise ValueError("expected exactly one country filter")
+    want_country = [(geo_code or "").strip().upper()]
+    if _normalize_filter_payload(countries[0].get("payload")) != [
+        c.lower() for c in want_country
+    ]:
+        raise ValueError(f"country payload expected {want_country!r}")
+
+    device_rows = [f for f in filters if (f.get("name") or "").lower() == "device_type"]
+    if len(device_rows) != 1:
+        raise ValueError(f"expected exactly one device_type filter, got {len(device_rows)}")
+    if ch == "desktop":
+        if (device_rows[0].get("mode") or "").lower() != "accept":
+            raise ValueError("desktop device_type must be mode accept (IS)")
+        if _normalize_filter_payload(device_rows[0].get("payload")) != ["desktop"]:
+            raise ValueError("desktop device_type payload mismatch")
+        return
+
+    if (device_rows[0].get("mode") or "").lower() != "reject":
+        raise ValueError("mobile device_type must be mode reject (IS NOT)")
+    if _normalize_filter_payload(device_rows[0].get("payload")) != ["desktop"]:
+        raise ValueError("mobile device_type must reject desktop")
 
 
 def ensure_blend_device_stream(
@@ -817,7 +922,7 @@ def ensure_blend_device_stream(
     """
     Country + device_type filtered flow for Blend Option B (one offer, split streams).
     """
-    from integrations.blend_device import KEITARO_DEVICE_DESKTOP, KEITARO_DEVICE_MOBILE  # noqa: F401
+    from integrations.blend_device import KEITARO_DEVICE_DESKTOP  # noqa: F401
 
     client = KeitaroClient(base_url=base_url, api_key=api_key)
     flow_name = blend_device_stream_name(geo, channel)
@@ -836,10 +941,7 @@ def ensure_blend_device_stream(
     geo_code = _geo_for_api(geo)
     if not geo_code:
         raise ValueError(f"Invalid country code {geo!r}")
-    filters = [
-        {"name": "country", "mode": "accept", "payload": [geo_code]},
-        _blend_device_type_filter(channel),
-    ]
+    filters = _blend_filter_specs(geo_code, channel)
     payload = {
         "campaign_id": int(campaign_id),
         "type": "regular",
@@ -872,8 +974,9 @@ def _blend_stream_filters_for_update(
     channel: str,
 ) -> List[Dict[str, Any]]:
     """
-    Build filter rows for PUT ``streams/{id}``, preserving existing filter ids (Keitaro
-    requires ids on update — same shape as reference flow 142 ``ch_mobile``).
+    Build filter rows for PUT ``streams/{id}``, preserving existing filter ids.
+
+    Mobile streams: device_type IS NOT desktop + country IS geo (flow 142 ``ch_mobile``).
     """
     geo_code = _geo_for_api(geo)
     if not geo_code:
@@ -884,24 +987,9 @@ def _blend_stream_filters_for_update(
             f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text
         )
     current = resp.json() if resp.content else {}
-    existing_by_name: Dict[str, Dict[str, Any]] = {}
-    for f in current.get("filters") or []:
-        key = (f.get("name") or "").strip().lower()
-        if key:
-            existing_by_name[key] = f
-
-    specs = [
-        {"name": "country", "mode": "accept", "payload": [geo_code]},
-        _blend_device_type_filter(channel),
-    ]
-    out: List[Dict[str, Any]] = []
-    for spec in specs:
-        key = (spec.get("name") or "").strip().lower()
-        row = dict(spec)
-        ex = existing_by_name.get(key)
-        if ex and ex.get("id") is not None:
-            row["id"] = int(ex["id"])
-        out.append(row)
+    specs = _blend_filter_specs(geo_code, channel)
+    out = _assign_blend_filter_ids(specs, current.get("filters") or [], channel)
+    assert_blend_stream_filters_sane(out, channel, geo_code=geo_code)
     return out
 
 

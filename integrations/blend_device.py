@@ -1,7 +1,7 @@
 """
 Blend device routing: CPC floors, device_mode classification, clickCap split.
 
-Mobile flows accept Keitaro device types ``mobile phone`` and ``tablet`` (both required).
+Mobile Keitaro flows: country = geo, device_type IS NOT desktop (tablet + phone pass through).
 """
 from __future__ import annotations
 
@@ -24,9 +24,8 @@ VALID_DEVICE_MODES = frozenset(
     }
 )
 
-# Keitaro stream filter payloads (match manually configured flows, e.g. ch_mobile id=142).
+# Keitaro stream filter payloads (``ch_mobile`` flow 142: country IS geo + device IS NOT desktop).
 KEITARO_DEVICE_DESKTOP = ["desktop"]
-KEITARO_DEVICE_MOBILE = ["mobile phone", "tablet"]
 
 
 def cpcs_from_merchant_dict(m: Dict[str, Any]) -> Tuple[float, float, bool, bool]:

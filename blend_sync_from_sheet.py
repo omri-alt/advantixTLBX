@@ -20,8 +20,9 @@ Behavior:
      in ``url=`` / ``market=`` with ``placementId={subid}`` (Keitaro macros preserved in ``rain=``).
      Set ``BLEND_YADORE_OFFER_USE_SUB_MACROS=1`` for ``url={sub_id_3}&market={sub_id_2}&placementId={subid}``
      (campaign must pass those subs).
-  3) Per geo, attach offers to ``{geo}_desktop`` and ``{geo}_mobile`` streams (device_type
-     filters: desktop; mobile = mobile phone + tablet) with weights from clickCap / device_mode.
+  3) Per geo, attach offers to ``{geo}_desktop`` and ``{geo}_mobile`` streams (filters:
+     desktop = country + IS desktop; mobile = country + IS NOT desktop) with weights from
+     clickCap / device_mode.
      Legacy rows
      (neither CPC >= BLEND_DEVICE_CPC_MIN) use full clickCap on both streams. Undivided
      legacy geo flows are zeroed when device streams exist.
