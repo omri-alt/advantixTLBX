@@ -827,6 +827,11 @@ def ensure_blend_device_stream(
             if (s.get("name") or "").strip().lower() == name_lower:
                 out = dict(s)
                 out["_skipped"] = True
+                sid = out.get("id")
+                if sid is not None:
+                    set_blend_device_stream_filters(
+                        int(sid), geo, channel, base_url=base_url, api_key=api_key
+                    )
                 return out
     geo_code = _geo_for_api(geo)
     if not geo_code:
@@ -876,6 +881,43 @@ def set_blend_device_stream_filters(
         _blend_device_type_filter(channel),
     ]
     return client.update_stream(int(stream_id), {"filters": filters})
+
+
+def refresh_all_blend_device_stream_filters(
+    campaign_id: int,
+    *,
+    only_geo: Optional[str] = None,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Tuple[int, List[str]]:
+    """
+    Re-apply country + device_type filters on every ``{geo}_desktop`` / ``{geo}_mobile`` flow.
+    Repairs flows that were created with outdated device_type payloads (e.g. tablet-only mobile).
+    """
+    updated = 0
+    errors: List[str] = []
+    geo_filter = (only_geo or "").strip().lower()[:2] or None
+    try:
+        streams = get_campaign_streams(int(campaign_id), base_url=base_url, api_key=api_key)
+    except Exception as e:
+        return 0, [f"get_streams: {e}"]
+    for s in streams:
+        geo, channel = parse_blend_stream_geo_channel(s.get("name") or "")
+        if not geo or channel not in ("desktop", "mobile"):
+            continue
+        if geo_filter and geo != geo_filter:
+            continue
+        sid = s.get("id")
+        if sid is None:
+            continue
+        try:
+            set_blend_device_stream_filters(
+                int(sid), geo, channel, base_url=base_url, api_key=api_key
+            )
+            updated += 1
+        except KeitaroClientError as e:
+            errors.append(f"{geo}/{channel} stream_id={sid}: {e}")
+    return updated, errors
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """
 Blend device routing: CPC floors, device_mode classification, clickCap split.
 
-Tablet traffic is treated as mobile (Keitaro device_type filter includes tablet).
+Mobile flows accept Keitaro device types ``mobile phone`` and ``tablet`` (both required).
 """
 from __future__ import annotations
 

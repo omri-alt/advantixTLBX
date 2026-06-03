@@ -21,7 +21,8 @@ Behavior:
      Set ``BLEND_YADORE_OFFER_USE_SUB_MACROS=1`` for ``url={sub_id_3}&market={sub_id_2}&placementId={subid}``
      (campaign must pass those subs).
   3) Per geo, attach offers to ``{geo}_desktop`` and ``{geo}_mobile`` streams (device_type
-     filters; tablet counts as mobile) with weights from clickCap / device_mode. Legacy rows
+     filters: desktop; mobile = mobile phone + tablet) with weights from clickCap / device_mode.
+     Legacy rows
      (neither CPC >= BLEND_DEVICE_CPC_MIN) use full clickCap on both streams. Undivided
      legacy geo flows are zeroed when device streams exist.
 
@@ -64,6 +65,7 @@ from assistance import (
     flow_name_to_geo,
     parse_blend_stream_geo_channel,
     ensure_blend_device_stream,
+    refresh_all_blend_device_stream_filters,
     set_blend_device_stream_filters,
     set_flow_offers_weighted,
     set_flow_offers_weighted_keep_zeros,
@@ -599,13 +601,12 @@ def _sync_geo_device_streams(
                 created_flows += 1
             geo_streams[channel] = stream
             streams_map[geo] = geo_streams
-        else:
-            sid = stream.get("id")
-            if sid is not None:
-                try:
-                    set_blend_device_stream_filters(int(sid), geo, channel)
-                except KeitaroClientError as e:
-                    print(f"  Warning: could not refresh {geo}/{channel} filters: {e}")
+        sid = stream.get("id")
+        if sid is not None:
+            try:
+                set_blend_device_stream_filters(int(sid), geo, channel)
+            except KeitaroClientError as e:
+                print(f"  Warning: could not refresh {geo}/{channel} filters: {e}")
 
         offer_id_to_weight = _build_channel_offer_weights(offer_id_to_row, channel)
         sid = stream.get("id")
@@ -1014,8 +1015,25 @@ def main() -> None:
         for channel, stream in ch_streams.items():
             if channel not in ("desktop", "mobile", "legacy"):
                 continue
+            if channel in ("desktop", "mobile"):
+                sid = stream.get("id")
+                if sid is not None:
+                    try:
+                        set_blend_device_stream_filters(int(sid), geo, channel)
+                    except KeitaroClientError as e:
+                        print(f"  Warning: could not refresh {geo}/{channel} filters: {e}")
             _zero_blend_offers_on_stream(client, stream, all_offers_by_id=all_offers_by_id)
             print(f"  {geo}/{channel}: no Blend rows — zeroed blend_* offers")
+
+    print("Refreshing device_type filters on all Blend desktop/mobile flows ...")
+    n_filters, filter_errors = refresh_all_blend_device_stream_filters(
+        campaign_id, only_geo=only_geo
+    )
+    print(f"  Device filters refreshed on {n_filters} flow(s).")
+    for err in filter_errors[:10]:
+        print(f"  Warning: {err}")
+    if len(filter_errors) > 10:
+        print(f"  ... and {len(filter_errors) - 10} more filter refresh error(s)")
 
     # Archive stale Blend offers (offers named like "blend_...") that are not attached to any Blend flow.
     expected_names = {r.offer_name for r in rows}
