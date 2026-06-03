@@ -3,8 +3,8 @@
 Run only the Keitaro sync step: read offers from the sheet and push to Keitaro.
 
 Use this when the daily workflow already wrote the offers sheets (steps 1–5)
-but the Keitaro upload failed or was skipped. Reads YYYY-MM-DD_offers_1 and
-YYYY-MM-DD_offers_2 and runs update_offers_from_sheet for each.
+but the Keitaro upload failed or was skipped. Reads YYYY-MM-DD_offers_1, _offers_2, and _offers_5 (when FEED5_API_KEY is set)
+and runs update_offers_from_sheet for each.
 
   python run_keitaro_sync.py
   python run_keitaro_sync.py --date 2026-03-11
@@ -29,13 +29,18 @@ def main():
             continue
         i += 1
 
+    from run_daily_workflow import nipuhim_feed5_enabled
+
     sheet1 = f"{date_str}_offers_1"
     sheet2 = f"{date_str}_offers_2"
+    sheet5 = f"{date_str}_offers_5"
     script = Path(__file__).resolve().parent / "update_offers_from_sheet.py"
 
     print(f"Keitaro sync only for date {date_str}")
     print(f"  Feed1 sheet: {sheet1}")
     print(f"  Feed2 sheet: {sheet2}")
+    if nipuhim_feed5_enabled():
+        print(f"  Feed5 sheet: {sheet5}")
     print()
 
     r1 = subprocess.run([sys.executable, str(script), "--sheet", sheet1])
@@ -48,7 +53,15 @@ def main():
         print("Feed2 sync failed.")
         sys.exit(1)
     print()
-    print("Done. Both feeds synced to Keitaro.")
+    if nipuhim_feed5_enabled():
+        r5 = subprocess.run([sys.executable, str(script), "--sheet", sheet5, "--account", "5"])
+        if r5.returncode != 0:
+            print("Feed5 sync failed.")
+            sys.exit(1)
+        print()
+        print("Done. Feeds synced to Keitaro (feed1+feed2+feed5).")
+    else:
+        print("Done. Both feeds synced to Keitaro.")
 
 
 if __name__ == "__main__":

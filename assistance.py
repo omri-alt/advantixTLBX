@@ -604,6 +604,72 @@ def set_flow_offers_weighted(
     return client.update_stream(stream_id, {"offers": offers})
 
 
+def _split_evenly_shares(pct: int, n: int) -> List[int]:
+    """Split ``pct`` integer share points across ``n`` offers (largest-remainder)."""
+    if n <= 0 or pct <= 0:
+        return [0] * n
+    base = pct // n
+    rem = pct - base * n
+    return [base + (1 if i < rem else 0) for i in range(n)]
+
+
+def set_flow_offers_multi_feed_split(
+    stream_id: int,
+    feed_buckets: List[Tuple[List[int], int]],
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Set a flow's offers so each non-empty feed bucket gets its share of traffic.
+
+    ``feed_buckets`` is a list of ``(offer_ids, target_pct)`` in display order.
+    Empty offer lists are skipped; remaining buckets are scaled so their target
+    percentages sum to 100. Per-feed offers split their bucket evenly.
+    """
+    active: List[Tuple[List[int], int]] = [
+        ([int(o) for o in ids], int(pct))
+        for ids, pct in feed_buckets
+        if ids
+    ]
+    if not active:
+        raise ValueError("No offers to attach")
+    if len(active) == 1:
+        return set_flow_offers(
+            stream_id, active[0][0], base_url=base_url, api_key=api_key
+        )
+    total_pct = sum(pct for _, pct in active)
+    if total_pct <= 0:
+        raise ValueError("feed bucket percentages must be positive")
+    scaled: List[Tuple[List[int], int]] = []
+    remainder = 100
+    for i, (ids, pct) in enumerate(active):
+        if i == len(active) - 1:
+            bucket = remainder
+        else:
+            bucket = int(round(100 * pct / total_pct))
+            remainder -= bucket
+        scaled.append((ids, max(0, bucket)))
+    fix = 100 - sum(b for _, b in scaled)
+    if fix and scaled:
+        ids0, b0 = scaled[0]
+        scaled[0] = (ids0, b0 + fix)
+
+    offers: List[Dict[str, Any]] = []
+    for ids, bucket in scaled:
+        if bucket <= 0:
+            continue
+        shares = _split_evenly_shares(bucket, len(ids))
+        offers.extend(
+            {"offer_id": int(oid), "state": "active", "share": s}
+            for oid, s in zip(ids, shares)
+        )
+    if not offers:
+        raise ValueError("No offers to attach")
+    client = KeitaroClient(base_url=base_url, api_key=api_key)
+    return client.update_stream(stream_id, {"offers": offers})
+
+
 def set_flow_offers_two_feed_split(
     stream_id: int,
     feed1_offer_ids: List[int],
@@ -619,51 +685,21 @@ def set_flow_offers_two_feed_split(
     to ``feed2_pct`` (must sum to 100). Offers within each feed split that feed's
     bucket as evenly as possible (largest-remainder on integer shares).
 
-    This is the Nipuhim-style 80/20 split. Unlike ``set_flow_offers_weighted``,
-    aggregate per-feed totals are exact regardless of how many offers each feed
-    contributes, so the split survives even with many offers per feed.
+    Nipuhim two-feed helper; see ``set_flow_offers_multi_feed_split`` for 3+ feeds.
     """
     if feed1_pct + feed2_pct != 100:
         raise ValueError(
             f"feed1_pct + feed2_pct must equal 100, got {feed1_pct}+{feed2_pct}"
         )
-    n1 = len(feed1_offer_ids)
-    n2 = len(feed2_offer_ids)
-    if n1 == 0 and n2 == 0:
-        raise ValueError("No offers to attach")
-
-    def _split_evenly(pct: int, n: int) -> List[int]:
-        if n <= 0 or pct <= 0:
-            return [0] * n
-        base = pct // n
-        rem = pct - base * n
-        # Distribute the remainder by giving 1 extra share to the first ``rem`` offers.
-        return [base + (1 if i < rem else 0) for i in range(n)]
-
-    if n1 == 0:
-        shares2 = _split_evenly(100, n2)
-        offers = [
-            {"offer_id": int(oid), "state": "active", "share": s}
-            for oid, s in zip(feed2_offer_ids, shares2)
-        ]
-    elif n2 == 0:
-        shares1 = _split_evenly(100, n1)
-        offers = [
-            {"offer_id": int(oid), "state": "active", "share": s}
-            for oid, s in zip(feed1_offer_ids, shares1)
-        ]
-    else:
-        shares1 = _split_evenly(feed1_pct, n1)
-        shares2 = _split_evenly(feed2_pct, n2)
-        offers = [
-            {"offer_id": int(oid), "state": "active", "share": s}
-            for oid, s in zip(feed1_offer_ids, shares1)
-        ] + [
-            {"offer_id": int(oid), "state": "active", "share": s}
-            for oid, s in zip(feed2_offer_ids, shares2)
-        ]
-    client = KeitaroClient(base_url=base_url, api_key=api_key)
-    return client.update_stream(stream_id, {"offers": offers})
+    return set_flow_offers_multi_feed_split(
+        stream_id,
+        [
+            (feed1_offer_ids, feed1_pct),
+            (feed2_offer_ids, feed2_pct),
+        ],
+        base_url=base_url,
+        api_key=api_key,
+    )
 
 
 def set_flow_offers_weighted_keep_zeros(

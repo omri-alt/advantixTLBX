@@ -10,7 +10,7 @@ pick merchants → generate PLA offers → combined sheet → sync Keitaro.
 2. Fetch Kelkoo reports (month-to-date or previous month on 1st); color fixim sheets.
 3. Choose top-N merchants per geo (CPC + leads rules in workflows.kelkoo_daily); default up to **3**
    merchants per geo with rank-weighted PLA interleave (use ``--single-merchant-per-geo`` for legacy single-merchant).
-4. Generate PLA offers → write YYYY-MM-DD_offers_1, _offers_2.
+4. Generate PLA offers → write YYYY-MM-DD_offers_1, _offers_2, and _offers_5 when FEED5_API_KEY is set.
 5. Create YYYY-MM-DD_offers_today (combined view with Feed column).
 6. Sync both feeds to Keitaro (unless --skip-keitaro or no offers).
 7. Blend: refresh potential → populate Blend → blend_sync_from_sheet (unless --skip-blend).
@@ -23,7 +23,7 @@ After PLA / Keitaro / Blend (or when skipped): **8)** late conversion sales — 
 compare month-to-date sales to Keitaro log, optional LateSale GETs (``--late-sales-apply``). Use ``--skip-late-sales``
 to bypass; ``--skip-sales-report`` skips sheet refresh only. Global ``--dry-run`` forces late-sales dry-run (no GETs).
 
-Requires .env: KEITARO_BASE_URL, KEITARO_API_KEY, FEED1_API_KEY, FEED2_API_KEY; credentials.json.
+Requires .env: KEITARO_BASE_URL, KEITARO_API_KEY, FEED1_API_KEY, FEED2_API_KEY; optional FEED5_API_KEY for feed5; credentials.json.
 Optional: ``BLEND_POTENTIAL_FEEDS`` (comma list, default ``kelkoo1,kelkoo2,kelkoo5``) for step 0b/7a; feeds without an API key are skipped.
 
   python run_daily_workflow.py
@@ -73,6 +73,7 @@ from config import (
     FEED2_API_KEY,
     FEED5_API_KEY,
     FEED2_MERCHANTS_GEOS,
+    FEED5_MERCHANTS_GEOS,
     KELKOO_SHEETS_SPREADSHEET_ID,
     YADORE_API_KEY,
 )
@@ -101,11 +102,24 @@ SPREADSHEET_ID = KELKOO_SHEETS_SPREADSHEET_ID
 # Keep in sync with ``generate_offers_rank_weighted_interleave`` default combined per-geo cap (60).
 KEITARO_SYNC_MAX_OFFERS_PER_GEO = 60
 
-_DAILY_SHEET_SUFFIXES = ("_fixim_1", "_fixim_2", "_offers_1", "_offers_2", "_offers_today")
+_DAILY_SHEET_SUFFIXES = (
+    "_fixim_1",
+    "_fixim_2",
+    "_fixim_5",
+    "_offers_1",
+    "_offers_2",
+    "_offers_5",
+    "_offers_today",
+)
 
-_MERCHANT_OVERRIDE_RE = re.compile(r"^([12]):([a-z]{2})=(.+)$", re.I)
-_MERCHANT_AUTO_OVERRIDE_RE = re.compile(r"^([12]):([a-z]{2})(?::(\d+))?$", re.I)
-_MERCHANT_SKIP_REPLACE_RE = re.compile(r"^([12]):([a-z]{2}):(\d+)=(\d+)$", re.I)
+
+def nipuhim_feed5_enabled() -> bool:
+    return bool((FEED5_API_KEY or "").strip())
+
+
+_MERCHANT_OVERRIDE_RE = re.compile(r"^([125]):([a-z]{2})=(.+)$", re.I)
+_MERCHANT_AUTO_OVERRIDE_RE = re.compile(r"^([125]):([a-z]{2})(?::(\d+))?$", re.I)
+_MERCHANT_SKIP_REPLACE_RE = re.compile(r"^([125]):([a-z]{2}):(\d+)=(\d+)$", re.I)
 
 
 def _parse_geo_list_csv(s: str) -> Set[str]:
@@ -141,7 +155,7 @@ def _collect_merchant_overrides(
     argv: List[str],
 ) -> Tuple[Dict[int, Dict[str, List[str]]], Set[str]]:
     """Returns (feed -> geo -> merchant ids) and implied geos from overrides."""
-    out: Dict[int, Dict[str, List[str]]] = {1: {}, 2: {}}
+    out: Dict[int, Dict[str, List[str]]] = {1: {}, 2: {}, 5: {}}
     implied_geos: Set[str] = set()
     i = 0
     while i < len(argv):
@@ -193,7 +207,7 @@ def _parse_merchant_skip_replace_arg(spec: str) -> Optional[Tuple[int, str, str,
 
 def _collect_merchant_skip_replaces(argv: List[str]) -> Dict[int, List[Tuple[str, str, str]]]:
     """feed -> list of (geo, old_merchant_id, new_merchant_id), in argv order."""
-    out: Dict[int, List[Tuple[str, str, str]]] = {1: [], 2: []}
+    out: Dict[int, List[Tuple[str, str, str]]] = {1: [], 2: [], 5: []}
     i = 0
     while i < len(argv):
         if argv[i] == "--merchant-skip-replace" and i + 1 < len(argv):
@@ -211,7 +225,7 @@ def _collect_merchant_auto_overrides(
     argv: List[str],
 ) -> Tuple[Dict[int, Dict[str, int]], Set[str]]:
     """Returns (feed -> geo -> rank) and implied geos from auto-overrides."""
-    out: Dict[int, Dict[str, int]] = {1: {}, 2: {}}
+    out: Dict[int, Dict[str, int]] = {1: {}, 2: {}, 5: {}}
     implied_geos: Set[str] = set()
     i = 0
     while i < len(argv):
@@ -481,31 +495,35 @@ def read_sheet_values(service, sheet_name: str, range_a1: str = "A:H"):
 def create_combined_offers_sheet(service, date_str: str) -> bool:
     sheet1_name = f"{date_str}_offers_1"
     sheet2_name = f"{date_str}_offers_2"
+    sheet5_name = f"{date_str}_offers_5"
     combined_name = f"{date_str}_offers_today"
 
     rows1 = read_sheet_values(service, sheet1_name)
     rows2 = read_sheet_values(service, sheet2_name)
+    rows5 = read_sheet_values(service, sheet5_name) if nipuhim_feed5_enabled() else None
 
-    if not rows1 and not rows2:
+    if not rows1 and not rows2 and not rows5:
         return False
 
     header_with_feed = ["Feed", "Country", "Merchant ID", "Product Title", "Store Link", "Audit Status", "Timestamp"]
     combined_rows: list[list] = []
-    if rows1:
-        for i, row in enumerate(rows1):
+
+    def _append_feed_rows(feed_label: str, rows: list | None) -> None:
+        if not rows:
+            return
+        for i, row in enumerate(rows):
             if i == 0:
-                combined_rows.append(header_with_feed)
-            else:
-                cells = (row + [""] * 6)[:6]
-                combined_rows.append(["1"] + cells)
-    if rows2:
-        for i, row in enumerate(rows2):
-            if i == 0 and not combined_rows:
-                combined_rows.append(header_with_feed)
-            if i == 0:
+                if not combined_rows:
+                    combined_rows.append(header_with_feed)
                 continue
+            if not combined_rows:
+                combined_rows.append(header_with_feed)
             cells = (row + [""] * 6)[:6]
-            combined_rows.append(["2"] + cells)
+            combined_rows.append([feed_label] + cells)
+
+    _append_feed_rows("1", rows1)
+    _append_feed_rows("2", rows2)
+    _append_feed_rows("5", rows5)
 
     if not combined_rows:
         return False
@@ -542,6 +560,8 @@ def run_update_offers_from_sheet(
     cmd = [sys.executable, str(script), "--sheet", sheet_name]
     if account == 2:
         cmd.extend(["--account", "2"])
+    elif account == 5:
+        cmd.extend(["--account", "5"])
     merged = list(extra_args or [])
     if "--max-offers" not in merged:
         merged.extend(["--max-offers", str(KEITARO_SYNC_MAX_OFFERS_PER_GEO)])
@@ -714,10 +734,13 @@ def run_pla_offers_keitaro_blend_tail(
     date_str: str,
     merchants1: list,
     merchants2: list,
+    merchants5: list | None = None,
     perf1: dict,
     perf2: dict,
+    perf5: dict | None = None,
     fixim_1: str,
     fixim_2: str,
+    fixim_5: str | None = None,
     merchants_per_geo: int,
     partial_geos: frozenset[str],
     merchant_overrides: Dict[int, Dict[str, List[str]]],
@@ -737,6 +760,9 @@ def run_pla_offers_keitaro_blend_tail(
     """Steps 3–6 (optional 4b) and optional 7: merchant selection → PLA → Keitaro → Blend."""
     offers_1 = f"{date_str}_offers_1"
     offers_2 = f"{date_str}_offers_2"
+    offers_5 = f"{date_str}_offers_5"
+    fixim_5_tab = fixim_5 or f"{date_str}_fixim_5"
+    use_feed5 = nipuhim_feed5_enabled()
 
     base_top_n = max(1, int(merchants_per_geo))
     max_auto_rank = 1
@@ -759,6 +785,15 @@ def run_pla_offers_keitaro_blend_tail(
     ranked2 = get_top_merchants_per_geo(
         service, SPREADSHEET_ID, fixim_2, perf2, top_n=rank_depth
     )
+    ranked5: dict = {}
+    if use_feed5:
+        ranked5 = get_top_merchants_per_geo(
+            service,
+            SPREADSHEET_ID,
+            fixim_5_tab,
+            perf5 or {},
+            top_n=rank_depth,
+        )
     chosen1 = {geo: mids[:base_top_n] for geo, mids in ranked1.items()}
     chosen2 = {geo: mids[:base_top_n] for geo, mids in ranked2.items()}
     chosen1 = _apply_platform_auto_overrides_to_chosen(
@@ -777,11 +812,26 @@ def run_pla_offers_keitaro_blend_tail(
     chosen2 = _apply_merchant_overrides_to_chosen(chosen2, 2, merchant_overrides)
     chosen1 = _apply_merchant_skip_replaces(chosen1, 1, merchant_skip_replaces)
     chosen2 = _apply_merchant_skip_replaces(chosen2, 2, merchant_skip_replaces)
+    chosen5: dict = {}
+    if use_feed5:
+        chosen5 = {geo: mids[:base_top_n] for geo, mids in ranked5.items()}
+        chosen5 = _apply_platform_auto_overrides_to_chosen(
+            chosen5,
+            ranked_per_geo=ranked5,
+            feed_num=5,
+            merchant_auto_overrides=merchant_auto_overrides,
+        )
+        chosen5 = _apply_merchant_overrides_to_chosen(chosen5, 5, merchant_overrides)
+        chosen5 = _apply_merchant_skip_replaces(chosen5, 5, merchant_skip_replaces)
     if partial_geos:
         chosen1 = {k: v for k, v in chosen1.items() if k in partial_geos}
         chosen2 = {k: v for k, v in chosen2.items() if k in partial_geos}
+        if use_feed5:
+            chosen5 = {k: v for k, v in chosen5.items() if k in partial_geos}
     print(f"   Feed1: {len(chosen1)} geos")
     print(f"   Feed2: {len(chosen2)} geos")
+    if use_feed5:
+        print(f"   Feed5: {len(chosen5)} geos")
     print("   Merchant selection detail (ranked list length vs chosen count per geo):")
     for label, ranked, chosen in (
         ("Feed1", ranked1, chosen1),
@@ -794,7 +844,10 @@ def run_pla_offers_keitaro_blend_tail(
                 f"   {label} geo={g}: ranked_merchants={len(rlist)} chosen_merchants={len(clist)} "
                 f"ids={clist!r} top_of_ranking={rlist[: max(5, len(clist))]!r}"
             )
-    for label, ch in (("Feed1", chosen1), ("Feed2", chosen2)):
+    feed_labels = [("Feed1", chosen1), ("Feed2", chosen2)]
+    if use_feed5:
+        feed_labels.append(("Feed5", chosen5))
+    for label, ch in feed_labels:
         if "it" in ch:
             print(f"   {label} Italy: PLA will use merchant id(s) {ch['it']!r} (country=it)")
         else:
@@ -813,18 +866,33 @@ def run_pla_offers_keitaro_blend_tail(
     rows2_new = generate_offers_rank_weighted_interleave(
         FEED2_API_KEY, chosen2, pla_id_alternates=pla_alt2
     )
+    rows5: list = []
+    rows5_new: list = []
+    if use_feed5:
+        pla_alt5 = build_pla_id_alternates_for_feed(merchants5 or [])
+        rows5_new = generate_offers_rank_weighted_interleave(
+            FEED5_API_KEY, chosen5, pla_id_alternates=pla_alt5
+        )
 
     if merge_offers_tabs and partial_geos:
         existing1 = read_offers_sheet_rows(service, SPREADSHEET_ID, offers_1)
         existing2 = read_offers_sheet_rows(service, SPREADSHEET_ID, offers_2)
         rows1 = merge_offers_replace_geos(existing1, rows1_new, set(partial_geos))
         rows2 = merge_offers_replace_geos(existing2, rows2_new, set(partial_geos))
+        if use_feed5:
+            existing5 = read_offers_sheet_rows(service, SPREADSHEET_ID, offers_5)
+            rows5 = merge_offers_replace_geos(existing5, rows5_new, set(partial_geos))
+        else:
+            rows5 = rows5_new
     else:
         rows1 = rows1_new
         rows2 = rows2_new
+        rows5 = rows5_new
 
     _log_pla_merchant_distribution("feed1 (final rows before sheet + Keitaro)", rows1)
     _log_pla_merchant_distribution("feed2 (final rows before sheet + Keitaro)", rows2)
+    if use_feed5:
+        _log_pla_merchant_distribution("feed5 (final rows before sheet + Keitaro)", rows5)
 
     write_offers_sheet(service, SPREADSHEET_ID, offers_1, rows1)
     it1 = sum(1 for r in rows1 if str(r.get("Country", "")).strip().upper() == "IT")
@@ -832,6 +900,10 @@ def run_pla_offers_keitaro_blend_tail(
     write_offers_sheet(service, SPREADSHEET_ID, offers_2, rows2)
     it2 = sum(1 for r in rows2 if str(r.get("Country", "")).strip().upper() == "IT")
     print(f"   {offers_2}: {len(rows2)} offers ({it2} for IT)")
+    if use_feed5:
+        write_offers_sheet(service, SPREADSHEET_ID, offers_5, rows5)
+        it5 = sum(1 for r in rows5 if str(r.get("Country", "")).strip().upper() == "IT")
+        print(f"   {offers_5}: {len(rows5)} offers ({it5} for IT)")
     print()
 
     if run_monthly_log_today:
@@ -853,6 +925,15 @@ def run_pla_offers_keitaro_blend_tail(
                 api_key=FEED2_API_KEY,
                 check_monetization=False,
             )
+            if use_feed5:
+                upsert_run_merchants_into_monthly_log(
+                    service,
+                    SPREADSHEET_ID,
+                    date_str,
+                    5,
+                    api_key=FEED5_API_KEY,
+                    check_monetization=False,
+                )
             print("   Done.")
         except Exception as e:
             print(f"   Monthly log upsert (today) skipped: {e}")
@@ -882,9 +963,9 @@ def run_pla_offers_keitaro_blend_tail(
             run_optional_daily_conversion_postbacks(postback_report_date)
         return
 
-    if not rows1 and not rows2:
+    if not rows1 and not rows2 and (not use_feed5 or not rows5):
         print("6. Syncing to Keitaro ...")
-        print("   No offers generated for either feed today; skipping Keitaro sync.")
+        print("   No offers generated for any feed today; skipping Keitaro sync.")
         print()
         if run_blend_steps:
             run_blend_daily_steps(
@@ -930,6 +1011,15 @@ def run_pla_offers_keitaro_blend_tail(
     elif not run_update_offers_from_sheet(offers_2, 2):
         print("   Feed2 sync failed.")
         sys.exit(1)
+
+    if use_feed5:
+        print("   Syncing feed5 to Keitaro ...")
+        if not rows5:
+            print("   No feed5 offers generated; skipping feed5 sync.")
+        elif not run_update_offers_from_sheet(offers_5, 5):
+            print("   Feed5 sync failed.")
+            sys.exit(1)
+
     print()
     if run_blend_steps:
         run_blend_daily_steps(
@@ -938,7 +1028,8 @@ def run_pla_offers_keitaro_blend_tail(
             skip_blend_sync=skip_blend_sync,
             skip_blend_prune=skip_blend_prune,
         )
-    print("Done. Both feeds synced to Keitaro.")
+    done_msg = "Done. Feeds synced to Keitaro (feed1+feed2+feed5)." if use_feed5 else "Done. Both feeds synced to Keitaro."
+    print(done_msg)
     if run_daily_conversion_postbacks:
         run_optional_daily_conversion_postbacks(postback_report_date)
 
@@ -1016,6 +1107,8 @@ def main() -> None:
 
     fixim_1 = f"{date_str}_fixim_1"
     fixim_2 = f"{date_str}_fixim_2"
+    fixim_5 = f"{date_str}_fixim_5"
+    use_feed5 = nipuhim_feed5_enabled()
 
     if offers_and_keitaro_only:
         print(
@@ -1032,11 +1125,20 @@ def main() -> None:
             static_only=static_only,
         )
         print(f"   feed2 merchant objects: {len(merchants2)}")
+        merchants5: list = []
+        if use_feed5:
+            merchants5 = download_merchants_feed(
+                FEED5_API_KEY,
+                list(FEED5_MERCHANTS_GEOS) if FEED5_MERCHANTS_GEOS else None,
+                static_only=static_only,
+            )
+            print(f"   feed5 merchant objects: {len(merchants5)}")
         print()
 
         print("2. Fetching Kelkoo reports and coloring fixim sheets ...")
         perf1: dict = {}
         perf2: dict = {}
+        perf5: dict = {}
         try:
             perf1 = fetch_reports(FEED1_API_KEY, start_str, end_str)
             apply_fixim_colors(service, SPREADSHEET_ID, fixim_1, perf1)
@@ -1049,6 +1151,13 @@ def main() -> None:
             print(f"   {fixim_2}: colored by performance ({len(perf2)} merchants in report)")
         except Exception as e:
             print(f"   Feed2 reports/color: {e}")
+        if use_feed5:
+            try:
+                perf5 = fetch_reports(FEED5_API_KEY, start_str, end_str)
+                apply_fixim_colors(service, SPREADSHEET_ID, fixim_5, perf5)
+                print(f"   {fixim_5}: colored by performance ({len(perf5)} merchants in report)")
+            except Exception as e:
+                print(f"   Feed5 reports/color: {e}")
         print()
 
         run_pla_offers_keitaro_blend_tail(
@@ -1056,10 +1165,13 @@ def main() -> None:
             date_str=date_str,
             merchants1=merchants1,
             merchants2=merchants2,
+            merchants5=merchants5 if use_feed5 else None,
             perf1=perf1,
             perf2=perf2,
+            perf5=perf5 if use_feed5 else None,
             fixim_1=fixim_1,
             fixim_2=fixim_2,
+            fixim_5=fixim_5 if use_feed5 else None,
             merchants_per_geo=merchants_per_geo,
             partial_geos=partial_geos,
             merchant_overrides=merchant_overrides,
@@ -1087,8 +1199,17 @@ def main() -> None:
         n2 = upsert_yesterday_merchants_into_monthly_log(
             service, SPREADSHEET_ID, yesterday_str, 2, FEED2_API_KEY
         )
-        print(f"   Kelkoo link checks: feed1={n1}, feed2={n2} (yesterday={yesterday_str})")
-        if n1 == 0 and n2 == 0:
+        n5 = 0
+        if use_feed5:
+            n5 = upsert_yesterday_merchants_into_monthly_log(
+                service, SPREADSHEET_ID, yesterday_str, 5, FEED5_API_KEY
+            )
+        print(
+            f"   Kelkoo link checks: feed1={n1}, feed2={n2}"
+            + (f", feed5={n5}" if use_feed5 else "")
+            + f" (yesterday={yesterday_str})"
+        )
+        if n1 == 0 and n2 == 0 and (not use_feed5 or n5 == 0):
             print("   Note: no rows imported from yesterday offers sheets (or sheets were missing).")
     except Exception as e:
         print(f"   Monthly log monetization skipped: {e}")
@@ -1133,11 +1254,22 @@ def main() -> None:
     )
     write_fixim_sheet(service, SPREADSHEET_ID, fixim_2, merchants2)
     print(f"   {fixim_2}: {len(merchants2)} merchants")
+    merchants5: list = []
+    if use_feed5:
+        print("   Downloading merchants feed (feed5) ...")
+        merchants5 = download_merchants_feed(
+            FEED5_API_KEY,
+            list(FEED5_MERCHANTS_GEOS) if FEED5_MERCHANTS_GEOS else None,
+            static_only=static_only,
+        )
+        write_fixim_sheet(service, SPREADSHEET_ID, fixim_5, merchants5)
+        print(f"   {fixim_5}: {len(merchants5)} merchants")
     print()
 
     print("2. Fetching Kelkoo reports and coloring fixim sheets ...")
     perf1: dict = {}
     perf2: dict = {}
+    perf5: dict = {}
     try:
         perf1 = fetch_reports(FEED1_API_KEY, start_str, end_str)
         apply_fixim_colors(service, SPREADSHEET_ID, fixim_1, perf1)
@@ -1150,6 +1282,13 @@ def main() -> None:
         print(f"   {fixim_2}: colored by performance ({len(perf2)} merchants in report)")
     except Exception as e:
         print(f"   Feed2 reports/color: {e}")
+    if use_feed5:
+        try:
+            perf5 = fetch_reports(FEED5_API_KEY, start_str, end_str)
+            apply_fixim_colors(service, SPREADSHEET_ID, fixim_5, perf5)
+            print(f"   {fixim_5}: colored by performance ({len(perf5)} merchants in report)")
+        except Exception as e:
+            print(f"   Feed5 reports/color: {e}")
     print()
 
     run_pla_offers_keitaro_blend_tail(
@@ -1157,10 +1296,13 @@ def main() -> None:
         date_str=date_str,
         merchants1=merchants1,
         merchants2=merchants2,
+        merchants5=merchants5 if use_feed5 else None,
         perf1=perf1,
         perf2=perf2,
+        perf5=perf5 if use_feed5 else None,
         fixim_1=fixim_1,
         fixim_2=fixim_2,
+        fixim_5=fixim_5 if use_feed5 else None,
         merchants_per_geo=merchants_per_geo,
         partial_geos=partial_geos,
         merchant_overrides=merchant_overrides,

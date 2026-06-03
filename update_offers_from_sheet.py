@@ -13,8 +13,9 @@ Sequence:
 
 Traffic split (Nipuhim):
   - ``--traffic-feed1-only`` / ``--traffic-feed2-only``: single-feed flows, equal share within the feed.
-  - default ("both"): feed1 offers aggregate to ``FEED1_TRAFFIC_PCT`` (80%) of the flow's traffic and
-    feed2 offers aggregate to ``FEED2_TRAFFIC_PCT`` (20%); each feed's offers split their bucket equally.
+  - default ("both"): feed1/feed2/feed5 offers aggregate to ``FEED1_TRAFFIC_PCT`` / ``FEED2_TRAFFIC_PCT`` /
+    ``FEED5_TRAFFIC_PCT`` (default 65% / 25% / 10%); each feed's offers split their bucket equally.
+    Three-way split applies on geos present in today's ``_offers_1``, ``_offers_2``, and ``_offers_5`` tabs.
 
   python update_offers_from_sheet.py
   python update_offers_from_sheet.py --sheet "2026-03-10_offers"
@@ -24,6 +25,7 @@ Traffic split (Nipuhim):
 Requires credentials.json in project root (Google service account). Share the sheet with
 the service account email (see credentials.json client_email).
 """
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +42,7 @@ from config import (
     KELKOO_ACCOUNT_ID,
     KELKOO_ACCOUNT_ID_2,
     FEED1_KELKOO_ACCOUNT_ID,
+    FEED5_KELKOO_ACCOUNT_ID,
 )
 from assistance import (
     add_country_flow,
@@ -50,7 +53,7 @@ from assistance import (
     update_offer_action_payload,
     create_next_geo_offers,
     set_flow_offers,
-    set_flow_offers_two_feed_split,
+    set_flow_offers_multi_feed_split,
     flow_name_to_geo,
     get_campaign_streams_by_alias,
     remove_offer_best_effort,
@@ -63,18 +66,35 @@ SPREADSHEET_ID = "1XUkQoWqnNRqaSEnFVRAV36-oi9ENrNWtH5Ct8M4vNuU"
 DEFAULT_SHEET_NAME = "2026-03-09_offers"
 MAX_OFFERS_PER_GEO = 10
 
-# Nipuhim 'both' mode traffic split (feed1 dominant). Sum must equal 100.
-# When traffic_mode == "both", flow offers are attached with weighted shares
-# such that all feed1 offers together get FEED1_TRAFFIC_PCT% of traffic and
-# all feed2 offers together get FEED2_TRAFFIC_PCT%. Per-feed offers split
-# their feed's bucket equally.
-FEED1_TRAFFIC_PCT = 80
-FEED2_TRAFFIC_PCT = 20
+# Nipuhim 'both' mode traffic split. Sum must equal 100.
+FEED1_TRAFFIC_PCT = 65
+FEED2_TRAFFIC_PCT = 25
+FEED5_TRAFFIC_PCT = 10
+_OFFERS_SHEET_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_offers_([125])$")
 COL_COUNTRY = 0   # A
 COL_STORE_LINK = 3  # D
 # Columns we write back: G = live, H = offerUpload timestamp
 COL_LIVE = 6              # G (0-based index)
 COL_UPLOAD_TIMESTAMP = 7  # H (0-based index)
+
+
+def _offers_date_from_sheet(sheet_name: str) -> str | None:
+    m = _OFFERS_SHEET_DATE_RE.match((sheet_name or "").strip())
+    return m.group(1) if m else None
+
+
+def _daily_offers_sheet_names(date_str: str) -> list[str]:
+    return [f"{date_str}_offers_1", f"{date_str}_offers_2", f"{date_str}_offers_5"]
+
+
+def _traffic_split_summary(ids1: list, ids2: list, ids5: list | None = None) -> str:
+    parts = [
+        f"feed1={len(ids1)} @ {FEED1_TRAFFIC_PCT}%",
+        f"feed2={len(ids2)} @ {FEED2_TRAFFIC_PCT}%",
+    ]
+    if ids5 is not None:
+        parts.append(f"feed5={len(ids5)} @ {FEED5_TRAFFIC_PCT}%")
+    return " / ".join(parts)
 
 
 def get_credentials_path():
@@ -189,9 +209,16 @@ def main():
             continue
         i += 1
 
-    feed_prefix = "feed2" if account == 2 else "feed1"
-    feed = account
-    kelkoo_account_id = (FEED1_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID) if account == 1 else (KELKOO_ACCOUNT_ID_2 or None)
+    if account == 2:
+        feed_prefix = "feed2"
+        kelkoo_account_id = KELKOO_ACCOUNT_ID_2 or None
+    elif account == 5:
+        feed_prefix = "feed5"
+        kelkoo_account_id = FEED5_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID
+    else:
+        feed_prefix = "feed1"
+        kelkoo_account_id = FEED1_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID
+    feed = 1 if account == 5 else account
 
     print(f"Reading sheet: {sheet_name} (spreadsheet {SPREADSHEET_ID})")
     print(f"Max offers per geo: {max_offers}, feed: {feed_prefix} (account {account})")
@@ -208,83 +235,76 @@ def main():
         print("No data found in sheet (columns A = country, D = Store Link).")
         sys.exit(0)
 
-    def _paired_sheet_name_for_split(current_sheet: str) -> str:
-        """
-        Best-effort mirror tab name for the other feed on the same date.
-        Examples:
-          2026-05-06_offers_1 <-> 2026-05-06_offers_2
-          2026-05-06_offers_2 <-> 2026-05-06_offers_1
-        """
-        s = (current_sheet or "").strip()
-        if s.endswith("_offers_1"):
-            return s[:-1] + "2"
-        if s.endswith("_offers_2"):
-            return s[:-1] + "1"
-        return ""
-
-    # In "both" mode, only split traffic on geos that are present on BOTH feeds today.
-    # This prevents stale historic offers from the other feed from stealing 20% traffic
-    # on geos where today's run produced rows for one feed only.
-    split_geos_both: set[str] = set()
+    # In "both" mode, only split traffic on geos present on all today's Nipuhim offer tabs.
+    split_geos_all: set[str] = set()
+    split_geos_pair: set[str] = set()
     if traffic_mode == "both":
-        peer_sheet = _paired_sheet_name_for_split(sheet_name)
-        if peer_sheet:
-            try:
-                peer_by_geo, _ = read_sheet_today_offers(peer_sheet, max_per_geo=max_offers)
-                split_geos_both = {g.lower()[:2] for g in peer_by_geo.keys() if len((g or "").strip()) >= 2}
-            except Exception as e:
-                print(f"Warning: could not read paired offers sheet {peer_sheet!r} for split geos: {e}")
-                split_geos_both = set()
+        date_key = _offers_date_from_sheet(sheet_name)
+        if date_key:
+            geos_per_sheet: list[set[str]] = []
+            for tab in _daily_offers_sheet_names(date_key):
+                try:
+                    tab_by_geo, _ = read_sheet_today_offers(tab, max_per_geo=max_offers)
+                    geos_per_sheet.append(
+                        {
+                            (g or "").strip().lower()[:2]
+                            for g in tab_by_geo.keys()
+                            if len((g or "").strip()) >= 2
+                        }
+                    )
+                except Exception as e:
+                    print(f"Warning: could not read offers sheet {tab!r} for split geos: {e}")
+                    geos_per_sheet.append(set())
+            if len(geos_per_sheet) >= 2 and geos_per_sheet[0] and geos_per_sheet[1]:
+                split_geos_pair = geos_per_sheet[0] & geos_per_sheet[1]
+            if len(geos_per_sheet) >= 3 and all(geos_per_sheet[:3]):
+                split_geos_all = geos_per_sheet[0] & geos_per_sheet[1] & geos_per_sheet[2]
         else:
             print(
-                "Warning: could not infer paired offers sheet name for feed split; "
-                "defaulting to feed-only routing on geos without explicit peer rows."
+                "Warning: could not infer dated offers tabs for feed split; "
+                "defaulting to feed-only routing on geos without multi-tab rows."
             )
 
     print(f"Geos in sheet: {list(by_geo.keys())}")
     if traffic_mode == "both":
-        if split_geos_both:
-            print(f"Both-feed split geos from paired sheet: {sorted(split_geos_both)}")
+        if split_geos_all:
+            print(f"Three-feed split geos (offers_1+_2+_5): {sorted(split_geos_all)}")
+        elif split_geos_pair:
+            print(f"Two-feed split geos (offers_1+_2): {sorted(split_geos_pair)}")
         else:
-            print("Both-feed split geos from paired sheet: none (single-feed routing for all geos in this run)")
+            print("Multi-feed split geos: none (single-feed routing for geos in this run)")
     print()
 
     def feed_offer_ids_for_geo(geo: str):
-        """Return (feed1_ids, feed2_ids) for this geo, filtered by traffic_mode.
-        For modes that exclude a feed, that feed's list comes back empty.
-        """
+        """Return (feed1_ids, feed2_ids, feed5_ids) for this geo."""
         o1 = get_geo_offers_sorted(geo, feed_prefix="feed1")
         o2 = get_geo_offers_sorted(geo, feed_prefix="feed2")
+        o5 = get_geo_offers_sorted(geo, feed_prefix="feed5")
         ids1 = [int(o["id"]) for o in o1]
         ids2 = [int(o["id"]) for o in o2]
+        ids5 = [int(o["id"]) for o in o5]
         if traffic_mode == "feed1-only":
-            return ids1, []
+            return ids1, [], []
         if traffic_mode == "feed2-only":
-            return [], ids2
-        # "both": only split where the paired sheet has this geo in today's rows.
+            return [], ids2, []
         g = (geo or "").strip().lower()[:2]
-        if g not in split_geos_both:
-            if account == 1:
-                return ids1, []
-            return [], ids2
-        return ids1, ids2
+        if g in split_geos_all:
+            return ids1, ids2, ids5
+        if g in split_geos_pair:
+            return ids1, ids2, []
+        if account == 1:
+            return ids1, [], []
+        if account == 2:
+            return [], ids2, []
+        return [], [], ids5
 
     def flow_offer_ids_for_geo(geo: str):
-        """Combined offer ID list for this geo (feed1 first, then feed2).
-        Used for new-flow creation where exact share is not yet meaningful.
-        """
-        ids1, ids2 = feed_offer_ids_for_geo(geo)
-        return ids1 + ids2
+        ids1, ids2, ids5 = feed_offer_ids_for_geo(geo)
+        return ids1 + ids2 + ids5
 
-    def apply_flow_offers(stream_id: int, feed1_ids, feed2_ids) -> None:
-        """Attach feed1+feed2 offers to a flow with the right weighting.
-
-        - "feed1-only" / "feed2-only": equal share among the single feed's offers.
-        - "both": weighted shares so feed1 aggregate = FEED1_TRAFFIC_PCT,
-          feed2 aggregate = FEED2_TRAFFIC_PCT. Per-feed offers split their
-          feed's bucket equally.
-        """
-        n1, n2 = len(feed1_ids), len(feed2_ids)
+    def apply_flow_offers(stream_id: int, feed1_ids, feed2_ids, feed5_ids=None) -> None:
+        feed5_ids = feed5_ids or []
+        n1, n2, n5 = len(feed1_ids), len(feed2_ids), len(feed5_ids)
         if traffic_mode == "feed1-only":
             if n1:
                 set_flow_offers(stream_id, feed1_ids)
@@ -293,24 +313,16 @@ def main():
             if n2:
                 set_flow_offers(stream_id, feed2_ids)
             return
-        # "both": fall back to equal share if one feed is empty (no 80/20 to apply).
-        if n1 == 0 and n2 == 0:
+        if n1 == 0 and n2 == 0 and n5 == 0:
             return
-        if n1 == 0:
-            set_flow_offers(stream_id, feed2_ids)
-            return
-        if n2 == 0:
-            set_flow_offers(stream_id, feed1_ids)
-            return
-        # Use a per-feed bucket split so aggregate feed1=80% / feed2=20% holds
-        # exactly, regardless of how many offers each feed contributes.
-        set_flow_offers_two_feed_split(
-            stream_id,
-            [int(o) for o in feed1_ids],
-            [int(o) for o in feed2_ids],
-            FEED1_TRAFFIC_PCT,
-            FEED2_TRAFFIC_PCT,
-        )
+        buckets = []
+        if n1:
+            buckets.append((feed1_ids, FEED1_TRAFFIC_PCT))
+        if n2:
+            buckets.append((feed2_ids, FEED2_TRAFFIC_PCT))
+        if n5:
+            buckets.append((feed5_ids, FEED5_TRAFFIC_PCT))
+        set_flow_offers_multi_feed_split(stream_id, buckets)
 
     # Resolve flows by geo so we can attach new offers when we create them
     campaign_alias = KEITARO_CAMPAIGN_ALIAS or "HrQBXp"
@@ -381,15 +393,13 @@ def main():
                 offers = get_geo_offers_sorted(geo, feed_prefix=feed_prefix)
                 stream = stream_by_geo.get(geo)
                 if stream:
-                    # Set flow to feed1 / feed2 offers for this geo per traffic_mode.
-                    # In "both" mode this applies the FEED1/FEED2 80/20 weighted split.
-                    ids1, ids2 = feed_offer_ids_for_geo(geo)
-                    apply_flow_offers(int(stream["id"]), ids1, ids2)
-                    total = len(ids1) + len(ids2)
+                    ids1, ids2, ids5 = feed_offer_ids_for_geo(geo)
+                    apply_flow_offers(int(stream["id"]), ids1, ids2, ids5)
+                    total = len(ids1) + len(ids2) + len(ids5)
                     if traffic_mode == "both":
                         print(
                             f"  {geo}: flow id={stream['id']} now has {total} offers "
-                            f"(feed1={len(ids1)} @ {FEED1_TRAFFIC_PCT}% / feed2={len(ids2)} @ {FEED2_TRAFFIC_PCT}%)"
+                            f"({_traffic_split_summary(ids1, ids2, ids5)})"
                         )
                     else:
                         print(f"  {geo}: flow id={stream['id']} now has {total} offers ({traffic_mode})")
@@ -397,14 +407,14 @@ def main():
                     ensure_country_stream(geo)
                     stream = stream_by_geo.get(geo)
                     if stream:
-                        ids1, ids2 = feed_offer_ids_for_geo(geo)
-                        if ids1 or ids2:
-                            apply_flow_offers(int(stream["id"]), ids1, ids2)
-                            total = len(ids1) + len(ids2)
+                        ids1, ids2, ids5 = feed_offer_ids_for_geo(geo)
+                        if ids1 or ids2 or ids5:
+                            apply_flow_offers(int(stream["id"]), ids1, ids2, ids5)
+                            total = len(ids1) + len(ids2) + len(ids5)
                             if traffic_mode == "both":
                                 print(
                                     f"  {geo}: flow id={stream['id']} now has {total} offers "
-                                    f"(feed1={len(ids1)} @ {FEED1_TRAFFIC_PCT}% / feed2={len(ids2)} @ {FEED2_TRAFFIC_PCT}%)"
+                                    f"({_traffic_split_summary(ids1, ids2, ids5)})"
                                 )
                             else:
                                 print(
@@ -429,24 +439,48 @@ def main():
                     keep_ids = [int(o["id"]) for o in keep_offers]
                     if traffic_mode == "both":
                         if feed_prefix == "feed1":
-                            other = get_geo_offers_sorted(geo, feed_prefix="feed2")
                             ids1 = keep_ids
-                            ids2 = [int(o["id"]) for o in other]
-                        else:
-                            other = get_geo_offers_sorted(geo, feed_prefix="feed1")
-                            ids1 = [int(o["id"]) for o in other]
+                            ids2 = [
+                                int(o["id"])
+                                for o in get_geo_offers_sorted(geo, feed_prefix="feed2")
+                            ]
+                            ids5 = [
+                                int(o["id"])
+                                for o in get_geo_offers_sorted(geo, feed_prefix="feed5")
+                            ]
+                        elif feed_prefix == "feed2":
+                            ids1 = [
+                                int(o["id"])
+                                for o in get_geo_offers_sorted(geo, feed_prefix="feed1")
+                            ]
                             ids2 = keep_ids
-                        apply_flow_offers(int(stream["id"]), ids1, ids2)
-                        total = len(ids1) + len(ids2)
+                            ids5 = [
+                                int(o["id"])
+                                for o in get_geo_offers_sorted(geo, feed_prefix="feed5")
+                            ]
+                        else:
+                            ids1 = [
+                                int(o["id"])
+                                for o in get_geo_offers_sorted(geo, feed_prefix="feed1")
+                            ]
+                            ids2 = [
+                                int(o["id"])
+                                for o in get_geo_offers_sorted(geo, feed_prefix="feed2")
+                            ]
+                            ids5 = keep_ids
+                        apply_flow_offers(int(stream["id"]), ids1, ids2, ids5)
+                        total = len(ids1) + len(ids2) + len(ids5)
                         print(
                             f"  {geo}: flow id={stream['id']} now has {total} offers "
-                            f"(feed1={len(ids1)} @ {FEED1_TRAFFIC_PCT}% / feed2={len(ids2)} @ {FEED2_TRAFFIC_PCT}%)"
+                            f"({_traffic_split_summary(ids1, ids2, ids5)})"
                         )
                     else:
                         if feed_prefix == "feed1":
-                            apply_flow_offers(int(stream["id"]), keep_ids, [])
+                            apply_flow_offers(int(stream["id"]), keep_ids, [], [])
+                        elif feed_prefix == "feed2":
+                            apply_flow_offers(int(stream["id"]), [], keep_ids, [])
                         else:
-                            apply_flow_offers(int(stream["id"]), [], keep_ids)
+                            apply_flow_offers(int(stream["id"]), [], [], keep_ids)
                         print(f"  {geo}: flow id={stream['id']} now has {len(keep_ids)} offers")
                 for offer in remove_offers:
                     oid = int(offer["id"])
@@ -464,13 +498,11 @@ def main():
                 sys.exit(1)
             offers = keep_offers
         ensure_country_stream(geo)
-        # Ensure flow has the requested offer set for this geo, with the
-        # configured traffic_mode weighting (80/20 in "both" mode).
         stream = stream_by_geo.get(geo)
         if stream:
-            ids1, ids2 = feed_offer_ids_for_geo(geo)
-            if ids1 or ids2:
-                apply_flow_offers(int(stream["id"]), ids1, ids2)
+            ids1, ids2, ids5 = feed_offer_ids_for_geo(geo)
+            if ids1 or ids2 or ids5:
+                apply_flow_offers(int(stream["id"]), ids1, ids2, ids5)
         if not offers:
             print(f"  {geo}: no Keitaro offers found, skip")
             continue
