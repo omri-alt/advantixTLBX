@@ -329,6 +329,8 @@ def _blend_potential_feeds_for_run() -> tuple[str, ...]:
             out.append(f)
         elif f == "kelkoo2" and (FEED2_API_KEY or "").strip():
             out.append(f)
+        elif f == "kelkoo5" and (FEED5_API_KEY or "").strip():
+            out.append(f)
         elif f == "adexa" and (ADEXA_SITE_ID or "").strip() and (ADEXA_API_KEY or "").strip():
             out.append(f)
         elif f == "yadore" and (YADORE_API_KEY or "").strip():
