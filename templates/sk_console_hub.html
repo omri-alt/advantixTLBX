@@ -146,6 +146,7 @@
         if (data.as_of_utc) parts.push('as of ' + data.as_of_utc);
         if (data.status === 'stale') parts.push('refreshing…');
         if (data.active_only) parts.push('active rows only');
+        else parts.push('all sheet rows (active + paused)');
         if (data.fetch_seconds != null) parts.push(data.fetch_seconds + 's fetch');
         if (metaEl) metaEl.textContent = parts.join(' · ') || 'OK';
         if (data.error && errEl) {

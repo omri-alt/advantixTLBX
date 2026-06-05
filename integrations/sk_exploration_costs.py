@@ -31,13 +31,21 @@ _REFRESH_LOCK = threading.Lock()
 _REFRESH_RUNNING = False
 
 _HTTP_TIMEOUT = max(15, int((os.getenv("SK_EXPLORATION_COST_TIMEOUT") or "45").strip() or "45"))
-# Include only ``active`` rows by default (set SK_EXPLORATION_COST_ALL_STATUSES=1 for every row).
-_ALL_STATUSES = str(os.getenv("SK_EXPLORATION_COST_ALL_STATUSES") or "").strip().lower() in (
+# All ``SKtrackExploration`` rows with a campaign ID (any status). Set
+# ``SK_EXPLORATION_COST_ALL_STATUSES=0`` or ``SK_EXPLORATION_COST_ACTIVE_ONLY=1`` for active rows only.
+_ALL_STATUSES = str(os.getenv("SK_EXPLORATION_COST_ALL_STATUSES", "1")).strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+if str(os.getenv("SK_EXPLORATION_COST_ACTIVE_ONLY") or "").strip().lower() in (
     "1",
     "true",
     "yes",
     "on",
-)
+):
+    _ALL_STATUSES = False
 
 
 def _utc_today() -> date:
