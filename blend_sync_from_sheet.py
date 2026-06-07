@@ -60,6 +60,7 @@ from config import (
 )
 from assistance import (
     build_offer_action_payload,
+    kelkoo_keitaro_action_payload,
     get_campaigns_data,
     find_campaign_by_alias_or_name,
     get_campaign_streams,
@@ -333,15 +334,8 @@ def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> st
     Adexa/Yadore: shopli rain shells with sheet geo + offerUrl as merchant target; ``{subid}`` for click id.
     """
     ft = (feed_tag or "").strip().lower()
-    if ft == "kelkoo1":
-        acc = (FEED1_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID
-        return build_offer_action_payload(geo, offer_url, account_id=acc, feed=1)
-    if ft == "kelkoo2":
-        acc = (FEED2_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID_2
-        return build_offer_action_payload(geo, offer_url, account_id=acc, feed=2)
-    if ft == "kelkoo5":
-        acc = (FEED5_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID
-        return build_offer_action_payload(geo, offer_url, account_id=acc, feed=1)
+    if ft in ("kelkoo1", "kelkoo2", "kelkoo5"):
+        return kelkoo_keitaro_action_payload(geo, offer_url, ft)
     if ft == "adexa":
         return _blend_adexa_action_payload(geo, offer_url)
     if ft == "yadore":

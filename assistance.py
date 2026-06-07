@@ -7,7 +7,13 @@ from urllib.parse import quote
 from typing import Any, Dict, List, Optional, Tuple
 
 from integrations.keitaro import KeitaroClient, KeitaroClientError
-from config import KELKOO_ACCOUNT_ID, FEED1_KELKOO_ACCOUNT_ID
+from config import (
+    KELKOO_ACCOUNT_ID,
+    KELKOO_ACCOUNT_ID_2,
+    FEED1_KELKOO_ACCOUNT_ID,
+    FEED2_KELKOO_ACCOUNT_ID,
+    FEED5_KELKOO_ACCOUNT_ID,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +280,22 @@ def set_flow_country_filter(
 
 
 # --- Geo offers: 3 offers per country (action_payload with geo + productUrl) ---
+
+def kelkoo_keitaro_action_payload(geo: str, merchant_url: str, feed_tag: str) -> str:
+    """
+    Keitaro offer URL for Kelkoo feeds (Nipuhim + Blend).
+    ``kelkoo5`` / ``feed5``: merchant homepage via feed5 permanentLinkGo account (same as Blend kelkoo5).
+    """
+    ft = (feed_tag or "").strip().lower()
+    if ft in ("kelkoo2", "feed2", "2"):
+        acc = (FEED2_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID_2 or "").strip()
+        return build_offer_action_payload(geo, merchant_url, account_id=acc, feed=2)
+    if ft in ("kelkoo5", "feed5", "5"):
+        acc = (FEED5_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID or "").strip()
+        return build_offer_action_payload(geo, merchant_url, account_id=acc, feed=1)
+    acc = (FEED1_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID or "").strip()
+    return build_offer_action_payload(geo, merchant_url, account_id=acc, feed=1)
+
 
 def build_offer_action_payload(
     geo: str,

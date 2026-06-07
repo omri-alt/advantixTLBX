@@ -21,6 +21,7 @@ Traffic split (Nipuhim):
   python update_offers_from_sheet.py --sheet "2026-03-10_offers"
   python update_offers_from_sheet.py --sheet "2026-03-10_offers" --max-offers 5
   python update_offers_from_sheet.py --sheet "2026-03-10_offers_2" --account 2   # second Kelkoo account
+  python update_offers_from_sheet.py --sheet "2026-03-10_offers_5" --account 5   # feed5: merchant homepage URLs (Blend kelkoo5 format)
 
 Requires credentials.json in project root (Google service account). Share the sheet with
 the service account email (see credentials.json client_email).
@@ -43,10 +44,12 @@ from config import (
     KELKOO_ACCOUNT_ID_2,
     FEED1_KELKOO_ACCOUNT_ID,
     FEED5_KELKOO_ACCOUNT_ID,
+    FEED5_API_KEY,
 )
 from assistance import (
     add_country_flow,
     build_offer_action_payload,
+    kelkoo_keitaro_action_payload,
     find_campaign_by_alias_or_name,
     get_campaigns_data,
     get_geo_offers_sorted,
@@ -72,6 +75,7 @@ FEED2_TRAFFIC_PCT = 25
 FEED5_TRAFFIC_PCT = 10
 _OFFERS_SHEET_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_offers_([125])$")
 COL_COUNTRY = 0   # A
+COL_MERCHANT_ID = 1  # B
 COL_STORE_LINK = 3  # D
 # Columns we write back: G = live, H = offerUpload timestamp
 COL_LIVE = 6              # G (0-based index)
@@ -106,10 +110,16 @@ def get_credentials_path():
     return str(p)
 
 
-def read_sheet_today_offers(sheet_name: str, max_per_geo: int = MAX_OFFERS_PER_GEO):
+def read_sheet_today_offers(
+    sheet_name: str,
+    max_per_geo: int = MAX_OFFERS_PER_GEO,
+    *,
+    include_merchant_id: bool = False,
+):
     """
     Read sheet: columns A (country) and D (Store Link). Return (by_geo, rows_by_geo)
     where by_geo[geo] = [link1, link2, ...] and rows_by_geo[geo] = [row1, row2, ...] (1-based).
+    When ``include_merchant_id=True``, also returns merchant_ids_by_geo[geo] aligned with links.
     """
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -131,6 +141,7 @@ def read_sheet_today_offers(sheet_name: str, max_per_geo: int = MAX_OFFERS_PER_G
     rows = result.get("values") or []
     by_geo = defaultdict(list)
     rows_by_geo = defaultdict(list)
+    merchant_ids_by_geo = defaultdict(list)
     for row_idx, row in enumerate(rows):
         if len(row) <= max(COL_COUNTRY, COL_STORE_LINK):
             continue
@@ -144,6 +155,11 @@ def read_sheet_today_offers(sheet_name: str, max_per_geo: int = MAX_OFFERS_PER_G
             row_num = row_idx + 1  # 1-based for Sheets API
             by_geo[geo].append(link)
             rows_by_geo[geo].append(row_num)
+            if include_merchant_id:
+                mid = (row[COL_MERCHANT_ID] or "").strip() if len(row) > COL_MERCHANT_ID else ""
+                merchant_ids_by_geo[geo].append(mid)
+    if include_merchant_id:
+        return dict(by_geo), dict(rows_by_geo), dict(merchant_ids_by_geo)
     return dict(by_geo), dict(rows_by_geo)
 
 
@@ -220,16 +236,37 @@ def main():
         kelkoo_account_id = FEED1_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID
     feed = 1 if account == 5 else account
 
+    merchant_ids_by_geo: dict[str, list[str]] = {}
+    merchant_url_by_geo_id: dict[tuple[str, str], str] = {}
+    merchant_url_by_id: dict[str, str] = {}
+    if account == 5 and not (FEED5_API_KEY or "").strip():
+        print("Error: FEED5_API_KEY is required for --account 5 (feed5 Kelkoo sync).")
+        sys.exit(1)
+
     print(f"Reading sheet: {sheet_name} (spreadsheet {SPREADSHEET_ID})")
     print(f"Max offers per geo: {max_offers}, feed: {feed_prefix} (account {account})")
     try:
-        by_geo, rows_by_geo = read_sheet_today_offers(sheet_name, max_per_geo=max_offers)
+        if account == 5:
+            by_geo, rows_by_geo, merchant_ids_by_geo = read_sheet_today_offers(
+                sheet_name, max_per_geo=max_offers, include_merchant_id=True
+            )
+        else:
+            by_geo, rows_by_geo = read_sheet_today_offers(sheet_name, max_per_geo=max_offers)
     except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)
     except Exception as e:
         print(f"Error reading sheet: {e}")
         sys.exit(1)
+
+    if account == 5 and by_geo:
+        from workflows.monthly_log_monetization import build_merchant_geo_url_lookup
+
+        sheet_geos = sorted(by_geo.keys())
+        print(f"Feed5: loading merchant homepages for geos: {', '.join(sheet_geos)}")
+        merchant_url_by_geo_id, merchant_url_by_id = build_merchant_geo_url_lookup(
+            FEED5_API_KEY, geos=sheet_geos
+        )
 
     if not by_geo:
         print("No data found in sheet (columns A = country, D = Store Link).")
@@ -512,13 +549,33 @@ def main():
             continue
         print(f"  {geo}: updating {to_update} offers with store links ...")
         geo_row_numbers = rows_by_geo.get(geo, [])
+        geo_merchant_ids = merchant_ids_by_geo.get(geo, [])
         for i in range(to_update):
             offer = offers[i]
             link = store_links[i]
-            new_payload = build_offer_action_payload(geo, link, account_id=kelkoo_account_id, feed=feed)
+            if account == 5:
+                mid = geo_merchant_ids[i] if i < len(geo_merchant_ids) else ""
+                target_url = (
+                    merchant_url_by_geo_id.get((geo, mid))
+                    or merchant_url_by_id.get(mid, "")
+                    if mid
+                    else ""
+                )
+                if not target_url:
+                    print(
+                        f"    {offer.get('name')}: skip — no merchant homepage for geo={geo} merchant_id={mid or '?'}"
+                    )
+                    continue
+                new_payload = kelkoo_keitaro_action_payload(geo, target_url, "kelkoo5")
+                log_url = target_url
+            else:
+                new_payload = build_offer_action_payload(
+                    geo, link, account_id=kelkoo_account_id, feed=feed
+                )
+                log_url = link
             try:
                 update_offer_action_payload(offer["id"], new_payload)
-                print(f"    {offer.get('name')} id={offer['id']} -> {link[:50]}...")
+                print(f"    {offer.get('name')} id={offer['id']} -> {log_url[:50]}...")
                 updated_total += 1
                 if i < len(geo_row_numbers):
                     rows_updated.append(geo_row_numbers[i])
