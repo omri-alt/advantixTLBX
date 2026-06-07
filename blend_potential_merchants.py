@@ -271,6 +271,16 @@ def _adexa_stat_name(row: Dict[str, Any]) -> str:
     return str(row.get("merchantName") or row.get("merchant_name") or row.get("name") or "").strip()
 
 
+def _adexa_stat_url(row: Dict[str, Any]) -> str:
+    return str(
+        row.get("merchantUrl")
+        or row.get("merchant_url")
+        or row.get("url")
+        or row.get("website")
+        or ""
+    ).strip()
+
+
 def run_potential_adexa(
     service,
     out_sheet: str,
@@ -279,7 +289,13 @@ def run_potential_adexa(
     *,
     only_monetized: bool,
 ) -> None:
-    from integrations.adexa import AdexaClientError, fetch_shopping_search_stats, get_merchants, links_merchant_check
+    from integrations.adexa import (
+        AdexaClientError,
+        fetch_shopping_search_stats,
+        get_merchants,
+        infer_merchant_url_from_adexa_name,
+        links_merchant_check,
+    )
 
     try:
         raw_stats = fetch_shopping_search_stats(start, end)
@@ -299,6 +315,9 @@ def run_potential_adexa(
         agg[key]["sales"] += _adexa_stat_sales(row)
         if not agg[key]["name"]:
             agg[key]["name"] = _adexa_stat_name(row)
+        stat_url = _adexa_stat_url(row)
+        if stat_url and not (agg[key].get("url") or "").strip():
+            agg[key]["url"] = stat_url
 
     url_by_geo_mid: Dict[Tuple[str, str], str] = {}
     geos_needed = sorted({k[0] for k in agg})
@@ -310,7 +329,7 @@ def run_potential_adexa(
         for m in merchants:
             if not isinstance(m, dict):
                 continue
-            mid = str(m.get("id") or m.get("merchantId") or "").strip()
+            mid = str(m.get("id") or m.get("merchantId") or m.get("merchant_id") or "").strip()
             if not mid:
                 continue
             url = str(m.get("url") or m.get("merchantUrl") or m.get("website") or "").strip()
@@ -320,6 +339,7 @@ def run_potential_adexa(
     header = _potential_header_with_device()
     rows_out: List[List[str]] = []
     checked = 0
+    inferred = 0
     for (geo, mid), rec in sorted(agg.items(), key=lambda kv: kv[0]):
         leads = int(rec["leads"])
         sales = int(rec["sales"])
@@ -328,12 +348,19 @@ def run_potential_adexa(
             continue
         name = (rec.get("name") or "").strip() or mid
         domain = url_by_geo_mid.get((geo, mid), "").strip()
+        if not domain:
+            domain = str(rec.get("url") or "").strip()
+        if not domain:
+            domain = infer_merchant_url_from_adexa_name(name)
+            if domain:
+                inferred += 1
         tier = "Flex"
         if not domain:
             monetization = "no_merchant_url"
         else:
             checked += 1
             url_norm = domain if domain.lower().startswith("http") else f"https://{domain.lstrip('/')}"
+            domain = url_norm
             try:
                 res = links_merchant_check(url_norm, geo)
                 monetization = "monetized_adexa" if res.get("found") else f"not_monetized_adexa:{res.get('note', '')}"
@@ -365,7 +392,8 @@ def run_potential_adexa(
     out = [header] + rows_out
     write_sheet(service, out_sheet, out)
     print(
-        f"Wrote {len(rows_out)} rows to {out_sheet!r} (Adexa). Checked={checked}. only_monetized={only_monetized}"
+        f"Wrote {len(rows_out)} rows to {out_sheet!r} (Adexa). Checked={checked}. "
+        f"inferred_url={inferred}. only_monetized={only_monetized}"
     )
 
 

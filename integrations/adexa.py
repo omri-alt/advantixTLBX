@@ -60,6 +60,56 @@ class AdexaClientError(Exception):
         super().__init__(message)
 
 
+def _looks_like_domain(host: str) -> bool:
+    host = (host or "").strip().lower()
+    if not host or " " in host or "/" in host:
+        return False
+    if host.startswith("www."):
+        host = host[4:]
+    parts = host.split(".")
+    if len(parts) < 2:
+        return False
+    tld = parts[-1]
+    return len(tld) >= 2 and tld.isalpha()
+
+
+def infer_merchant_url_from_adexa_name(name: str) -> str:
+    """
+    Best-effort homepage host when GetMerchant has no URL but the stats name encodes the domain.
+
+    Examples:
+      - ``courir.com/wwwcourircom`` → ``www.courir.com``
+      - ``example.co.uk`` → ``www.example.co.uk``
+    """
+    raw = (name or "").strip()
+    if not raw:
+        return ""
+    if raw.lower().startswith(("http://", "https://")):
+        return raw
+    if " " in raw and "/" not in raw:
+        return ""
+
+    candidate = raw
+    if "/" in raw:
+        left, right = raw.split("/", 1)
+        left = left.strip()
+        right = right.strip().lower()
+        if _looks_like_domain(left):
+            base = left.lower()
+            compact = base.replace(".", "")
+            if right.startswith("www") and not right.startswith("www."):
+                if right == f"www{compact}":
+                    return f"www.{base}" if not base.startswith("www.") else base
+            candidate = left
+
+    host = candidate.strip().lower()
+    if not _looks_like_domain(host):
+        return ""
+    if not host.startswith("www."):
+        return f"www.{host}"
+    return host
+
+
 def _parse_foundish(payload: Any) -> tuple[bool, str]:
     """
     Best-effort parse: Adexa JSON shapes may vary; look for common keys.
