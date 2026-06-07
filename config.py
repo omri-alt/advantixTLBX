@@ -639,6 +639,46 @@ if not ADEXA_API_KEY:
     )
 ADEXA_API_KEY = (ADEXA_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
 
+# Shopnomix (feed6) — demand API campaign ids (tile/native vs coupons placements)
+SHOPNOMIX_BASE_URL = (os.getenv("SHOPNOMIX_BASE_URL") or "https://r.v2i8b.com").strip().rstrip("/")
+SHOPNOMIX_TILE_CAMPAIGN_ID = (
+    os.getenv("SHOPNOMIX_TILE_CAMPAIGN_ID")
+    or os.getenv("FEED6_SHOPNOMIX_TILE_CAMPAIGN_ID")
+    or ""
+).strip()
+SHOPNOMIX_TILE_REPORTING_ID = (
+    os.getenv("SHOPNOMIX_TILE_REPORTING_ID")
+    or os.getenv("FEED6_SHOPNOMIX_TILE_REPORTING_ID")
+    or ""
+).strip()
+SHOPNOMIX_COUPONS_CAMPAIGN_ID = (
+    os.getenv("SHOPNOMIX_COUPONS_CAMPAIGN_ID")
+    or os.getenv("FEED6_SHOPNOMIX_COUPONS_CAMPAIGN_ID")
+    or ""
+).strip()
+SHOPNOMIX_COUPONS_REPORTING_ID = (
+    os.getenv("SHOPNOMIX_COUPONS_REPORTING_ID")
+    or os.getenv("FEED6_SHOPNOMIX_COUPONS_REPORTING_ID")
+    or ""
+).strip()
+if not SHOPNOMIX_TILE_CAMPAIGN_ID:
+    SHOPNOMIX_TILE_CAMPAIGN_ID = _read_env_fallback("SHOPNOMIX_TILE_CAMPAIGN_ID") or _read_env_fallback(
+        "FEED6_SHOPNOMIX_TILE_CAMPAIGN_ID"
+    )
+if not SHOPNOMIX_COUPONS_CAMPAIGN_ID:
+    SHOPNOMIX_COUPONS_CAMPAIGN_ID = _read_env_fallback("SHOPNOMIX_COUPONS_CAMPAIGN_ID") or _read_env_fallback(
+        "FEED6_SHOPNOMIX_COUPONS_CAMPAIGN_ID"
+    )
+SHOPNOMIX_TILE_CAMPAIGN_ID = (SHOPNOMIX_TILE_CAMPAIGN_ID or "").strip()
+SHOPNOMIX_TILE_REPORTING_ID = (SHOPNOMIX_TILE_REPORTING_ID or "").strip()
+SHOPNOMIX_COUPONS_CAMPAIGN_ID = (SHOPNOMIX_COUPONS_CAMPAIGN_ID or "").strip()
+SHOPNOMIX_COUPONS_REPORTING_ID = (SHOPNOMIX_COUPONS_REPORTING_ID or "").strip()
+
+
+def shopnomix_monetization_enabled() -> bool:
+    return bool(SHOPNOMIX_TILE_CAMPAIGN_ID and SHOPNOMIX_COUPONS_CAMPAIGN_ID)
+
+
 # Effinity publisher API (``KEYEFFINITY`` — key is path segment after ``/apiv3/``)
 EFFINITY_API_KEY = (os.getenv("KEYEFFINITY") or os.getenv("EFFINITY_API_KEY") or "").strip()
 if not EFFINITY_API_KEY:

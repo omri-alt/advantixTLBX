@@ -39,13 +39,15 @@ from config import (
     DAILY_CONVERSION_POSTBACK_STATE_PATH,
     OVERVIEW_SNAPSHOT_TZ,
     OVERVIEW_SNAPSHOT_HOUR,
+    shopnomix_monetization_enabled,
 )
 from workflows.campaign_setup import run_create_campaign_workflow
 from integrations.keitaro import KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
 from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
 from integrations.adexa import links_merchant_check as adexa_links_check, AdexaClientError
-from integrations.monetization_geo import yadore_feed_class
+from integrations.shopnomix import demand_tile_check, demand_coupons_check, ShopnomixClientError
+from integrations.monetization_geo import yadore_feed_class, shopnomix_feed_class
 from assistance import (
     get_campaigns_data,
     clone_campaign_copy,
@@ -1164,6 +1166,23 @@ def ui_matchmaking_manual():
                 except AdexaClientError as e:
                     adexa_found = False
                     adexa_note = str(e)[:120]
+                sn_tile_found = False
+                sn_coupons_found = False
+                sn_tile_epc = ""
+                sn_coupons_epc = ""
+                if shopnomix_monetization_enabled():
+                    try:
+                        sn_tile = demand_tile_check(domain, g)
+                        sn_tile_found = bool(sn_tile.get("found"))
+                        sn_tile_epc = str(sn_tile.get("epc") or "")
+                    except ShopnomixClientError:
+                        sn_tile_found = False
+                    try:
+                        sn_coupons = demand_coupons_check(domain, g)
+                        sn_coupons_found = bool(sn_coupons.get("found"))
+                        sn_coupons_epc = str(sn_coupons.get("epc") or "")
+                    except ShopnomixClientError:
+                        sn_coupons_found = False
                 result_rows.append(
                     {
                         "geo": g,
@@ -1175,6 +1194,11 @@ def ui_matchmaking_manual():
                         "yadore_class": yadore_feed_class(y_nc_found, y_c_found),
                         "adexa_found": adexa_found,
                         "adexa_note": adexa_note,
+                        "shopnomix_class": shopnomix_feed_class(sn_tile_found, sn_coupons_found),
+                        "shopnomix_tile_found": sn_tile_found,
+                        "shopnomix_coupons_found": sn_coupons_found,
+                        "shopnomix_tile_epc": sn_tile_epc,
+                        "shopnomix_coupons_epc": sn_coupons_epc,
                         "kelkoo1_cpc": str(k1.get("estimatedCpc", "")),
                         "kelkoo2_cpc": str(k2.get("estimatedCpc", "")),
                         "kelkoo5_cpc": str(k5.get("estimatedCpc", "")),

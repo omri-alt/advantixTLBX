@@ -24,7 +24,7 @@
   {% from "macros/page_header.html" import tool_header %}
   <div class="wrap">
     <div class="muted" style="margin-bottom:10px;"><a href="{{ url_for('ui_matchmaking_hub') }}">← Matchmaking</a> · <a href="{{ url_for('ui_help') }}#matchmaking-manual">Help</a></div>
-    {{ tool_header("Manual monetization check", "Domain/URL vs Kelkoo, Yadore, Adexa.", "matchmaking-manual", "POST domain + geo") }}
+    {{ tool_header("Manual monetization check", "Domain/URL vs Kelkoo, Yadore, Adexa, Shopnomix (feed6).", "matchmaking-manual", "POST domain + geo") }}
 
     <div class="card">
       <form method="post">
@@ -62,8 +62,14 @@
             <th>Yadore non-coupon</th>
             <th>Yadore coupon</th>
             <th>Adexa</th>
+            <th>Shopnomix class</th>
+            <th>Shopnomix tile</th>
+            <th>Shopnomix coupons</th>
             <th>Feed1 CPC</th>
             <th>Feed2 CPC</th>
+            <th>Feed5 CPC</th>
+            <th>SN tile EPC</th>
+            <th>SN coupons EPC</th>
           </tr>
         </thead>
         <tbody>
@@ -77,9 +83,14 @@
             <td class="{{ 'ok' if r.yadore_non_coupon_found else 'bad' }}">{{ 'FOUND' if r.yadore_non_coupon_found else 'NO' }}</td>
             <td class="{{ 'ok' if r.yadore_coupon_found else 'bad' }}">{{ 'FOUND' if r.yadore_coupon_found else 'NO' }}</td>
             <td class="{{ 'ok' if r.adexa_found else 'bad' }}">{{ 'FOUND' if r.adexa_found else 'NO' }}{% if r.adexa_note %} <span class="muted" title="{{ r.adexa_note }}">({{ r.adexa_note[:24] }}{% if r.adexa_note|length > 24 %}…{% endif %})</span>{% endif %}</td>
+            <td class="muted">{{ r.shopnomix_class }}</td>
+            <td class="{{ 'ok' if r.shopnomix_tile_found else 'bad' }}">{{ 'FOUND' if r.shopnomix_tile_found else 'NO' }}</td>
+            <td class="{{ 'ok' if r.shopnomix_coupons_found else 'bad' }}">{{ 'FOUND' if r.shopnomix_coupons_found else 'NO' }}</td>
             <td>{{ r.kelkoo1_cpc }}</td>
             <td>{{ r.kelkoo2_cpc }}</td>
             <td>{{ r.kelkoo5_cpc }}</td>
+            <td>{{ r.shopnomix_tile_epc }}</td>
+            <td>{{ r.shopnomix_coupons_epc }}</td>
           </tr>
           {% endfor %}
         </tbody>

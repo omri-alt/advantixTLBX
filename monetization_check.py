@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Monetization checker (Kelkoo feed1/2/5, Yadore feed3, Adexa feed4) driven by Google Sheets.
+Monetization checker (Kelkoo feed1/2/5, Yadore feed3, Adexa feed4, Shopnomix feed6) driven by Google Sheets.
 
 Spreadsheet: 1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0
 Input sheet: sourceToCheck (columns: url, geo)
 Output sheet: Matches
 
 For each (url, geo):
-  - Kelkoo link check (feed1/2): GET …/search/link
+  - Kelkoo link check (feed1/2/5): GET …/search/link
   - Yadore deeplink (feed3): POST /v2/deeplink with ``isCouponing`` false and true
   - Adexa Link Monetizer (feed4): GET …/LinksMerchant.php
+  - Shopnomix demand (feed6): GET …/api/v2/demand/:campaign_id (tile + coupons placements)
 
-Writes one row per input line with statuses and CPC fields where available.
+Writes one row per input line with statuses and CPC/EPC fields where available.
 
 Usage:
   python monetization_check.py
@@ -26,18 +27,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dotenv import load_dotenv
 load_dotenv()
 
-from config import FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY
+from config import FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY, shopnomix_monetization_enabled
 from integrations.kelkoo_search import kelkoo_merchant_link_check as kelkoo_check
 from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
 from integrations.adexa import links_merchant_check as adexa_links_check, AdexaClientError
-from integrations.monetization_geo import yadore_feed_class
+from integrations.shopnomix import (
+    clear_demand_cache,
+    demand_tile_check,
+    demand_coupons_check,
+    ShopnomixClientError,
+)
+from integrations.monetization_geo import yadore_feed_class, shopnomix_feed_class
 
 SPREADSHEET_ID = "1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0"
 INPUT_SHEET = "sourceToCheck"
 OUTPUT_SHEET = "Matches"
 
-# Parallel HTTP calls per row (Kelkoo×3 + Yadore×2 + Adexa).
-_ROW_POOL_WORKERS = 6
+# Parallel HTTP calls per row (Kelkoo×3 + Yadore×2 + Adexa + Shopnomix×2).
+_ROW_POOL_WORKERS = 8
 
 
 def get_credentials_path() -> str:
@@ -131,6 +138,18 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
         except AdexaClientError as e:
             return {"found": False, "note": str(e)[:200]}
 
+    def _sn_tile() -> Dict[str, Any]:
+        try:
+            return demand_tile_check(url, geo, early_exit=False)
+        except ShopnomixClientError as e:
+            return {"found": False, "epc": "", "note": str(e)[:200]}
+
+    def _sn_coupons() -> Dict[str, Any]:
+        try:
+            return demand_coupons_check(url, geo, early_exit=False)
+        except ShopnomixClientError as e:
+            return {"found": False, "epc": "", "note": str(e)[:200]}
+
     futures = {}
     with ThreadPoolExecutor(max_workers=_ROW_POOL_WORKERS) as ex:
         futures[ex.submit(_k1)] = "k1"
@@ -140,6 +159,9 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
         futures[ex.submit(_ync)] = "ync"
         futures[ex.submit(_yc)] = "yc"
         futures[ex.submit(_ax)] = "ax"
+        if shopnomix_monetization_enabled():
+            futures[ex.submit(_sn_tile)] = "sn_tile"
+            futures[ex.submit(_sn_coupons)] = "sn_coupons"
 
     out: Dict[str, Any] = {}
     for fut in as_completed(futures):
@@ -151,6 +173,8 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
                 out[key] = {"found": False, "estimatedCpc": ""}
             elif key in ("ync", "yc"):
                 out[key] = {"found": False, "estimatedCpc_amount": "", "estimatedCpc_currency": ""}
+            elif key in ("sn_tile", "sn_coupons"):
+                out[key] = {"found": False, "epc": "", "note": str(e)[:200]}
             else:
                 out[key] = {"found": False, "note": str(e)[:200]}
 
@@ -178,6 +202,9 @@ def main() -> None:
         "yadore_c_found",
         "adexa_found",
         "adexa_note",
+        "shopnomix_monetization",
+        "shopnomix_tile_found",
+        "shopnomix_coupons_found",
         "kelkoo1_found",
         "kelkoo2_found",
         "kelkoo5_found",
@@ -185,11 +212,15 @@ def main() -> None:
         "yadore_nc_currency",
         "yadore_c_cpc",
         "yadore_c_currency",
+        "shopnomix_tile_epc",
+        "shopnomix_coupons_epc",
         "kelkoo1_cpc",
         "kelkoo2_cpc",
         "kelkoo5_cpc",
     ]
     ensure_sheet(service, OUTPUT_SHEET, header)
+
+    clear_demand_cache()
 
     rows = read_source_rows(service)
     if max_rows is not None:
@@ -210,6 +241,8 @@ def main() -> None:
         y_nc = r["ync"]
         y_c = r["yc"]
         ax = r["ax"]
+        sn_tile = r.get("sn_tile") or {"found": False, "epc": ""}
+        sn_coupons = r.get("sn_coupons") or {"found": False, "epc": ""}
 
         y_nc_found = bool(y_nc.get("found"))
         y_nc_cpc = y_nc.get("estimatedCpc_amount") or ""
@@ -219,6 +252,10 @@ def main() -> None:
         y_c_cur = y_c.get("estimatedCpc_currency") or ""
 
         y_class = yadore_feed_class(y_nc_found, y_c_found)
+
+        sn_tile_found = bool(sn_tile.get("found"))
+        sn_coupons_found = bool(sn_coupons.get("found"))
+        sn_class = shopnomix_feed_class(sn_tile_found, sn_coupons_found)
 
         ax_found = bool(ax.get("found"))
         ax_note = str(ax.get("note") or "")
@@ -233,6 +270,9 @@ def main() -> None:
                 str(y_c_found),
                 str(ax_found),
                 ax_note,
+                sn_class,
+                str(sn_tile_found),
+                str(sn_coupons_found),
                 str(bool(k1.get("found"))),
                 str(bool(k2.get("found"))),
                 str(bool(k5.get("found"))),
@@ -240,6 +280,8 @@ def main() -> None:
                 str(y_nc_cur),
                 str(y_c_cpc),
                 str(y_c_cur),
+                str(sn_tile.get("epc", "")),
+                str(sn_coupons.get("epc", "")),
                 str(k1.get("estimatedCpc", "")),
                 str(k2.get("estimatedCpc", "")),
                 str(k5.get("estimatedCpc", "")),
