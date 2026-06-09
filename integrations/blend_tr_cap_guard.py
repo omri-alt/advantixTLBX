@@ -1,6 +1,10 @@
 """
 Pause mapped Trillion Blend RON campaigns once Blend geo/device click caps are filled.
 
+Click counts come from live Keitaro ``report/build`` (today, country × device_type on the
+Blend campaign) via ``refresh_blend_cap_progress()`` — not from Trillion stats.
+Trillion is only the pause/resume target (``BlendTrCapGuard`` default: every 20 minutes).
+
 Mapping is derived from Trillion ``list_campaigns`` under a folder (default: ``Blend``)
 by parsing campaign names that embed geo/device tokens (for example:
 ``.de.01.mobile.nonadult`` -> geo=de, device=mobile).

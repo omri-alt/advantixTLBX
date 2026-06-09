@@ -13,6 +13,7 @@ from config import (
     FEED1_KELKOO_ACCOUNT_ID,
     FEED2_KELKOO_ACCOUNT_ID,
     FEED5_KELKOO_ACCOUNT_ID,
+    FEED5_KELKOO_PUBLISHER_SUB_ID,
 )
 
 logger = logging.getLogger(__name__)
@@ -281,18 +282,42 @@ def set_flow_country_filter(
 
 # --- Geo offers: 3 offers per country (action_payload with geo + productUrl) ---
 
+def build_kelkoo_feed5_action_payload() -> str:
+    """
+    Kelkoo feed 5 Keitaro offer URL (intentix) for Nipuhim feed5 and Blend kelkoo5 rows.
+
+    Same shell as the reference offer ``KL Feed 5``: geo and merchant URL come from click
+    ``sub_id_2`` / ``sub_id_3`` (campaign / traffic source), not baked into ``merchantUrl``
+    like feed1/kelkoo1.
+    """
+    acc = (FEED5_KELKOO_ACCOUNT_ID or "").strip()
+    if not acc:
+        raise ValueError("FEED5_KELKOO_ACCOUNT_ID is required for Kelkoo feed5 offers")
+    pub = (FEED5_KELKOO_PUBLISHER_SUB_ID or "intentix").strip()
+    return (
+        f"https://{{sub_id_2}}-go.kelkoogroup.net/permanentLinkGo"
+        f"?country={{sub_id_2}}&id={acc}"
+        f"&merchantUrl={{sub_id_3}}&publisherSubId={pub}"
+        f"&ctrl_ab={{sub_id_10}}&publisherClickId={{subid}}"
+    )
+
+
+def build_nipuhim_feed5_action_payload() -> str:
+    """Alias for Nipuhim feed5 sync (same template as Blend kelkoo5)."""
+    return build_kelkoo_feed5_action_payload()
+
+
 def kelkoo_keitaro_action_payload(geo: str, merchant_url: str, feed_tag: str) -> str:
     """
-    Keitaro offer URL for Kelkoo feeds (Nipuhim + Blend).
-    ``kelkoo5`` / ``feed5``: merchant homepage via feed5 permanentLinkGo account (same as Blend kelkoo5).
+    Keitaro offer URL for Kelkoo Blend kelkoo1/kelkoo2 (shopli rain + encoded merchantUrl).
+    kelkoo5 uses ``build_kelkoo_feed5_action_payload()`` (intentix macros).
     """
     ft = (feed_tag or "").strip().lower()
+    if ft in ("kelkoo5", "feed5", "5"):
+        return build_kelkoo_feed5_action_payload()
     if ft in ("kelkoo2", "feed2", "2"):
         acc = (FEED2_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID_2 or "").strip()
         return build_offer_action_payload(geo, merchant_url, account_id=acc, feed=2)
-    if ft in ("kelkoo5", "feed5", "5"):
-        acc = (FEED5_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID or "").strip()
-        return build_offer_action_payload(geo, merchant_url, account_id=acc, feed=1)
     acc = (FEED1_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID or "").strip()
     return build_offer_action_payload(geo, merchant_url, account_id=acc, feed=1)
 
@@ -502,7 +527,12 @@ def create_next_geo_offers(
     names = [f"{name_prefix}{i}" for i in range(start, start + count)]
     ids = []
     for name, product_url in zip(names, urls):
-        action_payload = build_offer_action_payload(geo, product_url, account_id=account_id, feed=feed)
+        if feed_prefix == "feed5":
+            action_payload = build_kelkoo_feed5_action_payload()
+        else:
+            action_payload = build_offer_action_payload(
+                geo, product_url, account_id=account_id, feed=feed
+            )
         payload = {
             "name": name,
             "action_type": "http",

@@ -60,6 +60,7 @@ from config import (
 )
 from assistance import (
     build_offer_action_payload,
+    build_kelkoo_feed5_action_payload,
     kelkoo_keitaro_action_payload,
     get_campaigns_data,
     find_campaign_by_alias_or_name,
@@ -330,11 +331,13 @@ def _blend_yadore_action_payload(geo: str, merchant_url: str) -> str:
 
 def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> str:
     """
-    Kelkoo Blend rows: wrap offerUrl like Nipuhim (merchantUrl in permanentLinkGo / klk-merchant).
+    kelkoo1/kelkoo2: shopli rain + encoded merchantUrl. kelkoo5: feed5 intentix macro template.
     Adexa/Yadore: shopli rain shells with sheet geo + offerUrl as merchant target; ``{subid}`` for click id.
     """
     ft = (feed_tag or "").strip().lower()
-    if ft in ("kelkoo1", "kelkoo2", "kelkoo5"):
+    if ft == "kelkoo5":
+        return build_kelkoo_feed5_action_payload()
+    if ft in ("kelkoo1", "kelkoo2"):
         return kelkoo_keitaro_action_payload(geo, offer_url, ft)
     if ft == "adexa":
         return _blend_adexa_action_payload(geo, offer_url)
@@ -679,6 +682,27 @@ def _upsert_offer(client: KeitaroClient, name: str, url: str) -> int:
     return oid
 
 
+_BLEND_KELKOO5_OFFER_RE = re.compile(r"^blend_[a-z]{2}_kelkoo5_", re.IGNORECASE)
+
+
+def _refresh_all_blend_kelkoo5_offer_payloads(client: KeitaroClient) -> int:
+    """Update every ``blend_*_kelkoo5_*`` offer to the feed5 intentix template (incl. share=0 orphans)."""
+    feed5_url = build_kelkoo_feed5_action_payload()
+    updated = 0
+    for o in client.get_offers():
+        name = (o.get("name") or "").strip()
+        if not _BLEND_KELKOO5_OFFER_RE.match(name):
+            continue
+        oid = o.get("id")
+        if oid is None:
+            continue
+        if (o.get("action_payload") or "") == feed5_url:
+            continue
+        client.update_offer(int(oid), {"action_payload": feed5_url})
+        updated += 1
+    return updated
+
+
 def _blend_feed_prefix(geo: str, feed_tag: str) -> str:
     """Keitaro offer name prefix ``blend_{geo}_{slug(feed)}_`` (must match ``BlendRow.offer_name``)."""
     g = _normalize_geo(geo)
@@ -1019,6 +1043,10 @@ def main() -> None:
                         print(f"  Warning: could not refresh {geo}/{channel} filters: {e}")
             _zero_blend_offers_on_stream(client, stream, all_offers_by_id=all_offers_by_id)
             print(f"  {geo}/{channel}: no Blend rows — zeroed blend_* offers")
+
+    kelkoo5_refreshed = _refresh_all_blend_kelkoo5_offer_payloads(client)
+    if kelkoo5_refreshed:
+        print(f"Kelkoo5 feed template: refreshed {kelkoo5_refreshed} blend_*_kelkoo5_* offer(s).")
 
     print("Refreshing device_type filters on all Blend desktop/mobile flows ...")
     n_filters, filter_errors = refresh_all_blend_device_stream_filters(

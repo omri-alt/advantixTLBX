@@ -239,6 +239,17 @@ try:
 except Exception:
     BLEND_CAP_PROGRESS_INTERVAL_HOURS = 3.0
 BLEND_CAP_PROGRESS_INTERVAL_HOURS = max(0.5, min(24.0, BLEND_CAP_PROGRESS_INTERVAL_HOURS))
+# Keitaro report for Blend cap progress / Trillion+ZP cap guards (``interval: today`` + grouping).
+BLEND_CAP_REPORT_TIMEZONE = (
+    os.getenv("BLEND_CAP_REPORT_TIMEZONE") or "America/Danmarkshavn"
+).strip()
+_blend_cap_metric = (os.getenv("BLEND_CAP_CLICK_METRIC") or "clicks").strip().lower()
+BLEND_CAP_CLICK_METRIC = (
+    _blend_cap_metric
+    if _blend_cap_metric
+    in ("clicks", "campaign_unique_clicks", "stream_unique_clicks", "global_unique_clicks")
+    else "clicks"
+)
 ZEROPARK_BLEND_CAP_SPREADSHEET_ID = (
     os.getenv("ZEROPARK_BLEND_CAP_SPREADSHEET_ID")
     or "1iqoRssaf3ub-ETGtHphIe_RtK_e-BT-QoGfwe1BY6vw"
@@ -380,11 +391,16 @@ KELKOO_ACCOUNT_ID_2 = (os.getenv("KELKOO_ACCOUNT_ID_2") or "").strip() or None
 FEED1_KELKOO_ACCOUNT_ID = (os.getenv("FEED1_KELKOO_ACCOUNT_ID") or "").strip() or KELKOO_ACCOUNT_ID
 FEED2_KELKOO_ACCOUNT_ID = (os.getenv("FEED2_KELKOO_ACCOUNT_ID") or "").strip() or (KELKOO_ACCOUNT_ID_2 or "")
 
-# Blend / Keitaro offer URLs for ``feed=kelkoo5`` rows (permanentLinkGo account id).
+# Kelkoo feed 5 publisher account (Nipuhim intentix template + Blend kelkoo5). Not feed1.
 FEED5_KELKOO_ACCOUNT_ID = (os.getenv("FEED5_KELKOO_ACCOUNT_ID") or "").strip()
 if not FEED5_KELKOO_ACCOUNT_ID:
     FEED5_KELKOO_ACCOUNT_ID = _read_env_fallback("FEED5_KELKOO_ACCOUNT_ID")
-FEED5_KELKOO_ACCOUNT_ID = (FEED5_KELKOO_ACCOUNT_ID or "").strip() or KELKOO_ACCOUNT_ID
+FEED5_KELKOO_ACCOUNT_ID = (
+    (FEED5_KELKOO_ACCOUNT_ID or "").strip() or "696d41b1-490f-4ee1-90c5-113efff53cb6"
+)
+FEED5_KELKOO_PUBLISHER_SUB_ID = (
+    os.getenv("FEED5_KELKOO_PUBLISHER_SUB_ID") or "intentix"
+).strip()
 
 
 def _parse_feed5_merchants_geos() -> tuple[str, ...] | None:

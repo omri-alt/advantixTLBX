@@ -2,7 +2,11 @@
 Blend daily click-cap progress by geo × device (desktop / mobile).
 
 Reads targets from the Blend sheet (device-weighted clickCap) and today's clicks from
-Keitaro reports on the Blend campaign. Cached to disk; refreshed every 3 hours by default.
+Keitaro ``report/build`` on the Blend campaign — same shape as the admin UI report:
+``interval: today`` + timezone, ``campaign_id IN_LIST``, grouping ``country`` + ``device_type``.
+
+``BlendTrCapGuard`` / ``BlendZpCapGuard`` refresh this on each run (default every 20 minutes)
+and pause traffic sources when clicks meet the device-weighted cap.
 """
 from __future__ import annotations
 
@@ -30,8 +34,30 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def report_timezone() -> str:
+    from config import BLEND_CAP_REPORT_TIMEZONE
+
+    tz = (BLEND_CAP_REPORT_TIMEZONE or "America/Danmarkshavn").strip()
+    return tz or "America/Danmarkshavn"
+
+
+def click_metric_name() -> str:
+    from config import BLEND_CAP_CLICK_METRIC
+
+    return (BLEND_CAP_CLICK_METRIC or "clicks").strip().lower()
+
+
 def _today_utc() -> str:
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def _today_in_report_tz() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo(report_timezone())).date().isoformat()
+    except Exception:
+        return _today_utc()
 
 
 def cache_path() -> Path:
@@ -94,9 +120,14 @@ def _rows_from_report(report: Any) -> List[dict]:
     return []
 
 
-def _row_clicks(row: dict) -> int:
+def _row_clicks(row: dict, *, metric: Optional[str] = None) -> int:
     lk = {str(k).lower(): v for k, v in row.items()}
-    for k in ("clicks", "campaign_unique_clicks", "global_unique_clicks", "stream_unique_clicks"):
+    primary = (metric or click_metric_name()).strip().lower()
+    fallbacks = [primary]
+    for k in ("clicks", "campaign_unique_clicks", "stream_unique_clicks", "global_unique_clicks"):
+        if k not in fallbacks:
+            fallbacks.append(k)
+    for k in fallbacks:
         if k in lk and lk[k] is not None:
             try:
                 return max(0, int(float(lk[k])))
@@ -159,95 +190,78 @@ def _targets_from_blend_sheet() -> Tuple[Dict[Tuple[str, str], float], int, Opti
     return dict(targets), len(rows), None
 
 
-def _report_payloads_today(campaign_id: int, day: str) -> List[Dict[str, Any]]:
-    base_range = {"from": f"{day} 00:00:00", "to": f"{day} 23:59:59"}
-    filt = [{"name": "campaign_id", "operator": "EQUALS", "expression": campaign_id}]
-    groupings = [
-        ["country", "device_type"],
-        ["device_type", "country"],
-        ["country", "device_type", "campaign_id"],
-    ]
-    payloads: List[Dict[str, Any]] = []
-    for grouping in groupings:
-        payloads.append(
+def _keitaro_cap_report_payload(campaign_id: int) -> Dict[str, Any]:
+    """Match Keitaro admin report: today + timezone, Blend campaign, country × device_type."""
+    metric = click_metric_name()
+    metrics = [metric]
+    if metric != "clicks":
+        metrics.append("clicks")
+    if metric != "campaign_unique_clicks":
+        metrics.append("campaign_unique_clicks")
+    return {
+        "range": {"interval": "today", "timezone": report_timezone()},
+        "grouping": ["country", "device_type"],
+        "metrics": metrics,
+        "filters": [
             {
-                "range": base_range,
-                "grouping": grouping,
-                "metrics": ["clicks"],
-                "filters": filt,
+                "name": "campaign_id",
+                "operator": "IN_LIST",
+                "expression": [int(campaign_id)],
             }
-        )
-        payloads.append(
-            {
-                "range": {"interval": "today", "timezone": "UTC"},
-                "grouping": grouping,
-                "metrics": ["clicks"],
-                "filters": filt,
-            }
-        )
-    # Unfiltered by campaign — filter rows in code if API ignores filters.
-    payloads.append(
-        {
-            "range": base_range,
-            "grouping": ["country", "device_type"],
-            "metrics": ["clicks"],
-        }
-    )
-    return payloads
+        ],
+        "limit": 500,
+    }
 
 
-def _clicks_from_keitaro_today(campaign_id: int, day: str) -> Tuple[Dict[Tuple[str, str], int], Optional[str]]:
+def _clicks_from_keitaro_today(
+    campaign_id: int,
+) -> Tuple[Dict[Tuple[str, str], int], Optional[str], Dict[str, Any]]:
     from config import KEITARO_API_KEY
 
+    meta = {
+        "campaign_id": campaign_id,
+        "report_timezone": report_timezone(),
+        "click_metric": click_metric_name(),
+        "calendar_day": _today_in_report_tz(),
+    }
     if not (KEITARO_API_KEY or "").strip():
-        return {}, "KEITARO_API_KEY not set"
+        return {}, "KEITARO_API_KEY not set", meta
 
     client = KeitaroClient()
-    last_err: Optional[str] = None
+    payload = _keitaro_cap_report_payload(campaign_id)
+    meta["report_payload"] = payload
+    try:
+        report = client.build_report(payload)
+    except KeitaroClientError as e:
+        return {}, str(e), meta
+    except Exception as e:
+        return {}, str(e), meta
+
     clicks: Dict[Tuple[str, str], int] = defaultdict(int)
-
-    for payload in _report_payloads_today(campaign_id, day):
-        try:
-            report = client.build_report(payload)
-        except KeitaroClientError as e:
-            last_err = str(e)
+    metric = click_metric_name()
+    for row in _rows_from_report(report):
+        geo = _row_country(row)
+        ch = _normalize_device_channel(_row_device_type(row))
+        if not geo or len(geo) != 2 or not ch:
             continue
-        except Exception as e:
-            last_err = str(e)
-            continue
+        clicks[(geo, ch)] += _row_clicks(row, metric=metric)
 
-        for row in _rows_from_report(report):
-            geo = _row_country(row)
-            ch = _normalize_device_channel(_row_device_type(row))
-            if not geo or len(geo) != 2 or not ch:
-                continue
-            lk = {str(k).lower(): v for k, v in row.items()}
-            cid = lk.get("campaign_id")
-            if cid is not None and str(cid).strip() not in ("", str(campaign_id)):
-                try:
-                    if int(cid) != campaign_id:
-                        continue
-                except (TypeError, ValueError):
-                    pass
-            clicks[(geo, ch)] += _row_clicks(row)
-
-        if clicks:
-            return dict(clicks), None
-
-    if clicks:
-        return dict(clicks), None
-    return {}, last_err or "Keitaro report returned no geo/device rows"
+    if not clicks:
+        return {}, "Keitaro report returned no geo/device rows", meta
+    return dict(clicks), None, meta
 
 
 def build_cap_progress_payload(*, reason: str = "scheduled") -> Dict[str, Any]:
-    day = _today_utc()
+    day = _today_in_report_tz()
     targets, blend_rows, sheet_err = _targets_from_blend_sheet()
     campaign_err: Optional[str] = None
     clicks: Dict[Tuple[str, str], int] = {}
+    report_meta: Dict[str, Any] = {}
+    campaign_id: Optional[int] = None
     try:
         client = KeitaroClient()
-        cid = _resolve_blend_campaign_id(client)
-        clicks, campaign_err = _clicks_from_keitaro_today(cid, day)
+        campaign_id = _resolve_blend_campaign_id(client)
+        clicks, campaign_err, report_meta = _clicks_from_keitaro_today(campaign_id)
     except Exception as e:
         campaign_err = str(e)
 
@@ -280,7 +294,11 @@ def build_cap_progress_payload(*, reason: str = "scheduled") -> Dict[str, Any]:
     now = _utc_now_iso()
     interval_h = refresh_interval_hours()
     return {
+        "calendar_day": day,
         "calendar_day_utc": day,
+        "report_timezone": report_meta.get("report_timezone") or report_timezone(),
+        "click_metric": report_meta.get("click_metric") or click_metric_name(),
+        "campaign_id": campaign_id or report_meta.get("campaign_id"),
         "updated_utc": now,
         "next_refresh_utc": (
             datetime.now(timezone.utc) + timedelta(hours=interval_h)
@@ -289,6 +307,7 @@ def build_cap_progress_payload(*, reason: str = "scheduled") -> Dict[str, Any]:
         "reason": reason,
         "blend_rows": blend_rows,
         "campaign_alias": BLEND_CAMPAIGN_ALIAS,
+        "keitaro_report": report_meta,
         "segments": segments,
         "summary": {
             "segments": len(segments),
@@ -330,7 +349,7 @@ def read_cache() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
 def cache_is_stale(data: Optional[Dict[str, Any]], saved_utc: Optional[str]) -> bool:
     if not data:
         return True
-    if data.get("calendar_day_utc") != _today_utc():
+    if data.get("calendar_day") != _today_in_report_tz() and data.get("calendar_day_utc") != _today_in_report_tz():
         return True
     if not saved_utc:
         return True
