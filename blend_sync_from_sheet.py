@@ -78,7 +78,6 @@ from integrations.blend_device import (
     normalize_device_mode,
     resolve_blend_row_weights,
 )
-from integrations.blend_legacy_review import _column_letter, _float_to_sheet
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
 from integrations.monetization_geo import geo_for_yadore
@@ -149,6 +148,21 @@ class BlendRow:
 
 def _normalize_geo(g: str) -> str:
     return (g or "").strip().lower()[:2]
+
+
+def _column_letter(one_based_col: int) -> str:
+    out = ""
+    n = int(one_based_col)
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        out = chr(65 + rem) + out
+    return out
+
+
+def _float_to_sheet(v: float) -> str:
+    if float(v).is_integer():
+        return str(int(v))
+    return f"{float(v):.6f}".rstrip("0").rstrip(".")
 
 
 def _parse_click_cap(v: Any) -> Optional[float]:
@@ -409,12 +423,12 @@ def _blend_yadore_action_payload(geo: str, merchant_url: str) -> str:
 
 def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> str:
     """
-    kelkoo1/kelkoo2: shopli rain + encoded merchantUrl. kelkoo5: feed5 intentix macro template.
+    kelkoo1/kelkoo2: shopli rain + encoded merchantUrl. kelkoo5: intentix path + encoded merchantUrl.
     Adexa/Yadore: shopli rain shells with sheet geo + offerUrl as merchant target; ``{subid}`` for click id.
     """
     ft = (feed_tag or "").strip().lower()
     if ft == "kelkoo5":
-        return build_kelkoo_feed5_action_payload()
+        return build_kelkoo_feed5_action_payload(geo, _blend_merchant_url_https(offer_url))
     if ft in ("kelkoo1", "kelkoo2"):
         return kelkoo_keitaro_action_payload(geo, offer_url, ft)
     if ft == "adexa":
@@ -765,27 +779,6 @@ def _upsert_offer(client: KeitaroClient, name: str, url: str) -> int:
     return oid
 
 
-_BLEND_KELKOO5_OFFER_RE = re.compile(r"^blend_[a-z]{2}_kelkoo5_", re.IGNORECASE)
-
-
-def _refresh_all_blend_kelkoo5_offer_payloads(client: KeitaroClient) -> int:
-    """Update every ``blend_*_kelkoo5_*`` offer to the feed5 intentix template (incl. share=0 orphans)."""
-    feed5_url = build_kelkoo_feed5_action_payload()
-    updated = 0
-    for o in client.get_offers():
-        name = (o.get("name") or "").strip()
-        if not _BLEND_KELKOO5_OFFER_RE.match(name):
-            continue
-        oid = o.get("id")
-        if oid is None:
-            continue
-        if (o.get("action_payload") or "") == feed5_url:
-            continue
-        client.update_offer(int(oid), {"action_payload": feed5_url})
-        updated += 1
-    return updated
-
-
 def _blend_feed_prefix(geo: str, feed_tag: str) -> str:
     """Keitaro offer name prefix ``blend_{geo}_{slug(feed)}_`` (must match ``BlendRow.offer_name``)."""
     g = _normalize_geo(geo)
@@ -1126,10 +1119,6 @@ def main() -> None:
             )
             if detached:
                 print(f"  {geo}/{channel}: no Blend rows — detached {detached} blend_* offer(s)")
-
-    kelkoo5_refreshed = _refresh_all_blend_kelkoo5_offer_payloads(client)
-    if kelkoo5_refreshed:
-        print(f"Kelkoo5 feed template: refreshed {kelkoo5_refreshed} blend_*_kelkoo5_* offer(s).")
 
     print("Refreshing device_type filters on all Blend desktop/mobile flows ...")
     n_filters, filter_errors = refresh_all_blend_device_stream_filters(

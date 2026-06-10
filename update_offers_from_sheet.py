@@ -21,7 +21,7 @@ Traffic split (Nipuhim):
   python update_offers_from_sheet.py --sheet "2026-03-10_offers"
   python update_offers_from_sheet.py --sheet "2026-03-10_offers" --max-offers 5
   python update_offers_from_sheet.py --sheet "2026-03-10_offers_2" --account 2   # second Kelkoo account
-  python update_offers_from_sheet.py --sheet "2026-03-10_offers_5" --account 5   # feed5: intentix Kelkoo macro template
+  python update_offers_from_sheet.py --sheet "2026-03-10_offers_5" --account 5   # feed5: intentix path + encoded product URL
 
 Requires credentials.json in project root (Google service account). Share the sheet with
 the service account email (see credentials.json client_email).
@@ -222,17 +222,12 @@ def main():
         kelkoo_account_id = FEED1_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID
     feed = 1 if account == 5 else account
 
-    feed5_action_payload: str | None = None
-    if account == 5:
-        try:
-            feed5_action_payload = build_nipuhim_feed5_action_payload()
-        except ValueError as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-
     print(f"Reading sheet: {sheet_name} (spreadsheet {SPREADSHEET_ID})")
     print(f"Max offers per geo: {max_offers}, feed: {feed_prefix} (account {account})")
-    if feed5_action_payload:
+    if account == 5:
+        if not (FEED5_KELKOO_ACCOUNT_ID or "").strip():
+            print("Error: FEED5_KELKOO_ACCOUNT_ID is required for Kelkoo feed5 offers")
+            sys.exit(1)
         print(f"Feed5 URL template: intentix / account {FEED5_KELKOO_ACCOUNT_ID}")
     try:
         by_geo, rows_by_geo = read_sheet_today_offers(sheet_name, max_per_geo=max_offers)
@@ -397,8 +392,15 @@ def main():
             new_count = need_count - len(offers)
             print(f"  {geo}: only {len(offers)} offers, creating {new_count} more (target {need_count}) ...")
             try:
+                start_idx = len(offers)
+                new_urls = store_links[start_idx : start_idx + new_count]
                 new_ids = create_next_geo_offers(
-                    geo, count=new_count, feed_prefix=feed_prefix, account_id=kelkoo_account_id, feed=feed
+                    geo,
+                    count=new_count,
+                    feed_prefix=feed_prefix,
+                    account_id=kelkoo_account_id,
+                    feed=feed,
+                    product_urls=new_urls or None,
                 )
                 print(f"  {geo}: created {new_ids}")
                 # Refresh so we have only feed-prefixed offers (no old-format fr_product1 etc.)
@@ -528,8 +530,8 @@ def main():
             offer = offers[i]
             link = store_links[i]
             if account == 5:
-                new_payload = feed5_action_payload or build_nipuhim_feed5_action_payload()
-                log_url = "feed5 intentix template (sub_id_2/sub_id_3)"
+                new_payload = build_nipuhim_feed5_action_payload(geo, link)
+                log_url = link
             else:
                 new_payload = build_offer_action_payload(
                     geo, link, account_id=kelkoo_account_id, feed=feed
