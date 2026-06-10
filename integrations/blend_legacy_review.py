@@ -26,6 +26,7 @@ from integrations.blend_device import (
     classify_device_mode,
     device_mode_from_sheet_row,
     normalize_device_mode,
+    resolve_blend_row_weights,
     split_click_cap_weights,
 )
 from integrations.keitaro import KeitaroClient, KeitaroClientError
@@ -284,19 +285,14 @@ def load_blend_review_sheet(
         weight_mobile_raw = _get_cell(row, idx, "weight_mobile")
         cpc_desktop_raw = _get_cell(row, idx, "cpc_desktop")
         cpc_mobile_raw = _get_cell(row, idx, "cpc_mobile")
-        current_mode, current_w_d, current_w_m = device_mode_from_sheet_row(
-            device_mode_raw, click_cap, cpc_desktop_raw, cpc_mobile_raw
+        current_mode, current_w_d, current_w_m = resolve_blend_row_weights(
+            device_mode_raw,
+            click_cap,
+            cpc_desktop_raw,
+            cpc_mobile_raw,
+            weight_desktop_raw=weight_desktop_raw,
+            weight_mobile_raw=weight_mobile_raw,
         )
-        wd_cell = _parse_float(weight_desktop_raw)
-        wm_cell = _parse_float(weight_mobile_raw)
-        if (
-            wd_cell is not None
-            and wm_cell is not None
-            and normalize_device_mode(device_mode_raw or current_mode) == current_mode
-            and current_mode != DEVICE_MODE_LEGACY
-        ):
-            current_w_d = wd_cell
-            current_w_m = wm_cell
         if legacy_only and current_mode != DEVICE_MODE_LEGACY:
             continue
         out.append(

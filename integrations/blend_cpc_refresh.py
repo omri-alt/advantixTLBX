@@ -16,12 +16,14 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from blend_sync_from_sheet import POTENTIAL_TAB_BY_FEED, SPREADSHEET_ID, get_sheets_service
 from config import BLEND_CPC_REFRESH_LOOKBACK_DAYS, BLEND_CPC_REFRESH_STATE_PATH
+from integrations.blend_device import resolve_blend_row_weights
 from integrations.blend_legacy_review import (
     BlendReviewRow,
     DEFAULT_DATE_FROM,
     DEFAULT_DATE_TO,
     _column_letter,
     _epc_to_sheet,
+    _float_to_sheet,
     _parse_float,
     _quoted_sheet_name,
     _get_cell,
@@ -154,6 +156,38 @@ def _build_cpc_updates(
     }
 
 
+def _batch_write_device_weights(
+    service,
+    header_index: Dict[str, int],
+    updates: List[Tuple[int, str, str]],
+) -> None:
+    if not updates:
+        return
+    wd_idx = header_index.get("weight_desktop")
+    wm_idx = header_index.get("weight_mobile")
+    if wd_idx is None or wm_idx is None:
+        raise ValueError("Blend sheet missing weight_desktop/weight_mobile columns")
+    quoted = _quoted_sheet_name()
+    data = []
+    for sheet_row, weight_d, weight_m in updates:
+        data.append(
+            {
+                "range": f"'{quoted}'!{_column_letter(wd_idx + 1)}{sheet_row}",
+                "values": [[weight_d]],
+            }
+        )
+        data.append(
+            {
+                "range": f"'{quoted}'!{_column_letter(wm_idx + 1)}{sheet_row}",
+                "values": [[weight_m]],
+            }
+        )
+    service.values().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={"valueInputOption": "RAW", "data": data},
+    ).execute()
+
+
 def _batch_write_cpcs(service, header_index: Dict[str, int], updates: List[Tuple[int, str, str]]) -> None:
     if not updates:
         return
@@ -206,8 +240,10 @@ def refresh_blend_cpcs(
             "updated_utc": _utc_now_iso(),
             "date_window": None,
             "row_count": 0,
-            "updated_rows": 0,
-            "changed_rows": 0,
+            "changed_cpc_rows": 0,
+            "changed_weight_rows": 0,
+            "updated_cpc_rows": 0,
+            "updated_weight_rows": 0,
             "rows": [],
         }
         _write_state(payload)
@@ -219,16 +255,37 @@ def refresh_blend_cpcs(
     stats = fetch_blend_offer_device_epc(d_from=start, d_to=end)
     fallback_map = _load_potential_fallbacks(service, feed_tags={row.feed_tag for row in sheet.rows})
 
-    pending_updates: List[Tuple[int, str, str]] = []
+    pending_cpc_updates: List[Tuple[int, str, str]] = []
+    pending_weight_updates: List[Tuple[int, str, str]] = []
     row_summaries: List[Dict[str, Any]] = []
-    changed_rows = 0
+    changed_cpc_rows = 0
+    changed_weight_rows = 0
     for row in sheet.rows:
         fallback = _fallback_for_row(row, fallback_map)
         new_d, new_m, meta = _build_cpc_updates(row, epc_stats=stats, fallback=fallback)
-        changed = new_d != (row.cpc_desktop_raw or "").strip() or new_m != (row.cpc_mobile_raw or "").strip()
-        if changed:
-            changed_rows += 1
-            pending_updates.append((row.sheet_row, new_d, new_m))
+        cpc_changed = new_d != (row.cpc_desktop_raw or "").strip() or new_m != (row.cpc_mobile_raw or "").strip()
+        if cpc_changed:
+            changed_cpc_rows += 1
+            pending_cpc_updates.append((row.sheet_row, new_d, new_m))
+
+        _, weight_d, weight_m = resolve_blend_row_weights(
+            row.device_mode_raw,
+            row.click_cap,
+            new_d,
+            new_m,
+            weight_desktop_raw=row.weight_desktop_raw,
+            weight_mobile_raw=row.weight_mobile_raw,
+        )
+        weight_d_s = _float_to_sheet(weight_d)
+        weight_m_s = _float_to_sheet(weight_m)
+        weights_changed = (
+            weight_d_s != (row.weight_desktop_raw or "").strip()
+            or weight_m_s != (row.weight_mobile_raw or "").strip()
+        )
+        if weights_changed:
+            changed_weight_rows += 1
+            pending_weight_updates.append((row.sheet_row, weight_d_s, weight_m_s))
+
         row_summaries.append(
             {
                 "sheet_row": row.sheet_row,
@@ -240,13 +297,19 @@ def refresh_blend_cpcs(
                 "cpc_mobile_before": row.cpc_mobile_raw,
                 "cpc_desktop_after": new_d,
                 "cpc_mobile_after": new_m,
-                "changed": changed,
+                "weight_desktop_before": row.weight_desktop_raw,
+                "weight_mobile_before": row.weight_mobile_raw,
+                "weight_desktop_after": weight_d_s,
+                "weight_mobile_after": weight_m_s,
+                "cpc_changed": cpc_changed,
+                "weights_changed": weights_changed,
                 **meta,
             }
         )
 
     if not dry_run:
-        _batch_write_cpcs(service, sheet.header_index, pending_updates)
+        _batch_write_cpcs(service, sheet.header_index, pending_cpc_updates)
+        _batch_write_device_weights(service, sheet.header_index, pending_weight_updates)
 
     payload = {
         "ok": True,
@@ -258,8 +321,10 @@ def refresh_blend_cpcs(
             "lookback_days": (end - start).days + 1,
         },
         "row_count": len(sheet.rows),
-        "changed_rows": changed_rows,
-        "updated_rows": len(pending_updates) if not dry_run else 0,
+        "changed_cpc_rows": changed_cpc_rows,
+        "changed_weight_rows": changed_weight_rows,
+        "updated_cpc_rows": len(pending_cpc_updates) if not dry_run else 0,
+        "updated_weight_rows": len(pending_weight_updates) if not dry_run else 0,
         "rows": row_summaries,
     }
     _write_state(payload)

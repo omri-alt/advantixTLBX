@@ -27,12 +27,12 @@ def _run_once() -> None:
     res = refresh_blend_cpcs(dry_run=False)
     if res.get("ok"):
         logger.info(
-            "Blend CPC refresh done: window=%s..%s rows=%s changed=%s updated=%s",
+            "Blend CPC refresh done: window=%s..%s rows=%s cpc_changed=%s weights_changed=%s",
             ((res.get("date_window") or {}).get("from") or ""),
             ((res.get("date_window") or {}).get("to") or ""),
             res.get("row_count"),
-            res.get("changed_rows"),
-            res.get("updated_rows"),
+            res.get("changed_cpc_rows"),
+            res.get("changed_weight_rows"),
         )
     else:
         logger.error("Blend CPC refresh failed")

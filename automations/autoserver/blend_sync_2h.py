@@ -16,10 +16,10 @@ class BlendSync2h(BaseAutomation):
     """Every 2 hours: re-sync the Blend sheet to the Keitaro Blend campaign.
 
     Runs ``blend_sync_from_sheet.py`` which:
-      - Prunes/zeroes Blend offers not monetized in the current potential snapshot
-        (kept attached at share=0 — operators can re-enable later).
+      - Detaches Blend offers not monetized in the current potential snapshot.
       - Re-checks Kelkoo monetization on auto='v' sheet rows.
-      - Re-applies clickCap-weighted shares per geo flow.
+      - Refreshes device weights on the sheet when clickCap/CPC no longer match.
+      - Re-applies clickCap-weighted shares per geo desktop/mobile flow.
 
     Cadence: even hours (0, 2, 4, ..., 22) on the existing hourly scheduler tick.
     """

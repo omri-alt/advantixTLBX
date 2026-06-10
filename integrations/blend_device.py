@@ -117,6 +117,47 @@ def normalize_device_mode(mode: str) -> str:
     return DEVICE_MODE_LEGACY
 
 
+def sheet_weights_match_cap(
+    weight_desktop: Optional[float],
+    weight_mobile: Optional[float],
+    click_cap: float,
+    *,
+    tolerance: float = 0.5,
+) -> bool:
+    """True when stored weights look intentional for this clickCap (sum ≈ cap)."""
+    if weight_desktop is None or weight_mobile is None:
+        return False
+    cap = max(0.0, float(click_cap))
+    if cap <= 0:
+        return False
+    return abs((float(weight_desktop) + float(weight_mobile)) - cap) <= tolerance
+
+
+def resolve_blend_row_weights(
+    mode_raw: str,
+    click_cap: float,
+    desktop_raw: Any = None,
+    mobile_raw: Any = None,
+    *,
+    weight_desktop_raw: Any = None,
+    weight_mobile_raw: Any = None,
+) -> Tuple[str, float, float]:
+    """
+    Device mode + desktop/mobile weights for a Blend row.
+    Recomputes from clickCap/CPC unless sheet weights already sum to clickCap.
+    """
+    mode, w_d, w_m = device_mode_from_sheet_row(mode_raw, click_cap, desktop_raw, mobile_raw)
+    wd_cell = _parse_cpc_value(weight_desktop_raw) if _has_cpc_cell_value(weight_desktop_raw) else None
+    wm_cell = _parse_cpc_value(weight_mobile_raw) if _has_cpc_cell_value(weight_mobile_raw) else None
+    if (
+        sheet_weights_match_cap(wd_cell, wm_cell, click_cap)
+        and normalize_device_mode(mode_raw or mode) == mode
+        and mode != DEVICE_MODE_LEGACY
+    ):
+        return mode, float(wd_cell), float(wm_cell)
+    return mode, w_d, w_m
+
+
 def device_mode_from_sheet_row(
     mode_raw: str,
     click_cap: float,

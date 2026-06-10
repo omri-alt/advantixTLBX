@@ -71,14 +71,14 @@ from assistance import (
     refresh_all_blend_device_stream_filters,
     set_blend_device_stream_filters,
     set_flow_offers_weighted,
-    set_flow_offers_weighted_keep_zeros,
 )
 from integrations.blend_device import (
     DEVICE_MODE_LEGACY,
     blend_stream_weight_for_channel,
-    device_mode_from_sheet_row,
     normalize_device_mode,
+    resolve_blend_row_weights,
 )
+from integrations.blend_legacy_review import _column_letter, _float_to_sheet
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
 from integrations.monetization_geo import geo_for_yadore
@@ -231,12 +231,14 @@ def read_blend_rows(service, only_geo: Optional[str] = None) -> List[BlendRow]:
             continue
         if only_geo and geo != only_geo:
             continue
-        mode, w_d, w_m = device_mode_from_sheet_row(mode_raw, cap, cpc_d, cpc_m)
-        wd_cell = _parse_click_cap(get_cell(row, "weight_desktop"))
-        wm_cell = _parse_click_cap(get_cell(row, "weight_mobile"))
-        if wd_cell is not None and wm_cell is not None and normalize_device_mode(mode_raw or mode) == mode:
-            if mode != DEVICE_MODE_LEGACY:
-                w_d, w_m = wd_cell, wm_cell
+        mode, w_d, w_m = resolve_blend_row_weights(
+            mode_raw,
+            cap,
+            cpc_d,
+            cpc_m,
+            weight_desktop_raw=get_cell(row, "weight_desktop"),
+            weight_mobile_raw=get_cell(row, "weight_mobile"),
+        )
         out.append(
             BlendRow(
                 brand_name=brand,
@@ -252,6 +254,82 @@ def read_blend_rows(service, only_geo: Optional[str] = None) -> List[BlendRow]:
             )
         )
     return out
+
+
+def _sync_device_weights_to_sheet(
+    service,
+    *,
+    only_geo: Optional[str] = None,
+    dry_run: bool = False,
+) -> int:
+    """Write weight_desktop/weight_mobile when they no longer match clickCap + CPC."""
+    quoted = BLEND_SHEET_NAME.replace("'", "''")
+    result = service.values().get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A:Z").execute()
+    rows = result.get("values") or []
+    if len(rows) < 2:
+        return 0
+    header = [str(c).strip() for c in rows[0]]
+    idx = {name.strip().lower(): i for i, name in enumerate(header)}
+    wd_idx = idx.get("weight_desktop")
+    wm_idx = idx.get("weight_mobile")
+    if wd_idx is None or wm_idx is None:
+        return 0
+
+    def get_cell(row: list, name: str) -> str:
+        i = idx.get((name or "").strip().lower())
+        if i is None or i >= len(row):
+            return ""
+        return str(row[i] or "").strip()
+
+    updates: List[Dict[str, Any]] = []
+    changed = 0
+    for sheet_row, row in enumerate(rows[1:], start=2):
+        brand = get_cell(row, "brandName")
+        geo = _normalize_geo(get_cell(row, "geo"))
+        cap = _parse_click_cap(get_cell(row, "clickCap"))
+        if not brand or not geo or cap is None or cap <= 0:
+            continue
+        if only_geo and geo != only_geo:
+            continue
+        mode_raw = get_cell(row, "device_mode")
+        cpc_d = get_cell(row, "cpc_desktop")
+        cpc_m = get_cell(row, "cpc_mobile")
+        wd_raw = get_cell(row, "weight_desktop")
+        wm_raw = get_cell(row, "weight_mobile")
+        _, w_d, w_m = resolve_blend_row_weights(
+            mode_raw,
+            cap,
+            cpc_d,
+            cpc_m,
+            weight_desktop_raw=wd_raw,
+            weight_mobile_raw=wm_raw,
+        )
+        w_d_s = _float_to_sheet(w_d)
+        w_m_s = _float_to_sheet(w_m)
+        if w_d_s == wd_raw and w_m_s == wm_raw:
+            continue
+        changed += 1
+        if dry_run:
+            continue
+        updates.append(
+            {
+                "range": f"'{quoted}'!{_column_letter(wd_idx + 1)}{sheet_row}",
+                "values": [[w_d_s]],
+            }
+        )
+        updates.append(
+            {
+                "range": f"'{quoted}'!{_column_letter(wm_idx + 1)}{sheet_row}",
+                "values": [[w_m_s]],
+            }
+        )
+
+    if updates and not dry_run:
+        service.values().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"valueInputOption": "RAW", "data": updates},
+        ).execute()
+    return changed
 
 
 def _kelkoo_api_key_for_feed_tag(feed_tag: str) -> Optional[str]:
@@ -552,28 +630,37 @@ def _build_channel_offer_weights(
     return weights
 
 
-def _zero_blend_offers_on_stream(
+def _detach_blend_offers_from_stream(
     client: KeitaroClient,
     stream: Dict[str, Any],
     *,
     all_offers_by_id: Dict[int, str],
-) -> None:
-    """Set share=0 for blend_* offers on a legacy undivided geo stream."""
+) -> int:
+    """Remove blend_* offers from a flow; keep any non-blend offers unchanged."""
     sid = stream.get("id")
     if sid is None:
-        return
+        return 0
     offers_payload: List[Dict[str, Any]] = []
+    detached = 0
     for slot in stream.get("offers") or []:
         oid_raw = slot.get("offer_id")
         if oid_raw is None:
             continue
         oid = int(oid_raw)
         name = all_offers_by_id.get(oid, "")
-        if not name.startswith("blend_"):
+        if name.startswith("blend_"):
+            detached += 1
             continue
-        offers_payload.append({"offer_id": oid, "state": "active", "share": 0})
-    if offers_payload:
+        offers_payload.append(
+            {
+                "offer_id": oid,
+                "state": "active",
+                "share": int(slot.get("share") or 0),
+            }
+        )
+    if detached:
         client.update_stream(int(sid), {"offers": offers_payload})
+    return detached
 
 
 def _sync_geo_device_streams(
@@ -611,39 +698,35 @@ def _sync_geo_device_streams(
         if sid is None:
             continue
         sid_i = int(sid)
-        active_ids = set(offer_id_to_weight.keys())
-        existing_attached: Set[int] = set()
+        attached_blend = 0
         for slot in stream.get("offers") or []:
             oidr = slot.get("offer_id")
-            if oidr is not None:
-                existing_attached.add(int(oidr))
-        zero_keep_ids: List[int] = []
-        for oid in existing_attached:
-            if oid in active_ids:
+            if oidr is None:
                 continue
-            name = all_offers_by_id.get(oid, "")
+            name = all_offers_by_id.get(int(oidr), "")
             if name.startswith("blend_"):
-                zero_keep_ids.append(oid)
+                attached_blend += 1
 
         if offer_id_to_weight:
-            if zero_keep_ids:
-                set_flow_offers_weighted_keep_zeros(sid_i, offer_id_to_weight, zero_keep_ids)
-            else:
-                set_flow_offers_weighted(sid_i, offer_id_to_weight)
+            set_flow_offers_weighted(sid_i, offer_id_to_weight)
             streams_updated += 1
+            detached = max(0, attached_blend - len(offer_id_to_weight))
             print(
-                f"  {geo}/{channel}: {len(offer_id_to_weight)} offer(s) weighted; "
-                f"+{len(zero_keep_ids)} at share=0"
+                f"  {geo}/{channel}: {len(offer_id_to_weight)} offer(s) weighted"
+                + (f"; detached {detached} inactive blend_* offer(s)" if detached else "")
             )
-        elif zero_keep_ids or existing_attached:
-            _zero_blend_offers_on_stream(client, stream, all_offers_by_id=all_offers_by_id)
+        elif attached_blend:
+            detached = _detach_blend_offers_from_stream(
+                client, stream, all_offers_by_id=all_offers_by_id
+            )
             streams_updated += 1
-            print(f"  {geo}/{channel}: no active offers; zeroed blend_* on stream")
+            print(f"  {geo}/{channel}: no active offers; detached {detached} blend_* offer(s)")
 
     legacy = geo_streams.get("legacy")
     if legacy:
-        _zero_blend_offers_on_stream(client, legacy, all_offers_by_id=all_offers_by_id)
-        print(f"  {geo}: legacy stream blend_* offers set to share=0 (device streams active)")
+        detached = _detach_blend_offers_from_stream(client, legacy, all_offers_by_id=all_offers_by_id)
+        if detached:
+            print(f"  {geo}: legacy stream detached {detached} blend_* offer(s) (device streams active)")
 
     return created_flows, streams_updated
 
@@ -803,12 +886,10 @@ def prune_unmonetized_from_keitaro(
 ) -> Dict[str, Any]:
     """
     For Blend offers that are absent from the current monetized potential snapshot
-    (or not ``monetized*`` in that sheet), set their share to 0 in the geo flow but
-    keep them attached so operators can re-enable them later.
+    (or not ``monetized*`` in that sheet), detach them from the geo flow.
     Feeds listed in ``feeds_sheet_load_failed`` are never modified.
 
-    Returns ``removed`` entries ``(offer_id, geo, feed, reason)`` (kept name for
-    backward compatibility — these offers are zeroed, not detached), ``errors``,
+    Returns ``removed`` entries ``(offer_id, geo, feed, reason)``, ``errors``,
     ``empty_flow_geos``.
     """
     monetized_by_feed: Dict[str, Set[str]] = {}
@@ -844,7 +925,7 @@ def prune_unmonetized_from_keitaro(
             continue
         sid_i = int(sid)
         attached = list(stream.get("offers") or [])
-        zero_ids: List[int] = []
+        detach_ids: List[int] = []
 
         for slot in attached:
             oid_raw = slot.get("offer_id")
@@ -862,26 +943,24 @@ def prune_unmonetized_from_keitaro(
             if name in (monetized_by_feed.get(ft) or set()):
                 continue
             reason = "not monetized in potentialFeed sheet or absent from potential sheet"
-            zero_ids.append(oid)
+            detach_ids.append(oid)
             removed.append((oid, geo, ft, reason))
             msg = (
-                f"Blend prune: zero share for offer id={oid} geo={geo} feed={ft} "
-                f"reason={reason!r} offer_name={name!r} (kept attached)"
+                f"Blend prune: detach offer id={oid} geo={geo} feed={ft} "
+                f"reason={reason!r} offer_name={name!r}"
             )
             if dry_run:
                 print(f"[dry-run] {msg}")
             else:
                 print(msg)
 
-        if not zero_ids:
+        if not detach_ids:
             continue
 
         if dry_run:
             continue
 
-        # Build a payload that keeps every currently-attached offer, but forces
-        # share=0 for the unmonetized ones. Other offers preserve their existing share.
-        zero_set = set(zero_ids)
+        detach_set = set(detach_ids)
         offers_payload: List[Dict[str, Any]] = []
         non_zero_total = 0
         for s in attached:
@@ -889,20 +968,17 @@ def prune_unmonetized_from_keitaro(
             if oidr is None:
                 continue
             oidi = int(oidr)
-            if oidi in zero_set:
-                share = 0
-            else:
-                share = int(s.get("share") or 0)
-                non_zero_total += share
+            if oidi in detach_set:
+                continue
+            share = int(s.get("share") or 0)
+            non_zero_total += share
             offers_payload.append({"offer_id": oidi, "state": "active", "share": share})
 
-        # If zeroing leaves the flow with no positive shares, log a warning so we
-        # notice (Keitaro will accept all-zero, but no traffic will be routed).
         if non_zero_total <= 0:
             empty_flow_geos.append(geo)
             print(
-                f"WARNING: geo {geo} Blend flow has no positive shares after zeroing "
-                f"{len(zero_ids)} unmonetized offer(s)."
+                f"WARNING: geo {geo} Blend flow has no positive shares after detaching "
+                f"{len(detach_ids)} unmonetized offer(s)."
             )
 
         try:
@@ -967,6 +1043,12 @@ def main() -> None:
     deleted = _filter_and_delete_non_monetized_auto_rows(service, only_geo=only_geo)
     if deleted:
         print(f"Auto monetization gate: deleted {deleted} non-monetized Blend rows (auto='v').")
+    weight_rows = _sync_device_weights_to_sheet(service, only_geo=only_geo, dry_run=dry_run)
+    if weight_rows:
+        if dry_run:
+            print(f"Device weights: would update {weight_rows} Blend row(s) (--dry-run).")
+        else:
+            print(f"Device weights: updated {weight_rows} Blend row(s) on sheet.")
     rows = read_blend_rows(service, only_geo=only_geo)
     if not rows:
         print("No valid rows found in Blend sheet.")
@@ -992,9 +1074,7 @@ def main() -> None:
     updated_offers = 0
     created_flows = 0
 
-    # Build a quick lookup of all offer names → ids so we can identify
-    # currently-attached "blend_" offers that aren't in the sheet (those should
-    # remain attached with share=0 instead of being detached).
+    # Build a quick lookup of all offer names → ids so we can detach stale blend_* offers.
     all_offers_by_id: Dict[int, str] = {}
     try:
         for o in client.get_offers():
@@ -1027,7 +1107,7 @@ def main() -> None:
         )
         created_flows += cf
 
-    # Geos with no sheet rows: zero blend_* on all device + legacy streams for that geo.
+    # Geos with no sheet rows: detach blend_* from all device + legacy streams for that geo.
     for geo, ch_streams in streams_map.items():
         if geo in rows_by_geo:
             continue
@@ -1041,8 +1121,11 @@ def main() -> None:
                         set_blend_device_stream_filters(int(sid), geo, channel)
                     except KeitaroClientError as e:
                         print(f"  Warning: could not refresh {geo}/{channel} filters: {e}")
-            _zero_blend_offers_on_stream(client, stream, all_offers_by_id=all_offers_by_id)
-            print(f"  {geo}/{channel}: no Blend rows — zeroed blend_* offers")
+            detached = _detach_blend_offers_from_stream(
+                client, stream, all_offers_by_id=all_offers_by_id
+            )
+            if detached:
+                print(f"  {geo}/{channel}: no Blend rows — detached {detached} blend_* offer(s)")
 
     kelkoo5_refreshed = _refresh_all_blend_kelkoo5_offer_payloads(client)
     if kelkoo5_refreshed:
