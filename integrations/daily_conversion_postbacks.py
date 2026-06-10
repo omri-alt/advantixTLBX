@@ -1,5 +1,5 @@
 """
-Daily conversion postbacks to Keitaro: Kelkoo (per geo), Adexa (single report), Yadore (``/v2/report/detail`` per market).
+Daily conversion postbacks to Keitaro: Kelkoo (per geo), Adexa, Yadore, Shopnomix feed6 (tile + coupons).
 
 State file avoids double-firing after partial runs (see ``DAILY_CONVERSION_POSTBACK_STATE_PATH``).
 """
@@ -410,6 +410,21 @@ def run_kelkoo_feed_postbacks(
 
     summary["ok"] = True
     return summary
+
+
+def _shopnomix_conversion_actions(row: Dict[str, Any]) -> Optional[Tuple[str, str, bool, str]]:
+    """
+    Shopnomix v2 conversion row → Keitaro click postback (CPC = ``revenue`` USD).
+    Skips ``REJECTED``; no separate sale postback (same as Yadore click report).
+    """
+    cid = str(row.get("click_id") or "").strip()
+    if not cid:
+        return None
+    status = str(row.get("status") or "").strip().upper()
+    if status == "REJECTED":
+        return None
+    cpc = _money_scalar(row, ("revenue",))
+    return (cid, cpc, False, "0")
 
 
 def _adexa_stat_actions(stat: Dict[str, Any]) -> Optional[Tuple[str, str, bool, str]]:
@@ -1036,6 +1051,48 @@ def run_yadore_postbacks(
     )
 
 
+def run_shopnomix_postbacks(
+    report_date: str,
+    *,
+    state_path: Path,
+    dry_run: bool,
+    no_resume: bool,
+    session: requests.Session,
+) -> Dict[str, Any]:
+    """
+    Shopnomix feed6: tile + coupons placements in one run (v2 conversion reporting).
+    """
+    from config import shopnomix_reporting_enabled
+    from integrations.shopnomix import ShopnomixClientError, fetch_shopnomix_reporting_conversions
+
+    if not shopnomix_reporting_enabled():
+        return {
+            "ok": False,
+            "error": (
+                "Shopnomix reporting not configured "
+                "(tile+coupons campaign ids and reporting API tokens required)"
+            ),
+        }
+    try:
+        rows, counts = fetch_shopnomix_reporting_conversions(report_date, report_date)
+    except ShopnomixClientError as e:
+        return {"ok": False, "error": str(e)}
+
+    out = run_flat_report_postbacks(
+        "shopnomix",
+        report_date,
+        rows,
+        _shopnomix_conversion_actions,
+        state_path=state_path,
+        dry_run=dry_run,
+        no_resume=no_resume,
+        session=session,
+    )
+    out["tile_rows"] = counts.get("tile", 0)
+    out["coupons_rows"] = counts.get("coupons", 0)
+    return out
+
+
 def run_effinity_mtd_postbacks(
     report_date: str,
     *,
@@ -1196,6 +1253,17 @@ def run_daily_conversion_postbacks_batch(
                 rc = 1
         elif t == "effinity":
             out = run_effinity_mtd_postbacks(report_date, dry_run=dry_run)
+            results.append({"target": t, "summary": out})
+            if not out.get("ok"):
+                rc = 1
+        elif t == "shopnomix":
+            out = run_shopnomix_postbacks(
+                report_date,
+                state_path=state_path,
+                dry_run=dry_run,
+                no_resume=no_resume,
+                session=session,
+            )
             results.append({"target": t, "summary": out})
             if not out.get("ok"):
                 rc = 1

@@ -53,7 +53,7 @@
 <body>
   {% from "macros/page_header.html" import tool_header %}
   <div><a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#daily-postbacks">Help</a></div>
-  {{ tool_header("Daily conversion postbacks", "Kelkoo / Adexa / Yadore GET postbacks + resume state.", "daily-postbacks", state_path_display) }}
+  {{ tool_header("Daily conversion postbacks", "Kelkoo / Adexa / Yadore / Shopnomix GET postbacks + resume state.", "daily-postbacks", state_path_display) }}
 
   <div class="tile-grid">
     {% for f in feeds %}

@@ -63,7 +63,16 @@ def record_last_run(
 
 def postback_sources_enabled() -> list[str]:
     """Sources that would run under ``--only all`` when credentials exist (Kelkoo / Adexa / Yadore / Effinity)."""
-    from config import ADEXA_API_KEY, ADEXA_SITE_ID, EFFINITY_API_KEY, FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY, YADORE_API_KEY
+    from config import (
+        ADEXA_API_KEY,
+        ADEXA_SITE_ID,
+        EFFINITY_API_KEY,
+        FEED1_API_KEY,
+        FEED2_API_KEY,
+        FEED5_API_KEY,
+        YADORE_API_KEY,
+        shopnomix_reporting_enabled,
+    )
 
     out: list[str] = []
     if (FEED1_API_KEY or "").strip():
@@ -79,6 +88,8 @@ def postback_sources_enabled() -> list[str]:
         out.append("yadore_sales")
     if (EFFINITY_API_KEY or "").strip():
         out.append("effinity")
+    if shopnomix_reporting_enabled():
+        out.append("shopnomix")
     return out
 
 
@@ -90,6 +101,7 @@ _SOURCE_LABELS = {
     "yadore": "Yadore (clicks)",
     "yadore_sales": "Yadore (sales)",
     "effinity": "Effinity (MTD sales)",
+    "shopnomix": "Shopnomix feed6 (tile + coupons)",
 }
 
 

@@ -22,6 +22,7 @@ FEED_META: Tuple[Tuple[str, str], ...] = (
     ("yadore", "Yadore clicks (feed 3)"),
     ("yadore_sales", "Yadore sales (feed 3)"),
     ("effinity", "Effinity MTD sales"),
+    ("shopnomix", "Shopnomix feed6 (tile + coupons)"),
 )
 
 
@@ -164,7 +165,7 @@ def build_dashboard_cards(state_path: Path) -> List[Dict[str, Any]]:
                     "partial_count": 0,
                     "not_started_count": len(geo_order),
                 }
-        elif key in ("adexa", "yadore", "yadore_sales"):
+        elif key in ("adexa", "yadore", "yadore_sales", "shopnomix"):
             if primary:
                 fd = flat_state_detail(data, key, primary)
                 state_ts = fd.get("max_state_ts")
@@ -230,7 +231,7 @@ def feed_detail_context(
     flat_detail: Optional[Dict[str, Any]] = None
     if feed_key in KELKOO_POSTBACK_FEED_TAGS and rd and geo_order:
         kelkoo_detail = kelkoo_state_detail(data, feed_key, rd, geo_order)
-    elif feed_key in ("adexa", "yadore", "yadore_sales") and rd:
+    elif feed_key in ("adexa", "yadore", "yadore_sales", "shopnomix") and rd:
         flat_detail = flat_state_detail(data, feed_key, rd)
 
     title = dict(FEED_META).get(feed_key, feed_key)

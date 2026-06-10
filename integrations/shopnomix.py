@@ -15,7 +15,9 @@ import requests
 from config import (
     SHOPNOMIX_BASE_URL,
     SHOPNOMIX_COUPONS_CAMPAIGN_ID,
+    SHOPNOMIX_COUPONS_REPORTING_API_TOKEN,
     SHOPNOMIX_TILE_CAMPAIGN_ID,
+    SHOPNOMIX_TILE_REPORTING_API_TOKEN,
 )
 from integrations.monetization_geo import geo_for_shopnomix
 
@@ -232,3 +234,120 @@ def demand_coupons_check(merchant_url: str, country_iso2: str, **kwargs: Any) ->
         campaign_id=kwargs.pop("campaign_id", None) or SHOPNOMIX_COUPONS_CAMPAIGN_ID,
         **kwargs,
     )
+
+
+def fetch_reporting_conversions(
+    start_date: str,
+    end_date: str,
+    *,
+    campaign_id: Optional[str] = None,
+    api_token: Optional[str] = None,
+    base_url: Optional[str] = None,
+    limit: int = 1000,
+    timeout: int = 120,
+    max_pages: int = 500,
+) -> List[Dict[str, Any]]:
+    """
+    Paginated click-level commissions from ``GET /api/v2/reporting/conversion``.
+
+    Dates are inclusive and filter by **click time** (not conversion time).
+    Revenue is USD. Follows ``meta.next_page`` cursors until exhausted.
+    """
+    cid = (campaign_id or "").strip()
+    token = (api_token or "").strip()
+    if not cid:
+        raise ShopnomixClientError("Shopnomix reporting campaign_id not configured")
+    if not token:
+        raise ShopnomixClientError("Shopnomix reporting api_token not configured")
+
+    base = (base_url or SHOPNOMIX_BASE_URL or "https://r.v2i8b.com").strip().rstrip("/")
+    next_url: Optional[str] = None
+    out: List[Dict[str, Any]] = []
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for _ in range(max_pages):
+        if next_url:
+            try:
+                r = requests.get(next_url, headers=headers, timeout=timeout)
+            except requests.RequestException as e:
+                raise ShopnomixClientError(str(e)) from e
+        else:
+            url = f"{base}/api/v2/reporting/conversion"
+            params = {
+                "campaign_id": cid,
+                "start_date": start_date,
+                "end_date": end_date,
+                "limit": min(max(int(limit), 1), 50000),
+            }
+            try:
+                r = requests.get(url, params=params, headers=headers, timeout=timeout)
+            except requests.RequestException as e:
+                raise ShopnomixClientError(str(e)) from e
+
+        if r.status_code != 200:
+            raise ShopnomixClientError(
+                f"reporting conversion HTTP {r.status_code}",
+                status_code=r.status_code,
+                response_body=(r.text or "")[:500],
+            )
+
+        try:
+            payload = r.json() if r.text else {}
+        except Exception as e:
+            raise ShopnomixClientError(f"invalid JSON: {e}") from e
+
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(rows, list):
+            out.extend(row for row in rows if isinstance(row, dict))
+
+        meta = payload.get("meta") if isinstance(payload, dict) else {}
+        nxt = meta.get("next_page") if isinstance(meta, dict) else None
+        next_url = str(nxt).strip() if nxt else None
+        if not next_url:
+            break
+
+    return out
+
+
+def fetch_tile_reporting_conversions(
+    start_date: str,
+    end_date: str,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """Click-level report for the tile/native placement campaign."""
+    return fetch_reporting_conversions(
+        start_date,
+        end_date,
+        campaign_id=kwargs.pop("campaign_id", None) or SHOPNOMIX_TILE_CAMPAIGN_ID,
+        api_token=kwargs.pop("api_token", None) or SHOPNOMIX_TILE_REPORTING_API_TOKEN,
+        **kwargs,
+    )
+
+
+def fetch_coupons_reporting_conversions(
+    start_date: str,
+    end_date: str,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """Click-level report for the coupons placement campaign."""
+    return fetch_reporting_conversions(
+        start_date,
+        end_date,
+        campaign_id=kwargs.pop("campaign_id", None) or SHOPNOMIX_COUPONS_CAMPAIGN_ID,
+        api_token=kwargs.pop("api_token", None) or SHOPNOMIX_COUPONS_REPORTING_API_TOKEN,
+        **kwargs,
+    )
+
+
+def fetch_shopnomix_reporting_conversions(
+    start_date: str,
+    end_date: str,
+    **kwargs: Any,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    Both tile + coupons click-level rows in one list (tile first, then coupons).
+    Returns ``(rows, counts_by_placement)``.
+    """
+    tile = fetch_tile_reporting_conversions(start_date, end_date, **kwargs)
+    coupons = fetch_coupons_reporting_conversions(start_date, end_date, **kwargs)
+    return tile + coupons, {"tile": len(tile), "coupons": len(coupons)}

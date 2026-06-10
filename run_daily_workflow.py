@@ -380,11 +380,11 @@ def run_populate_blend_from_potential(
 
 
 def run_optional_daily_conversion_postbacks(report_date: str) -> None:
-    """Subprocess: Kelkoo (per geo) + Adexa + Yadore postbacks; has its own resume state on disk."""
+    """Subprocess: Kelkoo (per geo) + Adexa + Yadore + Shopnomix postbacks; has its own resume state on disk."""
     script = Path(__file__).resolve().parent / "run_daily_conversion_postbacks.py"
     cmd = [sys.executable, str(script), "--report-date", report_date]
     print()
-    print("Daily conversion postbacks (Kelkoo + Adexa + Yadore) ...")
+    print("Daily conversion postbacks (Kelkoo + Adexa + Yadore + Shopnomix) ...")
     r = subprocess.run(cmd)
     if r.returncode != 0:
         print(f"   Warning: run_daily_conversion_postbacks.py exited with code {r.returncode}.")

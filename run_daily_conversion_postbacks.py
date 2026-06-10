@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Send daily Keitaro conversion postbacks from Kelkoo (per geo), Adexa StatsRaw, and Yadore report/detail.
+Send daily Keitaro conversion postbacks from Kelkoo (per geo), Adexa, Yadore, and Shopnomix (tile + coupons).
 
 State file (resume, no double-fire): ``DAILY_CONVERSION_POSTBACK_STATE_PATH`` (see ``config.py``).
 
@@ -34,7 +34,9 @@ from integrations.daily_conversion_postbacks import (  # noqa: E402
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    ap = argparse.ArgumentParser(description="Daily Keitaro conversion postbacks (Kelkoo per geo, Adexa, Yadore).")
+    ap = argparse.ArgumentParser(
+        description="Daily Keitaro conversion postbacks (Kelkoo, Adexa, Yadore, Shopnomix)."
+    )
     ap.add_argument(
         "--report-date",
         default=default_report_date_str(),
@@ -43,7 +45,7 @@ def main() -> None:
     ap.add_argument(
         "--only",
         default="all",
-        help="kelkoo1 | kelkoo2 | kelkoo5 | adexa | yadore | yadore_sales | effinity | all",
+        help="kelkoo1 | kelkoo2 | kelkoo5 | adexa | yadore | yadore_sales | effinity | shopnomix | all",
     )
     ap.add_argument("--geo", default="", help="Kelkoo only: process a single country code (e.g. uk).")
     ap.add_argument(
@@ -61,7 +63,7 @@ def main() -> None:
         action="append",
         default=[],
         metavar="SOURCE",
-        help="Clear saved state for SOURCE@report-date before running (repeatable). kelkoo1, kelkoo2, kelkoo5, adexa, yadore.",
+        help="Clear saved state for SOURCE@report-date before running (repeatable). kelkoo1, kelkoo2, kelkoo5, adexa, yadore, shopnomix, …",
     )
     args = ap.parse_args()
 

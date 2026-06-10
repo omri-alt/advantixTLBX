@@ -677,6 +677,23 @@ SHOPNOMIX_COUPONS_REPORTING_ID = (
     or os.getenv("FEED6_SHOPNOMIX_COUPONS_REPORTING_ID")
     or ""
 ).strip()
+# Bearer tokens for GET /api/v2/reporting/conversion (coupons + tile placements).
+SHOPNOMIX_COUPONS_REPORTING_API_TOKEN = (
+    os.getenv("SHOPNOMIX_COUPONS_REPORTING_API_TOKEN")
+    or os.getenv("SHOPNOMIX_REPORTING_API_TOKEN")
+    or os.getenv("FEED6_SHOPNOMIX_COUPONS_REPORTING_API_TOKEN")
+    or os.getenv("FEED6_SHOPNOMIX_REPORTING_API_TOKEN")
+    or SHOPNOMIX_COUPONS_REPORTING_ID  # legacy: token was stored in *_REPORTING_ID
+    or ""
+).strip()
+SHOPNOMIX_TILE_REPORTING_API_TOKEN = (
+    os.getenv("SHOPNOMIX_TILE_REPORTING_API_TOKEN")
+    or os.getenv("FEED6_SHOPNOMIX_TILE_REPORTING_API_TOKEN")
+    or SHOPNOMIX_TILE_REPORTING_ID  # legacy alias
+    or ""
+).strip()
+# Back-compat name for coupons reporting token.
+SHOPNOMIX_REPORTING_API_TOKEN = SHOPNOMIX_COUPONS_REPORTING_API_TOKEN
 if not SHOPNOMIX_TILE_CAMPAIGN_ID:
     SHOPNOMIX_TILE_CAMPAIGN_ID = _read_env_fallback("SHOPNOMIX_TILE_CAMPAIGN_ID") or _read_env_fallback(
         "FEED6_SHOPNOMIX_TILE_CAMPAIGN_ID"
@@ -689,6 +706,19 @@ SHOPNOMIX_TILE_CAMPAIGN_ID = (SHOPNOMIX_TILE_CAMPAIGN_ID or "").strip()
 SHOPNOMIX_TILE_REPORTING_ID = (SHOPNOMIX_TILE_REPORTING_ID or "").strip()
 SHOPNOMIX_COUPONS_CAMPAIGN_ID = (SHOPNOMIX_COUPONS_CAMPAIGN_ID or "").strip()
 SHOPNOMIX_COUPONS_REPORTING_ID = (SHOPNOMIX_COUPONS_REPORTING_ID or "").strip()
+SHOPNOMIX_COUPONS_REPORTING_API_TOKEN = (SHOPNOMIX_COUPONS_REPORTING_API_TOKEN or "").strip()
+SHOPNOMIX_TILE_REPORTING_API_TOKEN = (SHOPNOMIX_TILE_REPORTING_API_TOKEN or "").strip()
+SHOPNOMIX_REPORTING_API_TOKEN = (SHOPNOMIX_REPORTING_API_TOKEN or "").strip()
+
+
+def shopnomix_reporting_enabled() -> bool:
+    """True when both Shopnomix placements can pull v2 conversion reporting."""
+    return bool(
+        SHOPNOMIX_TILE_CAMPAIGN_ID
+        and SHOPNOMIX_COUPONS_CAMPAIGN_ID
+        and SHOPNOMIX_TILE_REPORTING_API_TOKEN
+        and SHOPNOMIX_COUPONS_REPORTING_API_TOKEN
+    )
 
 
 def shopnomix_monetization_enabled() -> bool:
