@@ -770,6 +770,14 @@ SK_TOOLS_SPREADSHEET_ID = (
 # Defaults to the same workbook as ``SK_TOOLS_SPREADSHEET_ID`` when unset.
 SK_OPTIMIZER_SHEET_ID = (os.getenv("SK_OPTIMIZER_SHEET_ID") or SK_TOOLS_SPREADSHEET_ID).strip()
 
+# Garbage-source bombardment (hourly delta clicks between optimizer runs).
+SK_GARBAGE_CLICK_THRESHOLD = max(
+    1, int((os.getenv("SK_GARBAGE_CLICK_THRESHOLD") or "100").strip() or "100")
+)
+SK_GLOBAL_BLACKLIST_CONTROL_LIST_ID = int(
+    (os.getenv("SK_GLOBAL_BLACKLIST_CONTROL_LIST_ID") or "48365").strip() or "48365"
+)
+
 
 def _parse_sk_unmon_skip_campaign_ids() -> tuple[int, ...]:
     """

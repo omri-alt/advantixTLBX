@@ -90,6 +90,17 @@ def main() -> None:
             print("SK tools workbook: ensured tab 'logs' exists.")
         except Exception as e:
             print(f"SK tools logs tab: {e}")
+        try:
+            from integrations.autoserver.sk_garbage_sources import (
+                HEADERS_GARBAGE_LOG,
+                TAB_GARBAGE_LOG,
+                ensure_garbage_log_worksheet,
+            )
+
+            ensure_garbage_log_worksheet(tools_id)
+            print(f"SK tools workbook: ensured tab {TAB_GARBAGE_LOG!r} ({len(HEADERS_GARBAGE_LOG)} columns).")
+        except Exception as e:
+            print(f"SK tools garbage log tab: {e}")
 
     print("Done.")
 

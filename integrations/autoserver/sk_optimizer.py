@@ -619,14 +619,20 @@ def _apply_slow_exploration_bid_decay_once_daily(
     wl: List[str],
     today: str,
     campaign_name: str,
+    per_sub: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[int, int]:
     """
     For non-WL sources with today's clicks, <30 clicks, 100% winRate:
     reduce bidFactor to (current_bidFactor * 0.5), once per source per campaign per day.
     Skips sources already at ``SK_MIN_BID_FACTOR`` (~0.0101). Retries 429 in-run + short retry window.
     Returns (updated_ok, failed_updates).
+
+    Pass ``per_sub`` from a prior ``_stats_items_by_subid_today`` call to avoid a duplicate API fetch.
     """
-    per_sub, err = _stats_items_by_subid_today(campaign_id, today, today)
+    if per_sub is None:
+        per_sub, err = _stats_items_by_subid_today(campaign_id, today, today)
+    else:
+        err = None
     if err:
         logger.warning("SK exploration bid-decay stats unavailable for %s: %s", campaign_id, err)
         _sk_tools_workbook_log(
@@ -873,6 +879,17 @@ def checkUnmonExploration_SK() -> None:
     blacklisted_fail_total = 0
     bid_decay_ok_total = 0
     bid_decay_fail_total = 0
+
+    garbage_summary: Dict[str, int] = {}
+    try:
+        from integrations.autoserver.sk_garbage_sources import GarbagePassContext
+
+        garbage_ctx = GarbagePassContext.begin(_blacklist_sources_sk)
+    except Exception as e:
+        garbage_ctx = None
+        logger.exception("SK garbage-source init failed: %s", e)
+        _sk_tools_workbook_log("", "", "SK garbage-source init error", str(e))
+
     for row in rows:
         cid_raw = row.get("campaignId") or row.get("campId")
         if not str(cid_raw or "").strip():
@@ -913,8 +930,29 @@ def checkUnmonExploration_SK() -> None:
         did_blacklist = False
         cname_expl = str(camp_json.get("name") or "") if isinstance(camp_json, dict) else ""
         if _row_active(row):
-            dec_ok, dec_fail = _apply_slow_exploration_bid_decay_once_daily(cid, wl, today, cname_expl)
-            if dec_ok or dec_fail:
+            per_sub_today, stats_today_err = _stats_items_by_subid_today(cid, today, today)
+            if stats_today_err:
+                logger.warning(
+                    "SK today stats unavailable for %s: %s", cid, stats_today_err
+                )
+                row["logs"] = _append_logs_cell(
+                    row.get("logs", ""),
+                    f"today stats skipped (bid-decay + garbage): {stats_today_err}",
+                )
+                changed = True
+            else:
+                dec_ok, dec_fail = _apply_slow_exploration_bid_decay_once_daily(
+                    cid, wl, today, cname_expl, per_sub=per_sub_today
+                )
+                if garbage_ctx is not None and garbage_ctx.enabled:
+                    today_clicks = {
+                        sid: int(info.get("clicks") or 0)
+                        for sid, info in per_sub_today.items()
+                    }
+                    garbage_ctx.process_campaign(cid, cname_expl, set(wl), today_clicks)
+            if stats_today_err:
+                dec_ok, dec_fail = 0, 0
+            elif dec_ok or dec_fail:
                 bid_decay_ok_total += dec_ok
                 bid_decay_fail_total += dec_fail
                 changed = True
@@ -1021,6 +1059,15 @@ def checkUnmonExploration_SK() -> None:
                 elif not did_blacklist:
                     row["lastAction"] = "ok"
 
+    if garbage_ctx is not None:
+        try:
+            garbage_summary = garbage_ctx.finish()
+            if any(garbage_summary.values()):
+                logger.info("SK garbage-source pass: %s", garbage_summary)
+        except Exception as e:
+            logger.exception("SK garbage-source finish failed: %s", e)
+            _sk_tools_workbook_log("", "", "SK garbage-source finish error", str(e))
+
     if changed and rows:
         gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_EXPLORATION, rows)
     _sk_tools_workbook_log(
@@ -1033,6 +1080,10 @@ def checkUnmonExploration_SK() -> None:
             "sources_bid_decay_failed": bid_decay_fail_total,
             "sources_blacklisted": blacklisted_ok_total,
             "sources_blacklist_failed": blacklisted_fail_total,
+            "garbage_yellow_new": garbage_summary.get("yellow_new", 0),
+            "garbage_red_new": garbage_summary.get("red_new", 0),
+            "garbage_global_bl_ok": garbage_summary.get("global_blacklist_ok", 0),
+            "garbage_global_bl_fail": garbage_summary.get("global_blacklist_fail", 0),
             "date_utc": today,
         },
     )
