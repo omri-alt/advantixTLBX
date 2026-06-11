@@ -777,6 +777,8 @@ SK_GARBAGE_CLICK_THRESHOLD = max(
 SK_GLOBAL_BLACKLIST_CONTROL_LIST_ID = int(
     (os.getenv("SK_GLOBAL_BLACKLIST_CONTROL_LIST_ID") or "48365").strip() or "48365"
 )
+# Optional CSV fallback when building efficiency-audit garbage sub list (control list is preferred).
+SK_GARBAGE_SUBIDS_CSV = (os.getenv("SK_GARBAGE_SUBIDS_CSV") or "").strip()
 
 
 def _parse_sk_unmon_skip_campaign_ids() -> tuple[int, ...]:

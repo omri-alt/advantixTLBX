@@ -101,6 +101,13 @@ def main() -> None:
             print(f"SK tools workbook: ensured tab {TAB_GARBAGE_LOG!r} ({len(HEADERS_GARBAGE_LOG)} columns).")
         except Exception as e:
             print(f"SK tools garbage log tab: {e}")
+        try:
+            from integrations.sk_exploration_efficiency_audit import ensure_audit_worksheets
+
+            ensure_audit_worksheets(tools_id)
+            print("SK tools workbook: ensured buying-efficiency audit tabs.")
+        except Exception as e:
+            print(f"SK tools efficiency audit tabs: {e}")
 
     print("Done.")
 

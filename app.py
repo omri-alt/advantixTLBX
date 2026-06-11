@@ -1241,6 +1241,20 @@ def api_sk_exploration_costs():
     return jsonify(payload_for_api(force_refresh=refresh))
 
 
+@app.route("/api/sk/buying-efficiency-audit", methods=["GET", "POST"])
+def api_sk_buying_efficiency_audit():
+    """JSON: buying-efficiency audit status; POST or ?refresh=1 queues background run."""
+    refresh = request.method == "POST" or (request.args.get("refresh") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    from integrations.sk_exploration_efficiency_audit import payload_for_api
+
+    return jsonify(payload_for_api(force_refresh=refresh))
+
+
 @app.route("/sk/bulk-open", methods=["GET", "POST"])
 def ui_sk_bulk_open():
     """Bulk-create SK campaigns from a Google Sheet tab; optionally register rows on SKtrackExploration."""

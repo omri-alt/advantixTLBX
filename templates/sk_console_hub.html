@@ -22,6 +22,22 @@
     .sk-cost-actions button:hover { border-color: var(--accent); color: var(--accent); }
     .sk-cost-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
     .sk-cost-err { color: #fca5a5; font-size: 13px; margin-top: 8px; }
+    .sk-audit-widget {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+      padding: 18px 20px 16px; margin: 20px 0 8px;
+    }
+    .sk-audit-widget h2 { margin: 0 0 4px; font-size: 1.05rem; border: none; padding: 0; }
+    .sk-audit-kpis { display: flex; flex-wrap: wrap; gap: 20px 28px; margin: 14px 0 8px; }
+    .sk-audit-kpi .val { font-size: 1.35rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
+    .sk-audit-kpi .lbl { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .sk-audit-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .sk-audit-actions button {
+      padding: 6px 12px; font-size: 12px; font-weight: 600; border-radius: 8px;
+      border: 1px solid var(--line); background: #0f172a; color: var(--text); cursor: pointer;
+    }
+    .sk-audit-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .sk-audit-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .sk-audit-err { color: #fca5a5; font-size: 13px; margin-top: 8px; }
   </style>
 {% endblock %}
 {% block tool_body %}
@@ -167,6 +183,112 @@
   }
 
   if (refreshBtn) refreshBtn.addEventListener('click', function() { load(true); });
+  load(false);
+})();
+</script>
+
+<section class="sk-audit-widget" id="sk-buying-efficiency" aria-live="polite">
+  <div class="sk-cost-head">
+    <div>
+      <h2>Buying efficiency audit</h2>
+      <p class="muted" style="margin:4px 0 0;font-size:13px;">
+        Lifetime + yesterday + per-geo + weekly WoW (garbage vs effective spend) ·
+        writes <code>SKbuyingEfficiencyCampaigns</code> &amp; <code>SKbuyingEfficiencySummary</code> ·
+        <span id="sk-audit-meta">Loading…</span>
+      </p>
+    </div>
+    <div class="sk-audit-actions">
+      <button type="button" id="sk-audit-run">Run audit</button>
+    </div>
+  </div>
+  <div class="sk-audit-kpis">
+    <div class="sk-audit-kpi">
+      <div class="val" id="sk-audit-life-pct">—</div>
+      <div class="lbl">Lifetime garbage %</div>
+    </div>
+    <div class="sk-audit-kpi">
+      <div class="val" id="sk-audit-yday-pct">—</div>
+      <div class="lbl">Yesterday garbage %</div>
+    </div>
+    <div class="sk-audit-kpi">
+      <div class="val" id="sk-audit-campaigns">—</div>
+      <div class="lbl">Campaigns audited</div>
+    </div>
+    <div class="sk-audit-kpi">
+      <div class="val" id="sk-audit-runtime">—</div>
+      <div class="lbl">Last run (seconds)</div>
+    </div>
+  </div>
+  <div class="sk-audit-err" id="sk-audit-error" style="display:none;"></div>
+  {% if sk_tools_sheet_id %}
+  <p class="muted" style="margin:10px 0 0;font-size:12px;">
+    <a href="https://docs.google.com/spreadsheets/d/{{ sk_tools_sheet_id }}/edit" target="_blank" rel="noopener">Open SK tools workbook</a>
+    — tabs <code>SKbuyingEfficiencyCampaigns</code>, <code>SKbuyingEfficiencySummary</code>
+  </p>
+  {% endif %}
+</section>
+
+<script>
+(function() {
+  var apiUrl = {{ url_for('api_sk_buying_efficiency_audit') | tojson }};
+  var runBtn = document.getElementById('sk-audit-run');
+  var errEl = document.getElementById('sk-audit-error');
+  var metaEl = document.getElementById('sk-audit-meta');
+  var pollTimer = null;
+
+  function fmtPct(n) {
+    if (n === null || n === undefined || n === '' || isNaN(n)) return '—';
+    return Number(n).toFixed(1) + '%';
+  }
+
+  function render(data) {
+    document.getElementById('sk-audit-life-pct').textContent = fmtPct(data.lifetime_garbage_pct);
+    document.getElementById('sk-audit-yday-pct').textContent = fmtPct(data.yesterday_garbage_pct);
+    document.getElementById('sk-audit-campaigns').textContent =
+      data.campaigns_audited != null ? String(data.campaigns_audited) : '—';
+    document.getElementById('sk-audit-runtime').textContent =
+      data.fetch_seconds != null ? String(data.fetch_seconds) : '—';
+    var parts = [];
+    if (data.status) parts.push(data.status);
+    if (data.progress && data.status === 'running') parts.push(data.progress);
+    if (data.as_of_utc) parts.push('as of ' + data.as_of_utc);
+    if (data.garbage_sub_count != null) parts.push(data.garbage_sub_count + ' garbage subs');
+    if (metaEl) metaEl.textContent = parts.join(' · ') || '—';
+    if (data.error && errEl) {
+      errEl.style.display = 'block';
+      errEl.textContent = data.error;
+    } else if (errEl) {
+      errEl.style.display = 'none';
+      errEl.textContent = '';
+    }
+    var running = data.status === 'running' || data.status === 'building' || data.refresh_running;
+    if (runBtn) runBtn.disabled = !!running;
+    if (running) {
+      if (!pollTimer) pollTimer = setInterval(function() { load(false); }, 8000);
+    } else if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  function load(trigger) {
+    var url = apiUrl + (trigger ? '?refresh=1' : '');
+    var opts = { credentials: 'same-origin', headers: { Accept: 'application/json' } };
+    if (trigger) opts.method = 'POST';
+    if (runBtn && trigger) runBtn.disabled = true;
+    if (metaEl && trigger) metaEl.textContent = 'Starting audit…';
+    fetch(url, opts)
+      .then(function(r) { return r.json(); })
+      .then(render)
+      .catch(function(e) {
+        if (errEl) {
+          errEl.style.display = 'block';
+          errEl.textContent = 'Failed: ' + (e && e.message ? e.message : String(e));
+        }
+      });
+  }
+
+  if (runBtn) runBtn.addEventListener('click', function() { load(true); });
   load(false);
 })();
 </script>
