@@ -45,7 +45,7 @@ from workflows.campaign_setup import run_create_campaign_workflow
 from integrations.keitaro import KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
 from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
-from integrations.adexa import links_merchant_check as adexa_links_check, AdexaClientError
+from integrations.adexa import merchant_monetization_check as adexa_merchant_check, AdexaClientError
 from integrations.shopnomix import demand_tile_check, demand_coupons_check, ShopnomixClientError
 from integrations.monetization_geo import yadore_feed_class, shopnomix_feed_class
 from assistance import (
@@ -1159,10 +1159,17 @@ def ui_matchmaking_manual():
                     y_c_found = bool(y_c.get("found"))
                 except YadoreClientError:
                     y_c_found = False
+                ax: Dict[str, Any] = {}
+                adexa_mode = ""
+                adexa_keitaro_offer_url = ""
                 try:
-                    ax = adexa_links_check(domain, g)
+                    ax = adexa_merchant_check(domain, g)
                     adexa_found = bool(ax.get("found"))
+                    adexa_mode = str(ax.get("mode") or "")
                     adexa_note = str(ax.get("note") or "")
+                    adexa_keitaro_offer_url = str(ax.get("keitaro_offer_url") or "")
+                    if adexa_mode == "smartlink":
+                        adexa_note = f"smartlink: {ax.get('smartlink_url') or ''}"
                 except AdexaClientError as e:
                     adexa_found = False
                     adexa_note = str(e)[:120]
@@ -1193,7 +1200,9 @@ def ui_matchmaking_manual():
                         "yadore_coupon_found": y_c_found,
                         "yadore_class": yadore_feed_class(y_nc_found, y_c_found),
                         "adexa_found": adexa_found,
+                        "adexa_mode": adexa_mode,
                         "adexa_note": adexa_note,
+                        "adexa_keitaro_offer_url": adexa_keitaro_offer_url,
                         "shopnomix_class": shopnomix_feed_class(sn_tile_found, sn_coupons_found),
                         "shopnomix_tile_found": sn_tile_found,
                         "shopnomix_coupons_found": sn_coupons_found,

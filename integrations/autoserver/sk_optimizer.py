@@ -20,6 +20,10 @@ Sheets (workbook ``config.SK_OPTIMIZER_SHEET_ID``):
 ``monNetwork`` (case-insensitive): ``kl`` | ``feed1`` | ``feed2`` | ``feed5`` | ``kelkoo5`` | ``feed3`` | ``feed4`` | ``adexa`` | ``yadore``
 | ``new`` | ``skip`` — Kelkoo feed1/feed2/feed5 use ``FEED1_API_KEY`` / ``FEED2_API_KEY`` / ``FEED5_API_KEY``; ``kl`` uses legacy Kelkoo key;
 ``feed3`` / ``feed4`` use Yadore deeplink / Adexa link monetizer checks. ``new`` / ``skip`` skip the unmon pause probe (not yet integrated or operator opt-out).
+
+Once per UTC day (first hourly ``SKExplorationOptimizer`` run), ``status`` on every row is synced from
+``GET /affiliate/v2/campaigns/{id}`` ``active`` (reactivated → ``active``; inactive → ``paused`` or keep ``paused-unmon``).
+State: ``data/sk_daily_status_sync_state.json``.
 """
 from __future__ import annotations
 
@@ -44,7 +48,7 @@ from config import (
     SK_UNMON_SKIP_CAMPAIGN_IDS,
     SK_TOOLS_SPREADSHEET_ID,
 )
-from integrations.adexa import AdexaClientError, links_merchant_check
+from integrations.adexa import AdexaClientError, merchant_monetization_check
 from integrations.autoserver import gdocs_as as gd
 from integrations.autoserver import kl_as as kl
 from integrations.autoserver import sk as sk
@@ -89,6 +93,7 @@ HEADERS_WL = [
 ]
 
 _BID_DECAY_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_bidfactor_decay_state.json"
+_STATUS_SYNC_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_daily_status_sync_state.json"
 _SK_TOOLS_LOG_DISABLED_UNTIL: Optional[datetime] = None
 _SK_UNMON_SKIP_CAMPAIGN_ID_SET = {int(x) for x in (SK_UNMON_SKIP_CAMPAIGN_IDS or ())}
 # monNetwork values that skip unmon pause (no API probe; campaign stays active).
@@ -258,7 +263,7 @@ def _monetization_for_network(mon_network: str, mon_url: str, geo: str) -> Tuple
         if net in ("feed4", "adexa"):
             if not (ADEXA_SITE_ID or "").strip():
                 return None, "error"
-            res = links_merchant_check(url, g)
+            res = merchant_monetization_check(url, g)
             return bool(res.get("found")), None
     except (AdexaClientError, YadoreClientError, requests.RequestException) as e:
         logger.warning("Monetization check failed (%s %s): %s", net, url[:40], e)
@@ -840,6 +845,80 @@ def _blacklist_sources_sk(campaign_id: int, sub_ids: List[str]) -> List[str]:
     return failed
 
 
+def _load_status_sync_state() -> Dict[str, str]:
+    p = _STATUS_SYNC_STATE_PATH
+    try:
+        if not p.exists():
+            return {}
+        data = json.loads(p.read_text(encoding="utf-8") or "{}")
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items()}
+    except Exception as e:
+        logger.warning("SK daily status-sync state read failed: %s", e)
+    return {}
+
+
+def _save_status_sync_state(state: Dict[str, str]) -> None:
+    p = _STATUS_SYNC_STATE_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _status_sync_due(tab_key: str, today: str) -> bool:
+    return _load_status_sync_state().get(tab_key) != today
+
+
+def _mark_status_sync_done(tab_key: str, today: str) -> None:
+    state = _load_status_sync_state()
+    state[tab_key] = today
+    _save_status_sync_state(state)
+
+
+def _normalize_sheet_status(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in ("", "[]", "none", "null"):
+        return ""
+    return raw
+
+
+def _sheet_status_from_sk_api(
+    camp_json: Optional[dict],
+    current_sheet_status: Any,
+) -> Optional[str]:
+    """
+    Map SK campaign ``active`` to sheet ``status``.
+
+    Reactivated campaigns (SK active) always become ``active``. When SK is inactive,
+    keep ``paused-unmon`` if the optimizer set it; otherwise use ``paused``.
+    """
+    if not isinstance(camp_json, dict) or "active" not in camp_json:
+        return None
+    sk_active = bool(camp_json.get("active"))
+    cur = _normalize_sheet_status(current_sheet_status)
+    if sk_active:
+        return "active"
+    if cur == "paused-unmon":
+        return "paused-unmon"
+    return "paused"
+
+
+def _apply_daily_status_sync(row: Dict[str, Any], camp_json: dict) -> bool:
+    """Update row ``status`` from SK API. Returns True if the cell changed."""
+    new_status = _sheet_status_from_sk_api(camp_json, row.get("status"))
+    if new_status is None:
+        return False
+    cur = _normalize_sheet_status(row.get("status"))
+    if cur == new_status:
+        return False
+    old_display = str(row.get("status") or "").strip() or "(empty)"
+    row["status"] = new_status
+    row["logs"] = _append_logs_cell(
+        row.get("logs", ""),
+        f"daily status sync: {old_display} -> {new_status}",
+    )
+    return True
+
+
 def _row_active(row: Dict[str, Any]) -> bool:
     return str(row.get("status") or "").strip().lower() == "active"
 
@@ -860,6 +939,72 @@ def _row_skip_unmon(row: Dict[str, Any]) -> bool:
     )
 
 
+def sync_sk_track_status_from_api(
+    *,
+    exploration: bool = True,
+    wl: bool = True,
+    mark_daily_done: bool = True,
+) -> Dict[str, Any]:
+    """
+    Sync ``status`` on ``SKtrackExploration`` / ``SKtrackWL`` from SK campaign ``active``.
+
+    Lightweight pass — no blacklist, bid-decay, or unmon checks. Writes the sheet after
+    each tab when any row changed.
+    """
+    sheet_id = (SK_OPTIMIZER_SHEET_ID or "").strip()
+    if not sheet_id:
+        raise RuntimeError("SK_OPTIMIZER_SHEET_ID is not configured")
+
+    today = _utc_today()
+    out: Dict[str, Any] = {"date_utc": today, "tabs": {}}
+
+    def _sync_tab(tab: str, headers: List[str], tab_key: str) -> Dict[str, Any]:
+        gd.append_missing_headers_row1(sheet_id, tab, headers)
+        rows = gd.read_sheet_withID(sheet_id, tab)
+        changed = 0
+        errors = 0
+        processed = 0
+        updates: List[Dict[str, Any]] = []
+        for row in rows:
+            cid_raw = row.get("campaignId") or row.get("campId")
+            if not str(cid_raw or "").strip():
+                continue
+            try:
+                cid = int(str(cid_raw).strip())
+            except (TypeError, ValueError):
+                errors += 1
+                continue
+            processed += 1
+            try:
+                camp_json = sk.get_campaignById(cid)
+            except Exception as e:
+                errors += 1
+                logger.error("SK status sync GET %s failed: %s", cid, e)
+                continue
+            if isinstance(camp_json, dict) and _apply_daily_status_sync(row, camp_json):
+                changed += 1
+                updates.append(
+                    {
+                        "campaignId": cid,
+                        "campaignName": str(row.get("campaignName") or row.get("campName") or ""),
+                        "status": row.get("status"),
+                    }
+                )
+        if changed:
+            gd.create_or_update_sheet_from_dicts_withID(sheet_id, tab, rows)
+        if mark_daily_done:
+            _mark_status_sync_done(tab_key, today)
+        summary = {"processed": processed, "changed": changed, "errors": errors, "updates": updates}
+        _sk_tools_workbook_log("", tab, "SK daily status sync", summary)
+        return summary
+
+    if exploration:
+        out["tabs"]["exploration"] = _sync_tab(TAB_EXPLORATION, HEADERS_EXPLORATION, "exploration")
+    if wl:
+        out["tabs"]["wl"] = _sync_tab(TAB_WL, HEADERS_WL, "wl")
+    return out
+
+
 def checkUnmonExploration_SK() -> None:
     sheet_id = (SK_OPTIMIZER_SHEET_ID or "").strip()
     if not sheet_id:
@@ -873,8 +1018,10 @@ def checkUnmonExploration_SK() -> None:
         raise RuntimeError(f"read_sheet failed: {e}") from e
 
     today = _utc_today()
+    status_sync_due = _status_sync_due("exploration", today)
     changed = False
     processed_rows = 0
+    status_sync_changed = 0
     blacklisted_ok_total = 0
     blacklisted_fail_total = 0
     bid_decay_ok_total = 0
@@ -911,6 +1058,11 @@ def checkUnmonExploration_SK() -> None:
             changed = True
             _sk_tools_workbook_log(cid, "", "SK exploration: GET campaign error", str(e))
             continue
+
+        if status_sync_due and isinstance(camp_json, dict):
+            if _apply_daily_status_sync(row, camp_json):
+                status_sync_changed += 1
+                changed = True
 
         row["budgetReachedYesterday"] = check_budget_reached_yesterday_SK(cid)
         changed = True
@@ -1068,6 +1220,9 @@ def checkUnmonExploration_SK() -> None:
             logger.exception("SK garbage-source finish failed: %s", e)
             _sk_tools_workbook_log("", "", "SK garbage-source finish error", str(e))
 
+    if status_sync_due:
+        _mark_status_sync_done("exploration", today)
+
     if changed and rows:
         gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_EXPLORATION, rows)
     _sk_tools_workbook_log(
@@ -1076,6 +1231,8 @@ def checkUnmonExploration_SK() -> None:
         "SK exploration run summary",
         {
             "rows_processed": processed_rows,
+            "status_sync_due": status_sync_due,
+            "status_sync_changed": status_sync_changed,
             "sources_bid_decayed": bid_decay_ok_total,
             "sources_bid_decay_failed": bid_decay_fail_total,
             "sources_blacklisted": blacklisted_ok_total,
@@ -1101,7 +1258,10 @@ def checkUnmonWL_SK() -> None:
         logger.error("SK optimizer: failed to read %s: %s", TAB_WL, e)
         raise RuntimeError(f"read_sheet failed: {e}") from e
 
+    today = _utc_today()
+    status_sync_due = _status_sync_due("wl", today)
     changed = False
+    status_sync_changed = 0
     for row in rows:
         cid_raw = row.get("campaignId") or row.get("campId")
         if not str(cid_raw or "").strip():
@@ -1122,6 +1282,11 @@ def checkUnmonWL_SK() -> None:
             changed = True
             _sk_tools_workbook_log(cid, "", "SK WL: GET campaign error", str(e))
             continue
+
+        if status_sync_due and isinstance(camp_json, dict):
+            if _apply_daily_status_sync(row, camp_json):
+                status_sync_changed += 1
+                changed = True
 
         row["budgetReachedYesterday"] = check_budget_reached_yesterday_SK(cid)
         changed = True
@@ -1174,8 +1339,22 @@ def checkUnmonWL_SK() -> None:
         else:
             row["lastAction"] = "ok"
 
+    if status_sync_due:
+        _mark_status_sync_done("wl", today)
+
     if changed and rows:
         gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_WL, rows)
+    if status_sync_due or status_sync_changed:
+        _sk_tools_workbook_log(
+            "",
+            "SKtrackWL",
+            "SK WL run summary",
+            {
+                "status_sync_due": status_sync_due,
+                "status_sync_changed": status_sync_changed,
+                "date_utc": today,
+            },
+        )
 
 
 def _normalize_exploration_sheet_row(raw: Dict[str, Any]) -> Dict[str, str]:

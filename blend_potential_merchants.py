@@ -294,7 +294,7 @@ def run_potential_adexa(
         fetch_shopping_search_stats,
         get_merchants,
         infer_merchant_url_from_adexa_name,
-        links_merchant_check,
+        merchant_monetization_check,
     )
 
     try:
@@ -362,8 +362,13 @@ def run_potential_adexa(
             url_norm = domain if domain.lower().startswith("http") else f"https://{domain.lstrip('/')}"
             domain = url_norm
             try:
-                res = links_merchant_check(url_norm, geo)
-                monetization = "monetized_adexa" if res.get("found") else f"not_monetized_adexa:{res.get('note', '')}"
+                res = merchant_monetization_check(url_norm, geo)
+                if res.get("found") and res.get("mode") == "smartlink":
+                    monetization = "monetized_adexa_smartlink"
+                elif res.get("found"):
+                    monetization = "monetized_adexa"
+                else:
+                    monetization = f"not_monetized_adexa:{res.get('note', '')}"
             except AdexaClientError as e:
                 monetization = f"not_monetized_adexa:{e}"
         is_monetized = monetization.startswith("monetized")

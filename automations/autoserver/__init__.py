@@ -67,6 +67,11 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
         "label": "Nipuhim monetization repair (PLA + Keitaro)",
         "schedule": "Every 2 hours (odd hours)",
     },
+    {
+        "class_name": "KeitaroFeedBalanceCheckmon",
+        "label": "Keitaro feed balance checkmon (notes only)",
+        "schedule": "Every 2 hours (even hours)",
+    },
 ]
 
 
@@ -75,6 +80,7 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.blend_tr_cap_guard import BlendTrCapGuard
     from automations.autoserver.blend_zp_cap_guard import BlendZpCapGuard
     from automations.autoserver.close_nipuhim import CloseNipuhimAuto
+    from automations.autoserver.keitaro_feed_balance_checkmon import KeitaroFeedBalanceCheckmon
     from automations.autoserver.klfix_optimize import KLFIXoptimize
     from automations.autoserver.klwl import KLWL
     from automations.autoserver.mehilot_auto import MehilotAuto
@@ -94,3 +100,4 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     register_func(BlendZpCapGuard())
     register_func(BlendTrCapGuard())
     register_func(NipuhimUnmonRepair())
+    register_func(KeitaroFeedBalanceCheckmon())

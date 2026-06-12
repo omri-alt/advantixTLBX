@@ -91,6 +91,56 @@ Monthly log upserts (`workflows/monthly_log_monetization.py`) **clear the tab th
 
 Related: `blend_potential_merchants.py`, `populate_blend_from_potential.py`, `blend_sync_from_sheet.py` (uses `BLEND_SHEETS_SPREADSHEET_ID` from config).
 
+## Keitaro multi-feed brand campaigns (feed balance)
+
+Brand-level Keitaro campaigns (groups **`Quality`**, **`effinity`**, **`flexoffers`** by default) split traffic across shared feed offers on **Flow 2** — e.g. `KL Feed 1/2/5`, `Adexa feed4`, `YAD Feed 3`, `shopnomix Feed6`. Config and run reports live in each campaign’s **Notes** tab (single place; no separate Google Sheet).
+
+**Module:** `integrations/keitaro_feed_balance.py`  
+**Bootstrap CLI:** `scripts/keitaro_feed_balance_bootstrap_notes.py`  
+**Keitaro API:** `KeitaroClient.get_campaign()` / `update_campaign()` in `integrations/keitaro.py`
+
+### Notes template (edit the top block; optimizer only touches below the divider)
+
+```
+=== Feed balance config ===
+url: https://www.example.com
+geo: fr
+enabled: no
+
+--- auto-updated below (do not edit) ---
+Pending first optimization run.
+```
+
+| Field | Meaning |
+| ----- | ------- |
+| `url` | Merchant homepage probed for every feed in the flow (same checks as `monetization_check.py`). |
+| `geo` | ISO2 country (`uk`, `fr`, `us`, …). |
+| `enabled` | `yes` / `no` — daily optimizer will only run when `yes` and both `url` and `geo` are set. |
+
+Bootstrap fills `url` / `geo` when inferable (campaign name `Brand-geo`, domain in name, `sk_advertisers.csv`, offer URLs). Wrong guesses must be corrected manually. All bootstrapped campaigns start with **`enabled: no`**.
+
+**Env:** `KEITARO_FEED_BALANCE_GROUPS` — comma-separated Keitaro campaign groups (default `Quality,effinity,flexoffers`).
+
+**Commands:**
+
+```bash
+# Write templates on campaigns that do not have a config block yet
+python scripts/keitaro_feed_balance_bootstrap_notes.py
+
+# Preview without PUT
+python scripts/keitaro_feed_balance_bootstrap_notes.py --dry-run
+
+# Rewrite all templates (re-infer url/geo)
+python scripts/keitaro_feed_balance_bootstrap_notes.py --force
+
+# One campaign
+python scripts/keitaro_feed_balance_bootstrap_notes.py --campaign-id 63
+```
+
+**Checkmon sync (soft launch):** `scripts/keitaro_feed_balance_checkmon_sync.py` + autoserver `KeitaroFeedBalanceCheckmon` every **2 hours (even hours)**. Updates only the notes auto-section (no share changes). When Adexa monetizes via golink only, notes include `adexa_golink:` with the Keitaro-ready URL. Set `KEITARO_FEED_BALANCE_CHECKMON_ENABLED=no` to disable.
+
+**Planned (after soft launch):** for `enabled: yes` campaigns, demote unmonetized feeds (`share=0`) and renormalize remaining feeds to 100%.
+
 ## Blend → Keitaro (`blend_sync_from_sheet.py`)
 
 - Reads tab `**Blend`** on `BLEND_SHEETS_SPREADSHEET_ID`; columns include `brandName`, `offerUrl`, `clickCap`, `geo`, `feed` (`kelkoo1` / `kelkoo2` / `adexa` / `yadore`), `auto`, optional `merchantId`.
@@ -204,4 +254,4 @@ python update_tracking_urls.py          # live run
 
 ---
 
-*Last aligned with repo state: daily workflow merchant rerun/override UI and flags, Blend Adexa offer URL shape, SK migration tooling, checkpoint/blocked handling, and `KEYSK` configuration.*
+*Last aligned with repo state: Keitaro multi-feed feed-balance notes bootstrap, daily workflow merchant rerun/override UI, Blend Adexa offer URL shape, SK migration tooling, and `KEYSK` configuration.*

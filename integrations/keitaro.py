@@ -237,6 +237,32 @@ class KeitaroClient:
         data = resp.json()
         return data if isinstance(data, list) else data.get("campaigns", data) or []
 
+    def get_campaign(self, campaign_id: int) -> Dict[str, Any]:
+        cid = int(campaign_id)
+        url = f"{self._campaigns_url().rstrip('/')}/{cid}"
+        try:
+            resp = self._session.get(url, timeout=30)
+        except requests.RequestException as e:
+            raise KeitaroClientError(str(e)) from e
+        if not resp.ok:
+            raise KeitaroClientError(f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text)
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise KeitaroClientError(f"Keitaro campaign {cid}: unexpected response")
+        return data
+
+    def update_campaign(self, campaign_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        cid = int(campaign_id)
+        url = f"{self._campaigns_url().rstrip('/')}/{cid}"
+        try:
+            resp = self._session.put(url, json=payload, timeout=30)
+        except requests.RequestException as e:
+            raise KeitaroClientError(str(e)) from e
+        if not resp.ok:
+            raise KeitaroClientError(f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text)
+        data = resp.json()
+        return data if isinstance(data, dict) else {"raw": data}
+
     def get_streams(self, campaign_id: int) -> list:
         cid = int(campaign_id)
         base = self._campaigns_url()

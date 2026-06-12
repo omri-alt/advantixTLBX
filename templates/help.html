@@ -44,6 +44,7 @@
       <a href="#daily-automations">Daily automations</a>
       <a href="#kelkoo">Kelkoo</a>
       <a href="#blend">Blend</a>
+      <a href="#keitaro-feed-balance">Keitaro feed balance</a>
       <a href="#ecomnia">Ecomnia</a>
       <a href="#sourceknowledge">SourceKnowledge</a>
       <a href="#matchmaking">Matchmaking</a>
@@ -169,6 +170,43 @@
             <p><strong>Blend workflow</strong> runs <code>run_blend_workflow.py</code>: Keitaro sync from the Blend sheet, refresh potential sheets, optional populate. <strong>Blend sheet → Keitaro</strong> runs only <code>blend_sync_from_sheet.py</code> (prune bad <code>auto=v</code>, rebuild offers/flows).</p>
             <p><strong>Blend Stop Closed</strong> (<code>blend_stop_closed_merchants.py</code>): during-day, sets non-monetized <code>auto=v</code> Kelkoo1/2 Blend rows share to 0.</p>
             <p>Env: <code>BLEND_SHEETS_SPREADSHEET_ID</code>, <code>BLEND_POTENTIAL_FEEDS</code>, feed API keys. Full URL rules are documented in <code>CLAUDE.md</code> (Blend → Keitaro).</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="keitaro-feed-balance" data-help-search="keitaro feed balance multi-feed quality notes monetization share">
+        <h2>Keitaro multi-feed balance</h2>
+        <details class="help-acc" id="keitaro-feed-balance-notes" data-help-search="keitaro feed balance notes template bootstrap quality effinity flexoffers">
+          <summary>Campaign notes config &amp; bootstrap</summary>
+          <div class="help-acc-body">
+            <p>Brand campaigns in groups <code>Quality</code>, <code>effinity</code>, and <code>flexoffers</code> (override with <code>KEITARO_FEED_BALANCE_GROUPS</code>) split traffic across feed offers on the main regular flow — Kelkoo 1/2/5, Adexa, Yadore, Shopnomix, etc. Configuration and future run reports live in each campaign’s <strong>Notes</strong> tab in Keitaro (not a Google Sheet).</p>
+            <p><strong>Template</strong> (you edit the top block; automation only updates below the divider):</p>
+            <pre style="white-space:pre-wrap;font-size:12px;background:#0d1426;padding:12px;border-radius:8px;border:1px solid var(--line);">=== Feed balance config ===
+url: https://www.example.com
+geo: fr
+enabled: no
+
+--- auto-updated below (do not edit) ---
+Pending first optimization run.</pre>
+            <table>
+              <thead><tr><th>Field</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>url</code></td><td>Merchant homepage — probed on every feed attached to the flow (same APIs as matchmaking / <code>monetization_check.py</code>).</td></tr>
+                <tr><td><code>geo</code></td><td>Two-letter country (<code>uk</code>, <code>fr</code>, <code>us</code>, …).</td></tr>
+                <tr><td><code>enabled</code></td><td><code>yes</code> to include in the daily optimizer; <code>no</code> to skip (default after bootstrap).</td></tr>
+              </tbody>
+            </table>
+            <p><strong>Bootstrap</strong> writes this template on campaigns that do not have it yet. Infers <code>url</code> / <code>geo</code> from campaign name, domain, <code>sk_advertisers.csv</code>, or offer URLs when possible; leaves blanks or fixes manually when inference is wrong.</p>
+            <pre style="white-space:pre-wrap;font-size:12px;background:#0d1426;padding:12px;border-radius:8px;border:1px solid var(--line);">python scripts/keitaro_feed_balance_bootstrap_notes.py
+python scripts/keitaro_feed_balance_bootstrap_notes.py --dry-run
+python scripts/keitaro_feed_balance_bootstrap_notes.py --force
+python scripts/keitaro_feed_balance_bootstrap_notes.py --campaign-id 63</pre>
+            <p><strong>Checkmon (soft launch):</strong> every 2 hours (even hours) the autoserver job refreshes the auto section below the divider with per-feed monetization status. No share changes yet. When Adexa only monetizes via golink, notes include <code>adexa_golink:</code> with the Keitaro-ready URL (<code>&amp;clickid={subid}</code>). Disable with <code>KEITARO_FEED_BALANCE_CHECKMON_ENABLED=no</code>.</p>
+            <pre style="white-space:pre-wrap;font-size:12px;background:#0d1426;padding:12px;border-radius:8px;border:1px solid var(--line);">python scripts/keitaro_feed_balance_checkmon_sync.py --dry-run
+python scripts/keitaro_feed_balance_checkmon_sync.py
+python scripts/keitaro_feed_balance_checkmon_sync.py --campaign-id 60</pre>
+            <p><strong>Planned after soft launch:</strong> when <code>enabled: yes</code>, demote unmonetized feeds (<code>share=0</code>) and renormalize live feeds to 100%.</p>
+            <p>Open campaigns in Keitaro admin → <strong>Notes</strong> (e.g. <a href="https://p.advantix-media.com/admin/#!/campaigns/72" target="_blank" rel="noopener">campaign 72</a>).</p>
           </div>
         </details>
       </section>
@@ -299,6 +337,7 @@
           <summary>Monetization check workflow</summary>
           <div class="help-acc-body">
             <p>Script <code>monetization_check.py</code>. Optional <code>--max-rows N</code>. Writes Matches sheet.</p>
+            <p><strong>Adexa:</strong> homepage via LinksMerchant; if not monetized, checks GetMerchant for <code>supportsOffer</code> + <code>randomOffer</code> golink (smartlink). Sheet columns <code>adexa_mode</code>, <code>adexa_smartlink_url</code>, <code>adexa_keitaro_offer_url</code> guide operators when to use a static golink offer instead of dynamic merchantUrl.</p>
             <p><a href="{{ url_for('ui_workflow', workflow_key='monetization-check') }}">Open workflow →</a></p>
           </div>
         </details>

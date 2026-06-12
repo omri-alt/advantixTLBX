@@ -9,7 +9,7 @@ Output sheet: Matches
 For each (url, geo):
   - Kelkoo link check (feed1/2/5): GET …/search/link
   - Yadore deeplink (feed3): POST /v2/deeplink with ``isCouponing`` false and true
-  - Adexa Link Monetizer (feed4): GET …/LinksMerchant.php
+  - Adexa (feed4): LinksMerchant homepage probe, then GetMerchant smartlink (Goffers golink)
   - Shopnomix demand (feed6): GET …/api/v2/demand/:campaign_id (tile + coupons placements)
 
 Writes one row per input line with statuses and CPC/EPC fields where available.
@@ -30,7 +30,7 @@ load_dotenv()
 from config import FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY, shopnomix_monetization_enabled
 from integrations.kelkoo_search import kelkoo_merchant_link_check as kelkoo_check
 from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
-from integrations.adexa import links_merchant_check as adexa_links_check, AdexaClientError
+from integrations.adexa import merchant_monetization_check as adexa_merchant_check, AdexaClientError
 from integrations.shopnomix import (
     clear_demand_cache,
     demand_tile_check,
@@ -134,9 +134,9 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
 
     def _ax() -> Dict[str, Any]:
         try:
-            return adexa_links_check(url, geo)
+            return adexa_merchant_check(url, geo)
         except AdexaClientError as e:
-            return {"found": False, "note": str(e)[:200]}
+            return {"found": False, "note": str(e)[:200], "mode": "none"}
 
     def _sn_tile() -> Dict[str, Any]:
         try:
@@ -201,7 +201,11 @@ def main() -> None:
         "yadore_nc_found",
         "yadore_c_found",
         "adexa_found",
+        "adexa_mode",
         "adexa_note",
+        "adexa_smartlink_url",
+        "adexa_keitaro_offer_url",
+        "adexa_operator_hint",
         "shopnomix_monetization",
         "shopnomix_tile_found",
         "shopnomix_coupons_found",
@@ -258,7 +262,11 @@ def main() -> None:
         sn_class = shopnomix_feed_class(sn_tile_found, sn_coupons_found)
 
         ax_found = bool(ax.get("found"))
+        ax_mode = str(ax.get("mode") or "")
         ax_note = str(ax.get("note") or "")
+        ax_smartlink = str(ax.get("smartlink_url") or "")
+        ax_keitaro = str(ax.get("keitaro_offer_url") or "")
+        ax_hint = str(ax.get("operator_hint") or "")
 
         out_rows.append(
             [
@@ -269,7 +277,11 @@ def main() -> None:
                 str(y_nc_found),
                 str(y_c_found),
                 str(ax_found),
+                ax_mode,
                 ax_note,
+                ax_smartlink,
+                ax_keitaro,
+                ax_hint,
                 sn_class,
                 str(sn_tile_found),
                 str(sn_coupons_found),

@@ -82,7 +82,7 @@
             <td class="muted">{{ r.yadore_class }}</td>
             <td class="{{ 'ok' if r.yadore_non_coupon_found else 'bad' }}">{{ 'FOUND' if r.yadore_non_coupon_found else 'NO' }}</td>
             <td class="{{ 'ok' if r.yadore_coupon_found else 'bad' }}">{{ 'FOUND' if r.yadore_coupon_found else 'NO' }}</td>
-            <td class="{{ 'ok' if r.adexa_found else 'bad' }}">{{ 'FOUND' if r.adexa_found else 'NO' }}{% if r.adexa_note %} <span class="muted" title="{{ r.adexa_note }}">({{ r.adexa_note[:24] }}{% if r.adexa_note|length > 24 %}…{% endif %})</span>{% endif %}</td>
+            <td class="{{ 'ok' if r.adexa_found else 'bad' }}">{% if r.adexa_mode == 'smartlink' %}SMARTLINK{% elif r.adexa_found %}FOUND{% else %}NO{% endif %}{% if r.adexa_note %} <span class="muted" title="{{ r.adexa_note }}{% if r.adexa_keitaro_offer_url %} | Keitaro: {{ r.adexa_keitaro_offer_url }}{% endif %}">({{ r.adexa_note[:24] }}{% if r.adexa_note|length > 24 %}…{% endif %})</span>{% endif %}</td>
             <td class="muted">{{ r.shopnomix_class }}</td>
             <td class="{{ 'ok' if r.shopnomix_tile_found else 'bad' }}">{{ 'FOUND' if r.shopnomix_tile_found else 'NO' }}</td>
             <td class="{{ 'ok' if r.shopnomix_coupons_found else 'bad' }}">{{ 'FOUND' if r.shopnomix_coupons_found else 'NO' }}</td>
