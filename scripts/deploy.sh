@@ -14,6 +14,8 @@ if [[ ! -f secrets/credentials.json ]]; then
   exit 1
 fi
 
+mkdir -p runtime data secrets
+
 echo "Building image..."
 docker compose build
 

@@ -11,6 +11,7 @@ services:
       - "5000:5000"
     volumes:
       - ./runtime:/app/runtime
+      - ./data:/app/data
       - ./secrets/credentials.json:/app/credentials.json:ro
     healthcheck:
       test:
