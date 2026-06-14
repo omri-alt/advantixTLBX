@@ -1168,7 +1168,9 @@ def ui_matchmaking_manual():
                     adexa_mode = str(ax.get("mode") or "")
                     adexa_note = str(ax.get("note") or "")
                     adexa_keitaro_offer_url = str(ax.get("keitaro_offer_url") or "")
-                    if adexa_mode == "smartlink":
+                    if adexa_mode == "links+smartlink":
+                        adexa_note = f"links+smartlink golink={ax.get('smartlink_url') or ''}"
+                    elif adexa_mode == "smartlink":
                         adexa_note = f"smartlink: {ax.get('smartlink_url') or ''}"
                 except AdexaClientError as e:
                     adexa_found = False

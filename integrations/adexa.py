@@ -9,6 +9,9 @@ Adexa API helpers (feed4) — Link Monetizer + merchant list.
 ``supportsOffer: 1`` and ``randomOffer`` (Goffers golink), ``merchant_monetization_check``
 reports ``mode=smartlink`` and builds a Keitaro golink URL with ``clickid={subid}``.
 
+When both LinksMerchant and golink work, ``mode=links+smartlink`` and both paths are reported.
+``normalize_merchant_homepage_url()`` fixes common ``www`` typos (e.g. ``wwwlampenwelt.de``).
+
 **GetMerchant** — list merchants for a country (uses apiKey + siteID).
   Your working URL shape::
 
@@ -169,6 +172,32 @@ def _parse_foundish(payload: Any) -> tuple[bool, str]:
     return False, "unknown"
 
 
+def normalize_merchant_homepage_url(url: str) -> str:
+    """
+    Fix glued ``www`` host typos: ``https://wwwlampenwelt.de`` → ``https://www.lampenwelt.de``.
+
+    Applied before Adexa probes and feed-balance URL inference so LinksMerchant is not
+    skipped due to bootstrap/CSV mistakes.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if not raw.lower().startswith(("http://", "https://")):
+        raw = f"https://{raw.lstrip('/')}"
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return raw
+    if host.startswith("www") and not host.startswith("www."):
+        rest = host[3:]
+        if _looks_like_domain(rest):
+            scheme = parsed.scheme or "https"
+            path = parsed.path or ""
+            query = f"?{parsed.query}" if parsed.query else ""
+            return f"{scheme}://www.{rest}{path}{query}"
+    return raw
+
+
 def _merchant_host_key(url: str) -> str:
     raw = (url or "").strip()
     if not raw:
@@ -271,6 +300,23 @@ def build_adexa_golink_keitaro_payload(
     return base
 
 
+def _apply_get_merchant_fields(out: Dict[str, Any], merchant: Dict[str, Any]) -> None:
+    out["merchant_id"] = str(merchant.get("id") or merchant.get("merchantId") or "")
+    out["merchant_name"] = str(merchant.get("name") or "")
+    out["cpc_model"] = str(merchant.get("cpcmodel") or merchant.get("cpcModel") or "")
+    out["raw_merchant"] = merchant
+    offer_block = merchant.get("offer")
+    if isinstance(offer_block, dict):
+        cpc = offer_block.get("boostCpc") or offer_block.get("staticCpc")
+        if cpc is not None:
+            out["estimated_cpc"] = str(cpc)
+    links_block = merchant.get("links")
+    if not out.get("estimated_cpc") and isinstance(links_block, dict):
+        cpc = links_block.get("merchantEstimatedCpc")
+        if cpc is not None:
+            out["estimated_cpc"] = str(cpc)
+
+
 def merchant_monetization_check(
     merchant_url: str,
     country_iso2: str,
@@ -284,26 +330,28 @@ def merchant_monetization_check(
     Adexa monetization for checkmon / feed balance.
 
     1. ``LinksMerchant.php`` homepage probe (redirect = monetized links).
-    2. If not found, ``GetMerchant`` smartlink when ``supportsOffer`` + ``randomOffer``.
+    2. ``GetMerchant`` golink when ``supportsOffer`` + ``randomOffer``.
 
-    Returns ``found`` True for either mode. ``mode`` is ``links``, ``smartlink``, or ``none``.
-    ``keitaro_offer_url`` is set for smartlink mode (golink + clickid macro).
+    Returns ``found`` True for either path. ``mode`` is ``links``, ``smartlink``,
+    ``links+smartlink``, or ``none``. ``keitaro_offer_url`` is set when golink is available.
     """
+    probe_url = normalize_merchant_homepage_url(merchant_url) or (merchant_url or "").strip()
     links = links_merchant_check(
-        merchant_url,
+        probe_url,
         country_iso2,
         site_id=site_id,
         merchant_id=None,
         timeout=timeout,
     )
+    links_found = bool(links.get("found"))
     out: Dict[str, Any] = {
-        "found": bool(links.get("found")),
-        "mode": "links" if links.get("found") else "none",
+        "found": links_found,
+        "mode": "links" if links_found else "none",
         "note": str(links.get("note") or ""),
         "http": links.get("http"),
         "country": links.get("country"),
         "redirect_url": links.get("redirect_url"),
-        "links_found": bool(links.get("found")),
+        "links_found": links_found,
         "smartlink_found": False,
         "smartlink_url": "",
         "keitaro_offer_url": "",
@@ -313,48 +361,50 @@ def merchant_monetization_check(
         "estimated_cpc": "",
         "operator_hint": "",
         "raw_merchant": None,
+        "probe_url": probe_url,
     }
-    if links.get("found"):
-        out["operator_hint"] = "Use dynamic LinksMerchant offer (merchantUrl + clickid)."
-        return out
 
     merchant = find_get_merchant_by_url(
-        merchant_url,
+        probe_url,
         country_iso2,
         site_id=site_id,
         api_key=api_key,
         merchants=merchants,
     )
-    if not merchant:
-        out["note"] = out["note"] or "merchant_not_in_getmerchant"
+    smartlink_found = False
+    golink = ""
+    if merchant:
+        _apply_get_merchant_fields(out, merchant)
+        golink = extract_adexa_smartlink_url(merchant) or ""
+        smartlink_found = bool(golink and merchant_supports_adexa_smartlink(merchant))
+        if smartlink_found:
+            out["smartlink_found"] = True
+            out["smartlink_url"] = golink
+            out["keitaro_offer_url"] = build_adexa_golink_keitaro_payload(golink)
+
+    if links_found and smartlink_found:
+        out.update(
+            {
+                "found": True,
+                "mode": "links+smartlink",
+                "note": "http_redirect+smartlink_goffers",
+                "operator_hint": (
+                    "Homepage monetized via LinksMerchant (merchantUrl + clickid). "
+                    "Golink smartlink also available as alternate offer."
+                ),
+            }
+        )
         return out
 
-    out["merchant_id"] = str(merchant.get("id") or merchant.get("merchantId") or "")
-    out["merchant_name"] = str(merchant.get("name") or "")
-    out["cpc_model"] = str(merchant.get("cpcmodel") or merchant.get("cpcModel") or "")
-    out["raw_merchant"] = merchant
+    if links_found:
+        out["operator_hint"] = "Use dynamic LinksMerchant offer (merchantUrl + clickid)."
+        return out
 
-    offer_block = merchant.get("offer")
-    if isinstance(offer_block, dict):
-        cpc = offer_block.get("boostCpc") or offer_block.get("staticCpc")
-        if cpc is not None:
-            out["estimated_cpc"] = str(cpc)
-    links_block = merchant.get("links")
-    if not out["estimated_cpc"] and isinstance(links_block, dict):
-        cpc = links_block.get("merchantEstimatedCpc")
-        if cpc is not None:
-            out["estimated_cpc"] = str(cpc)
-
-    golink = extract_adexa_smartlink_url(merchant)
-    if merchant_supports_adexa_smartlink(merchant) and golink:
-        keitaro_url = build_adexa_golink_keitaro_payload(golink)
+    if smartlink_found:
         out.update(
             {
                 "found": True,
                 "mode": "smartlink",
-                "smartlink_found": True,
-                "smartlink_url": golink,
-                "keitaro_offer_url": keitaro_url,
                 "note": "smartlink_goffers",
                 "operator_hint": (
                     "Homepage not monetized via LinksMerchant; use golink smartlink offer "
@@ -364,12 +414,15 @@ def merchant_monetization_check(
         )
         return out
 
-    if _truthy_flag(merchant.get("supportsLinks")):
-        out["note"] = out["note"] or "supports_links_but_probe_failed"
-    elif _truthy_flag(merchant.get("supportsOffer")):
-        out["note"] = out["note"] or "supports_offer_missing_golink"
+    if merchant:
+        if _truthy_flag(merchant.get("supportsLinks")):
+            out["note"] = out["note"] or "supports_links_but_probe_failed"
+        elif _truthy_flag(merchant.get("supportsOffer")):
+            out["note"] = out["note"] or "supports_offer_missing_golink"
+        else:
+            out["note"] = out["note"] or "merchant_no_links_or_offer"
     else:
-        out["note"] = out["note"] or "merchant_no_links_or_offer"
+        out["note"] = out["note"] or "merchant_not_in_getmerchant"
     return out
 
 

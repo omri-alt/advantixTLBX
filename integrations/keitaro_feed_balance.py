@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import unquote, urlparse
 
 from integrations.keitaro import KeitaroClient, KeitaroClientError
+from integrations.adexa import normalize_merchant_homepage_url
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ def parse_feed_balance_config(notes: str) -> FeedBalanceConfig:
         key = key.strip().lower()
         val = val.strip()
         if key == "url":
-            cfg.url = val
+            cfg.url = normalize_merchant_homepage_url(val) or val
         elif key == "geo":
             cfg.geo = val.lower()[:2] if val.lower() != "uk" else "uk"
         elif key == "enabled":
@@ -130,6 +131,29 @@ def merge_notes_preserve_config(existing_notes: str, new_report: str) -> str:
     """Replace only the auto section; keep user config block."""
     cfg = parse_feed_balance_config(existing_notes)
     return build_bootstrap_notes(url=cfg.url, geo=cfg.geo, enabled=cfg.enabled, report=new_report)
+
+
+def replace_feed_balance_config(
+    existing_notes: str,
+    *,
+    url: Optional[str] = None,
+    geo: Optional[str] = None,
+    enabled: Optional[str] = None,
+) -> str:
+    """Rewrite the manual config block; preserve the auto-updated report section."""
+    cfg = parse_feed_balance_config(existing_notes)
+    if url is not None:
+        cfg.url = normalize_merchant_homepage_url(url) or url.strip()
+    if geo is not None:
+        cfg.geo = geo.strip().lower()
+        if cfg.geo == "gb":
+            cfg.geo = "uk"
+    if enabled is not None:
+        cfg.enabled = enabled.strip()
+    report = "Pending first optimization run."
+    if AUTO_DIVIDER in existing_notes:
+        report = existing_notes.split(AUTO_DIVIDER, 1)[1].strip()
+    return build_bootstrap_notes(url=cfg.url, geo=cfg.geo, enabled=cfg.enabled, report=report)
 
 
 def _slug(s: str) -> str:
@@ -222,14 +246,15 @@ def infer_merchant_url(
     name = (campaign_name or "").strip()
     domain_url = _domain_from_text(name.split(" - ", 1)[0] if " - " in name else name)
     if domain_url:
-        return domain_url
+        return normalize_merchant_homepage_url(domain_url) or domain_url
 
     for payload in offer_payloads or []:
         u = _domain_from_text(payload or "")
         if u and "effiliation.com" not in u.lower() and "shopli.city" not in u.lower():
             host = (urlparse(u).hostname or "").lower()
             if host and not host.endswith(("kelkoogroup.net", "adexad.com", "v2i8b.com")):
-                return u if u.startswith("http") else f"https://{u}"
+                fixed = normalize_merchant_homepage_url(u) or u
+                return fixed if fixed.startswith("http") else f"https://{fixed}"
 
     brand_slug, name_geo = parse_brand_geo_from_campaign_name(name)
     g = (geo or name_geo or "").lower()
@@ -252,7 +277,7 @@ def infer_merchant_url(
     if not candidates:
         return ""
     candidates.sort(key=lambda x: (-x[0], x[1]))
-    return candidates[0][1]
+    return normalize_merchant_homepage_url(candidates[0][1]) or candidates[0][1]
 
 
 def _offer_name_to_feed_key(name: str) -> Optional[str]:
@@ -557,7 +582,11 @@ def _feed_results_from_checkmon(
 
     ax_mode = str(ax.get("mode") or "")
     ax_detail = str(ax.get("note") or "")
-    if ax_mode == "smartlink":
+    if ax_mode == "links+smartlink":
+        ax_extra = f"links+smartlink cpc={ax.get('estimated_cpc') or '?'}"
+        if ax.get("smartlink_url"):
+            ax_extra += f" golink={ax.get('smartlink_url')}"
+    elif ax_mode == "smartlink":
         ax_extra = f"smartlink cpc={ax.get('estimated_cpc') or '?'}"
         if ax.get("smartlink_url"):
             ax_extra += f" golink={ax.get('smartlink_url')}"
@@ -626,7 +655,7 @@ def _feed_results_from_checkmon(
 
 def _adexa_golink_from_row(row: CampaignCheckmonRow) -> str:
     for fr in row.feed_results:
-        if fr.mode == "smartlink" and fr.keitaro_offer_url:
+        if fr.mode in ("smartlink", "links+smartlink") and fr.keitaro_offer_url:
             return fr.keitaro_offer_url.strip()
     return ""
 
@@ -649,7 +678,12 @@ def format_checkmon_report_block(row: CampaignCheckmonRow, *, ts: str, dry_run: 
         return "\n".join(lines)
     for fr in row.feed_results:
         if fr.found is True:
-            status = "YES" if fr.mode != "smartlink" else "SMARTLINK"
+            if fr.mode == "links+smartlink":
+                status = "YES+BOTH"
+            elif fr.mode == "smartlink":
+                status = "SMARTLINK"
+            else:
+                status = "YES"
         elif fr.found is False:
             status = "NO"
         else:
@@ -659,7 +693,7 @@ def format_checkmon_report_block(row: CampaignCheckmonRow, *, ts: str, dry_run: 
         if extra:
             extra = f" ({extra})"
         lines.append(f"  {fr.label:10} {status:7}  {share_part:12}  {fr.offer_name}{extra}")
-        if fr.mode == "smartlink" and fr.keitaro_offer_url:
+        if fr.mode in ("smartlink", "links+smartlink") and fr.keitaro_offer_url:
             lines.append(f"             -> Keitaro golink offer: {fr.keitaro_offer_url}")
         if fr.operator_hint:
             lines.append(f"             -> {fr.operator_hint}")
@@ -792,8 +826,10 @@ def run_checkmon_audit_dry(
                     "share_pct": fr.share,
                     "offer_name": fr.offer_name,
                     "monetized": (
-                        "yes"
-                        if fr.found is True and fr.mode != "smartlink"
+                        "yes+both"
+                        if fr.found is True and fr.mode == "links+smartlink"
+                        else "yes"
+                        if fr.found is True and fr.mode not in ("smartlink",)
                         else "smartlink"
                         if fr.found is True and fr.mode == "smartlink"
                         else "no"
