@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Union
+from urllib.parse import quote
 
 import requests
 
-from config import YADORE_API_KEY, YADORE_PROJECT_ID
+from config import BLEND_YADORE_OFFER_USE_SUB_MACROS, YADORE_API_KEY, YADORE_PROJECT_ID
 from integrations.monetization_geo import geo_for_yadore
 
 logger = logging.getLogger(__name__)
 
 YADORE_BASE_URL = "https://api.yadore.com"
+YADORE_KEITARO_RAIN_SHELL = "https://shopli.city/rainotest?rain="
+YADORE_DEEPLINK_PROJECT_FALLBACK = "WAF4IibbRqGG"
 
 
 class YadoreClientError(Exception):
@@ -85,6 +88,273 @@ def deeplink(
         "raw": data,
     }
 
+
+def deeplink_batch(
+    urls: Sequence[str],
+    geo: str,
+    *,
+    placement_id: str = "WAF4IibbRqGG",
+    is_couponing: bool = False,
+    api_key: Optional[str] = None,
+    base_url: str = YADORE_BASE_URL,
+) -> List[Dict[str, Any]]:
+    """POST /v2/deeplink with up to 20 URLs; returns normalized per-URL rows."""
+    batch = [u.strip() for u in urls if (u or "").strip()][:20]
+    if not batch:
+        return []
+    token = (api_key or YADORE_API_KEY or "").strip()
+    if not token:
+        raise YadoreClientError("YADORE_API_KEY is not set")
+
+    endpoint = f"{base_url.rstrip('/')}/v2/deeplink"
+    headers = {
+        "Content-Type": "application/json",
+        "accept": "application/json",
+        "API-Key": token,
+    }
+    payload = {
+        "market": geo_for_yadore(geo or ""),
+        "placementId": placement_id,
+        "isCouponing": bool(is_couponing),
+        "urls": [{"url": u} for u in batch],
+    }
+    try:
+        r = requests.post(endpoint, headers=headers, json=payload, timeout=45)
+    except requests.RequestException as e:
+        raise YadoreClientError(str(e)) from e
+
+    if r.status_code != 200:
+        raise YadoreClientError(
+            f"Yadore API error: {r.status_code}",
+            status_code=r.status_code,
+            response_body=(r.text[:500] if r.text else None),
+        )
+
+    data = r.json() if r.text else {}
+    root = data.get("result") if isinstance(data, dict) and isinstance(data.get("result"), dict) else data
+    out: List[Dict[str, Any]] = []
+    for item in root.get("deeplinks") or []:
+        if not isinstance(item, dict):
+            continue
+        est = item.get("estimatedCpc")
+        est_amount = (est.get("amount") if isinstance(est, dict) else est) if est is not None else None
+        est_currency = (est.get("currency") if isinstance(est, dict) else None) if est is not None else None
+        out.append(
+            {
+                "found": bool(item.get("found")),
+                "echo_url": item.get("url") or "",
+                "clickUrl": item.get("clickUrl") or item.get("deeplink") or "",
+                "estimatedCpc_amount": est_amount,
+                "estimatedCpc_currency": est_currency,
+                "isSmartlink": item.get("isSmartlink"),
+                "raw": item,
+            }
+        )
+    return out
+
+
+def fetch_deeplink_merchants(
+    market: str,
+    *,
+    api_key: Optional[str] = None,
+    base_url: str = YADORE_BASE_URL,
+    timeout: int = 120,
+) -> List[Dict[str, Any]]:
+    """GET /v2/deeplink/merchant — active deeplink + smartlink merchants for a market."""
+    token = (api_key or YADORE_API_KEY or "").strip()
+    if not token:
+        raise YadoreClientError("YADORE_API_KEY is not set")
+    endpoint = f"{base_url.rstrip('/')}/v2/deeplink/merchant"
+    headers = {"Accept": "application/json", "API-Key": token}
+    params = {"market": geo_for_yadore(market or "")}
+    try:
+        r = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
+    except requests.RequestException as e:
+        raise YadoreClientError(str(e)) from e
+    if r.status_code != 200:
+        raise YadoreClientError(
+            f"deeplink/merchant HTTP {r.status_code}",
+            status_code=r.status_code,
+            response_body=(r.text[:800] if r.text else None),
+        )
+    data = r.json() if r.text else {}
+    arr = data.get("merchants")
+    if not isinstance(arr, list):
+        inner = data.get("result") if isinstance(data.get("result"), dict) else {}
+        arr = inner.get("merchants") if isinstance(inner.get("merchants"), list) else []
+    return [m for m in arr if isinstance(m, dict)]
+
+
+def _merchant_url_https(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        return u
+    if not u.lower().startswith(("http://", "https://")):
+        u = "https://" + u.lstrip("/")
+    return u
+
+
+def build_yadore_keitaro_payload(
+    geo: str,
+    merchant_url: str,
+    *,
+    project_id: Optional[str] = None,
+    use_sub_macros: Optional[bool] = None,
+) -> str:
+    """
+    Keitaro offer URL for Yadore Direct Redirect (feed3).
+
+    ``shopli.city/rainotest`` → ``api.yadore.com/v2/d`` with ``placementId={subid}``.
+    Default embeds merchant homepage + market from notes; optional sub macros mode
+    uses ``url={sub_id_3}&market={sub_id_2}`` when ``BLEND_YADORE_OFFER_USE_SUB_MACROS=1``.
+    """
+    pid = (project_id or YADORE_PROJECT_ID or "").strip() or YADORE_DEEPLINK_PROJECT_FALLBACK
+    pid_q = quote(str(pid), safe="")
+    sub_mode = BLEND_YADORE_OFFER_USE_SUB_MACROS if use_sub_macros is None else bool(use_sub_macros)
+
+    if sub_mode:
+        inner = (
+            "https://api.yadore.com/v2/d"
+            f"?url={{sub_id_3}}&market={{sub_id_2}}"
+            f"&placementId={{subid}}&projectId={pid_q}&isCouponing=false"
+        )
+        return YADORE_KEITARO_RAIN_SHELL + quote(inner, safe=":/?&={}")
+
+    g = (geo or "").strip().lower()[:2]
+    if g == "gb":
+        g = "uk"
+    if len(g) != 2:
+        return ""
+    market = geo_for_yadore(g)
+    m_enc = quote(_merchant_url_https(merchant_url), safe="")
+    inner = (
+        "https://api.yadore.com/v2/d"
+        f"?url={m_enc}&market={quote(str(market), safe='')}"
+        f"&placementId={{subid}}&projectId={pid_q}&isCouponing=false"
+    )
+    return YADORE_KEITARO_RAIN_SHELL + quote(inner, safe=":/?&={}%")
+
+
+def merchant_monetization_check(
+    merchant_url: str,
+    country_iso2: str,
+    *,
+    merchant_name: str = "",
+    placement_id: str = "WAF4IibbRqGG",
+    api_key: Optional[str] = None,
+    deeplink_merchants: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """
+    Yadore monetization for checkmon / potential sheets.
+
+    1. POST /v2/deeplink on homepage URL variants (non-coupon + coupon).
+    2. Fallback: match host in ``/v2/deeplink/merchant`` catalog (smartlink-only merchants).
+    """
+    from urllib.parse import urlparse
+
+    def _host(s: str) -> str:
+        t = (s or "").strip().lower()
+        if not t:
+            return ""
+        if "://" in t:
+            t = urlparse(t).netloc or t.split("://", 1)[-1]
+        if t.startswith("www."):
+            t = t[4:]
+        return t.split("/")[0]
+
+    host = _host(merchant_url) or _host(merchant_name)
+    market = geo_for_yadore(country_iso2 or "")
+    urls: List[str] = []
+    seen: set[str] = set()
+    for candidate in (merchant_url, merchant_name, f"https://{host}" if host else "", f"https://www.{host}" if host else ""):
+        c = (candidate or "").strip()
+        if not c:
+            continue
+        if not c.lower().startswith("http"):
+            c = f"https://{c.lstrip('/')}"
+        if c not in seen:
+            seen.add(c)
+            urls.append(c)
+
+    non_coupon = False
+    coupon = False
+    click_url = ""
+    ecpc = ""
+    err = ""
+    for coupon_flag in (False, True):
+        for url in urls:
+            try:
+                d = deeplink(url, country_iso2, placement_id=placement_id, is_couponing=coupon_flag, api_key=api_key)
+            except YadoreClientError as e:
+                err = str(e)[:200]
+                continue
+            found = bool(d.get("found")) or bool(str(d.get("clickUrl") or "").strip())
+            if found:
+                if coupon_flag:
+                    coupon = True
+                else:
+                    non_coupon = True
+                click_url = click_url or str(d.get("clickUrl") or "")
+                ecpc = ecpc or str(d.get("estimatedCpc_amount") or "")
+                break
+        if non_coupon or coupon:
+            break
+
+    catalog_row: Optional[Dict[str, Any]] = None
+    if host:
+        rows = deeplink_merchants
+        if rows is None:
+            try:
+                rows = fetch_deeplink_merchants(market, api_key=api_key)
+            except YadoreClientError:
+                rows = []
+        for row in rows or []:
+            if _host(str(row.get("name") or "")) == host:
+                catalog_row = row
+                break
+
+    mode = "none"
+    note = err or "not_in_catalog"
+    found = non_coupon or coupon
+    if found:
+        if non_coupon and coupon:
+            mode = "both"
+        elif coupon:
+            mode = "coupon_only"
+        else:
+            mode = "deeplink"
+        note = "deeplink_api"
+        if catalog_row and catalog_row.get("isSmartlink"):
+            mode = "smartlink"
+    elif catalog_row:
+        found = True
+        if catalog_row.get("isSmartlink"):
+            mode = "smartlink_catalog"
+            note = "active smartlink merchant in /v2/deeplink/merchant (homepage probe failed)"
+        else:
+            mode = "deeplink_catalog"
+            note = "active deeplink merchant in catalog (homepage probe failed)"
+        est = catalog_row.get("estimatedCpc")
+        if isinstance(est, dict) and est.get("amount"):
+            ecpc = str(est.get("amount") or "")
+
+    probe_url = urls[0] if urls else _merchant_url_https(merchant_url)
+    keitaro_offer_url = build_yadore_keitaro_payload(country_iso2, probe_url) if found else ""
+
+    return {
+        "found": found,
+        "mode": mode,
+        "note": note,
+        "non_coupon_found": non_coupon,
+        "coupon_found": coupon,
+        "clickUrl": click_url,
+        "estimated_cpc": ecpc,
+        "is_smartlink": bool(catalog_row.get("isSmartlink")) if catalog_row else False,
+        "has_smartlink_homepage": bool(catalog_row.get("hasSmartlinkHomepage")) if catalog_row else False,
+        "catalog_merchant_id": str((catalog_row or {}).get("id") or ""),
+        "probe_host": host,
+        "keitaro_offer_url": keitaro_offer_url,
+    }
 
 def direct_redirect_probe(
     url: str,

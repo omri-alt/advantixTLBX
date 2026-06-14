@@ -29,8 +29,8 @@ load_dotenv()
 
 from config import FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY, shopnomix_monetization_enabled
 from integrations.kelkoo_search import kelkoo_merchant_link_check as kelkoo_check
-from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
-from integrations.adexa import merchant_monetization_check as adexa_merchant_check, AdexaClientError
+from integrations.yadore import merchant_monetization_check as yadore_merchant_check, YadoreClientError
+from integrations.adexa import merchant_monetization_check as adexa_merchant_check, AdexaClientError, normalize_merchant_homepage_url
 from integrations.shopnomix import (
     clear_demand_cache,
     demand_tile_check,
@@ -43,8 +43,24 @@ SPREADSHEET_ID = "1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0"
 INPUT_SHEET = "sourceToCheck"
 OUTPUT_SHEET = "Matches"
 
-# Parallel HTTP calls per row (Kelkoo×3 + Yadore×2 + Adexa + Shopnomix×2).
+# Parallel HTTP calls per row (Kelkoo×3 + Yadore + Adexa + Shopnomix×2).
 _ROW_POOL_WORKERS = 8
+
+
+def _yadore_legacy_probe_fields(y: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Map ``merchant_monetization_check`` to legacy ync/yc keys for sheet columns."""
+    ecpc = str(y.get("estimated_cpc") or "")
+    y_nc = {
+        "found": bool(y.get("non_coupon_found")),
+        "estimatedCpc_amount": ecpc if y.get("non_coupon_found") else "",
+        "estimatedCpc_currency": "EUR" if y.get("non_coupon_found") and ecpc else "",
+    }
+    y_c = {
+        "found": bool(y.get("coupon_found")),
+        "estimatedCpc_amount": ecpc if y.get("coupon_found") else "",
+        "estimatedCpc_currency": "EUR" if y.get("coupon_found") and ecpc else "",
+    }
+    return y_nc, y_c
 
 
 def get_credentials_path() -> str:
@@ -108,6 +124,7 @@ def read_source_rows(service) -> List[Tuple[str, str]]:
 
 def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
     """Run all feed checks for one row in parallel (same network time ≈ one slowest call)."""
+    url = normalize_merchant_homepage_url(url) or (url or "").strip()
 
     def _k1() -> Dict[str, Any]:
         return kelkoo_check(url, geo, FEED1_API_KEY)
@@ -120,17 +137,19 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
             return {"found": False, "estimatedCpc": "", "note": "no FEED5_API_KEY"}
         return kelkoo_check(url, geo, FEED5_API_KEY)
 
-    def _ync() -> Dict[str, Any]:
+    def _yadore() -> Dict[str, Any]:
         try:
-            return yadore_deeplink(url, geo, is_couponing=False)
-        except YadoreClientError:
-            return {"found": False, "estimatedCpc_amount": "", "estimatedCpc_currency": ""}
-
-    def _yc() -> Dict[str, Any]:
-        try:
-            return yadore_deeplink(url, geo, is_couponing=True)
-        except YadoreClientError:
-            return {"found": False, "estimatedCpc_amount": "", "estimatedCpc_currency": ""}
+            return yadore_merchant_check(url, geo)
+        except YadoreClientError as e:
+            return {
+                "found": False,
+                "mode": "none",
+                "note": str(e)[:200],
+                "non_coupon_found": False,
+                "coupon_found": False,
+                "estimated_cpc": "",
+                "is_smartlink": False,
+            }
 
     def _ax() -> Dict[str, Any]:
         try:
@@ -156,8 +175,7 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
         futures[ex.submit(_k2)] = "k2"
         if (FEED5_API_KEY or "").strip():
             futures[ex.submit(_k5)] = "k5"
-        futures[ex.submit(_ync)] = "ync"
-        futures[ex.submit(_yc)] = "yc"
+        futures[ex.submit(_yadore)] = "yadore"
         futures[ex.submit(_ax)] = "ax"
         if shopnomix_monetization_enabled():
             futures[ex.submit(_sn_tile)] = "sn_tile"
@@ -171,12 +189,27 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
         except Exception as e:
             if key == "k1" or key == "k2":
                 out[key] = {"found": False, "estimatedCpc": ""}
+            elif key in ("yadore",):
+                out[key] = {
+                    "found": False,
+                    "mode": "none",
+                    "note": str(e)[:200],
+                    "non_coupon_found": False,
+                    "coupon_found": False,
+                    "estimated_cpc": "",
+                    "is_smartlink": False,
+                }
             elif key in ("ync", "yc"):
                 out[key] = {"found": False, "estimatedCpc_amount": "", "estimatedCpc_currency": ""}
             elif key in ("sn_tile", "sn_coupons"):
                 out[key] = {"found": False, "epc": "", "note": str(e)[:200]}
             else:
                 out[key] = {"found": False, "note": str(e)[:200]}
+
+    y = out.get("yadore") or {}
+    y_nc, y_c = _yadore_legacy_probe_fields(y)
+    out["ync"] = y_nc
+    out["yc"] = y_c
 
     return out
 

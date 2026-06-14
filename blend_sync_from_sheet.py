@@ -367,58 +367,15 @@ def _blend_merchant_url_https(url: str) -> str:
 
 
 def _blend_adexa_action_payload(geo: str, merchant_url: str) -> str:
-    """
-    shopli ``raino`` → Adexa ``LinksMerchant.php`` with country (sheet geo → Adexa ISO2)
-    and URL-encoded merchant URL; ``clickid={subid}`` for Keitaro.
-    """
-    site_id = (ADEXA_SITE_ID or "").strip()
-    if not site_id:
-        raise ValueError("Blend feed=adexa requires ADEXA_SITE_ID in .env for Keitaro offer URLs")
-    g = _normalize_geo(geo)
-    if len(g) != 2:
-        raise ValueError(f"Invalid geo for Adexa offer: {geo!r}")
-    # Lowercase country like Kelkoo Blend (e.g. uk, fr) — same as GetMerchant / bulk tooling.
-    country = g
-    m_enc = quote(_blend_merchant_url_https(merchant_url), safe="")
-    inner = (
-        "https://api.adexad.com/LinksMerchant.php"
-        f"?siteID={quote(str(site_id), safe='')}&country={quote(str(country), safe='')}"
-        f"&merchantUrl={m_enc}&clickid={{subid}}"
-    )
-    # Keep the inner Adexa URL readable like the working feed4 format; only merchantUrl stays encoded.
-    return BLEND_ADEXA_RAIN_SHELL + quote(inner, safe=":/?&={}")
+    from integrations.adexa import build_adexa_links_keitaro_payload
+
+    return build_adexa_links_keitaro_payload(geo, merchant_url)
 
 
 def _blend_yadore_action_payload(geo: str, merchant_url: str) -> str:
-    """
-    shopli ``rainotest`` → Yadore ``/v2/d`` with ``placementId={{subid}}`` (and optional
-    ``url={{sub_id_3}}`` / ``market={{sub_id_2}}`` when ``BLEND_YADORE_OFFER_USE_SUB_MACROS``).
+    from integrations.yadore import build_yadore_keitaro_payload
 
-    The ``rain`` query value must not use ``quote(..., safe="")``: that encodes ``{`` / ``}`` and
-    breaks Keitaro macros (Yadore then never sees the real placement id → report vs Keitaro mismatch).
-    """
-    pid = (YADORE_PROJECT_ID or "").strip() or BLEND_YADORE_DEEPLINK_PROJECT_FALLBACK
-    pid_q = quote(str(pid), safe="")
-
-    if BLEND_YADORE_OFFER_USE_SUB_MACROS:
-        inner = (
-            "https://api.yadore.com/v2/d"
-            f"?url={{sub_id_3}}&market={{sub_id_2}}"
-            f"&placementId={{subid}}&projectId={pid_q}&isCouponing=false"
-        )
-        return BLEND_YADORE_RAIN_SHELL + quote(inner, safe=":/?&={}")
-
-    g = _normalize_geo(geo)
-    if len(g) != 2:
-        raise ValueError(f"Invalid geo for Yadore offer: {geo!r}")
-    market = geo_for_yadore(g)
-    m_enc = quote(_blend_merchant_url_https(merchant_url), safe="")
-    inner = (
-        "https://api.yadore.com/v2/d"
-        f"?url={m_enc}&market={quote(str(market), safe='')}"
-        f"&placementId={{subid}}&projectId={pid_q}&isCouponing=false"
-    )
-    return BLEND_YADORE_RAIN_SHELL + quote(inner, safe=":/?&={}%")
+    return build_yadore_keitaro_payload(geo, merchant_url)
 
 
 def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> str:

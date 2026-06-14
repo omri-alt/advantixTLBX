@@ -32,6 +32,7 @@ from integrations.monetization_geo import two_letter_lower
 
 ADEXA_LINKS_MERCHANT_URL = "https://api.adexad.com/LinksMerchant.php"
 ADEXA_GET_MERCHANT_BASE = "https://api.adexad.com/v1/GetMerchant"
+ADEXA_KEITARO_RAIN_SHELL = "https://shopli.city/raino?rain="
 
 # Default geos for bulk scripts (same order as your Adexa feed tooling).
 ADEXA_DEFAULT_GEOS: List[str] = [
@@ -280,21 +281,75 @@ def find_get_merchant_by_url(
     return best[1] if best else None
 
 
+def normalize_adexa_golink_url(golink_url: str) -> str:
+    """
+    Normalize Adexa Goffers URLs for Keitaro copy-paste.
+
+    GetMerchant often returns ``.../Goffers/country=FR&mid=...`` (``&`` without ``?``).
+    That shape breaks if wrapped in shopli ``raino``; use standard query form instead.
+    """
+    u = (golink_url or "").strip()
+    if not u:
+        return ""
+    marker = "/Goffers/"
+    idx = u.lower().find(marker.lower())
+    if idx < 0:
+        return u
+    tail = u[idx + len(marker) :]
+    if "?" in tail:
+        return u
+    amp = tail.find("&")
+    if amp <= 0:
+        return u
+    return u[: idx + len(marker) + amp] + "?" + tail[amp + 1 :]
+
+
+def build_adexa_links_keitaro_payload(
+    geo: str,
+    merchant_url: str,
+    *,
+    site_id: Optional[str] = None,
+    clickid_macro: str = "{subid}",
+) -> str:
+    """
+    Keitaro offer URL for Adexa LinksMerchant (dynamic merchant homepage).
+
+    Same rain shell as Blend feed4: ``shopli.city/raino`` → ``LinksMerchant.php``.
+    """
+    site = (site_id or ADEXA_SITE_ID or "").strip()
+    if not site:
+        return ""
+    g = two_letter_lower(geo or "")
+    if g == "gb":
+        g = "uk"
+    if len(g) != 2:
+        return ""
+    probe = normalize_merchant_homepage_url(merchant_url) or (merchant_url or "").strip()
+    if not probe.lower().startswith(("http://", "https://")):
+        probe = f"https://{probe.lstrip('/')}"
+    m_enc = quote(probe, safe="")
+    inner = (
+        f"{ADEXA_LINKS_MERCHANT_URL}?siteID={quote(site, safe='')}&country={quote(g, safe='')}"
+        f"&merchantUrl={m_enc}&clickid={clickid_macro}"
+    )
+    return ADEXA_KEITARO_RAIN_SHELL + quote(inner, safe=":/?&={}")
+
+
 def build_adexa_golink_keitaro_payload(
     golink_url: str,
     *,
     clickid_macro: str = "{subid}",
 ) -> str:
     """
-    Keitaro offer URL for an Adexa smartlink (Goffers / golink).
+    Keitaro offer URL for Adexa Goffers / golink smartlink.
 
-    Appends ``clickid={subid}`` when missing — same macro used on feed4 dynamic offers.
+    Uses the golink URL **directly** (not shopli raino): raino rewrites path-style
+    Goffers params and can break redirects. Normalizes to ``?mid=`` query form first.
     """
-    base = (golink_url or "").strip()
+    base = normalize_adexa_golink_url(golink_url)
     if not base:
         return ""
     if "clickid=" not in base.lower():
-        # Goffers URLs often look like ``.../Goffers/country=FR&mid=...`` (no ``?``).
         sep = "&" if ("?" in base or "=" in base.split("//", 1)[-1]) else "?"
         base = f"{base}{sep}clickid={clickid_macro}"
     return base
@@ -355,6 +410,8 @@ def merchant_monetization_check(
         "smartlink_found": False,
         "smartlink_url": "",
         "keitaro_offer_url": "",
+        "keitaro_links_url": "",
+        "keitaro_golink_url": "",
         "merchant_id": "",
         "merchant_name": "",
         "cpc_model": "",
@@ -373,6 +430,7 @@ def merchant_monetization_check(
     )
     smartlink_found = False
     golink = ""
+    links_keitaro = build_adexa_links_keitaro_payload(country_iso2, probe_url, site_id=site_id) if links_found else ""
     if merchant:
         _apply_get_merchant_fields(out, merchant)
         golink = extract_adexa_smartlink_url(merchant) or ""
@@ -380,7 +438,13 @@ def merchant_monetization_check(
         if smartlink_found:
             out["smartlink_found"] = True
             out["smartlink_url"] = golink
-            out["keitaro_offer_url"] = build_adexa_golink_keitaro_payload(golink)
+            out["keitaro_golink_url"] = build_adexa_golink_keitaro_payload(golink)
+
+    out["keitaro_links_url"] = links_keitaro
+    if links_keitaro:
+        out["keitaro_offer_url"] = links_keitaro
+    elif smartlink_found:
+        out["keitaro_offer_url"] = out.get("keitaro_golink_url") or ""
 
     if links_found and smartlink_found:
         out.update(
@@ -389,15 +453,15 @@ def merchant_monetization_check(
                 "mode": "links+smartlink",
                 "note": "http_redirect+smartlink_goffers",
                 "operator_hint": (
-                    "Homepage monetized via LinksMerchant (merchantUrl + clickid). "
-                    "Golink smartlink also available as alternate offer."
+                    "Use adexa_offer (LinksMerchant + raino) as primary feed4 offer. "
+                    "adexa_golink is an alternate Goffers smartlink — do not wrap golink in raino."
                 ),
             }
         )
         return out
 
     if links_found:
-        out["operator_hint"] = "Use dynamic LinksMerchant offer (merchantUrl + clickid)."
+        out["operator_hint"] = "Use adexa_offer (LinksMerchant + raino) for feed4."
         return out
 
     if smartlink_found:
@@ -407,8 +471,8 @@ def merchant_monetization_check(
                 "mode": "smartlink",
                 "note": "smartlink_goffers",
                 "operator_hint": (
-                    "Homepage not monetized via LinksMerchant; use golink smartlink offer "
-                    f"for {out['merchant_name'] or 'merchant'} instead of dynamic merchantUrl offer."
+                    "Homepage not monetized via LinksMerchant; use adexa_golink only "
+                    "(raw Goffers URL — not raino-wrapped)."
                 ),
             }
         )

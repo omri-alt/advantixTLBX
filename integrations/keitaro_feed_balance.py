@@ -508,6 +508,7 @@ class FeedCheckResult:
     mode: str = ""
     operator_hint: str = ""
     keitaro_offer_url: str = ""
+    keitaro_alt_offer_url: str = ""
 
 
 @dataclass
@@ -562,20 +563,57 @@ def list_regular_flow_feed_offers(
     return None, []
 
 
+def _yadore_checkmon_fields(y: Dict[str, Any]) -> Dict[str, Any]:
+    from integrations.monetization_geo import yadore_feed_class
+
+    mode = str(y.get("mode") or "")
+    found = bool(y.get("found"))
+    ecpc = str(y.get("estimated_cpc") or "")
+    traffic_class = yadore_feed_class(bool(y.get("non_coupon_found")), bool(y.get("coupon_found")))
+    checkmon_mode = ""
+    detail = ""
+    operator_hint = ""
+    if found:
+        if y.get("is_smartlink") or mode in ("smartlink", "smartlink_catalog"):
+            checkmon_mode = "smartlink"
+            detail = f"smartlink ecpc={ecpc or '?'} ({traffic_class})"
+            if mode == "smartlink_catalog":
+                operator_hint = (
+                    "Active smartlink merchant in Yadore /v2/deeplink/merchant; "
+                    "homepage deeplink probe did not match — verify URL in notes."
+                )
+        elif mode == "both":
+            detail = f"both nc+coupon ecpc={ecpc or '?'} ({traffic_class})"
+        elif mode == "coupon_only":
+            detail = f"coupon_only ecpc={ecpc or '?'} ({traffic_class})"
+        else:
+            detail = f"deeplink ecpc={ecpc or '?'} ({traffic_class})"
+    else:
+        detail = str(y.get("note") or traffic_class)
+    return {
+        "found": found,
+        "detail": detail,
+        "note": traffic_class if found else str(y.get("note") or traffic_class),
+        "mode": checkmon_mode,
+        "operator_hint": operator_hint,
+    }
+
+
 def _feed_results_from_checkmon(
     url: str,
     geo: str,
     flow_offers: List[FlowFeedOffer],
 ) -> List[FeedCheckResult]:
-    from integrations.monetization_geo import shopnomix_feed_class, yadore_feed_class
+    from integrations.monetization_geo import shopnomix_feed_class
     from monetization_check import _run_row_checks
 
-    checks = _run_row_checks(url, geo)
+    probe_url = normalize_merchant_homepage_url(url) or (url or "").strip()
+    checks = _run_row_checks(probe_url, geo)
     k1 = checks.get("k1") or {}
     k2 = checks.get("k2") or {}
     k5 = checks.get("k5") or {}
-    y_nc = checks.get("ync") or {}
-    y_c = checks.get("yc") or {}
+    y = checks.get("yadore") or {}
+    y_fields = _yadore_checkmon_fields(y)
     ax = checks.get("ax") or {}
     sn_tile = checks.get("sn_tile") or {}
     sn_coupons = checks.get("sn_coupons") or {}
@@ -605,12 +643,16 @@ def _feed_results_from_checkmon(
             "note": ax_extra,
             "mode": ax_mode,
             "operator_hint": str(ax.get("operator_hint") or ""),
-            "keitaro_offer_url": str(ax.get("keitaro_offer_url") or ""),
+            "keitaro_offer_url": str(ax.get("keitaro_links_url") or ax.get("keitaro_offer_url") or ""),
+            "keitaro_alt_offer_url": str(ax.get("keitaro_golink_url") or ""),
         },
         "feed3": {
-            "found": bool(y_nc.get("found") or y_c.get("found")),
-            "detail": f"nc={y_nc.get('estimatedCpc_amount', '')} {y_nc.get('estimatedCpc_currency', '')}".strip(),
-            "note": yadore_feed_class(bool(y_nc.get("found")), bool(y_c.get("found"))),
+            "found": y_fields["found"],
+            "detail": y_fields["detail"],
+            "note": y_fields["note"],
+            "mode": y_fields["mode"],
+            "operator_hint": y_fields["operator_hint"],
+            "keitaro_offer_url": str(y.get("keitaro_offer_url") or "") if y_fields["found"] else "",
         },
         "feed6": {
             "found": bool(sn_tile.get("found") or sn_coupons.get("found")),
@@ -634,6 +676,7 @@ def _feed_results_from_checkmon(
             "mode": "",
             "operator_hint": "",
             "keitaro_offer_url": "",
+            "keitaro_alt_offer_url": "",
         }
         results.append(
             FeedCheckResult(
@@ -648,14 +691,29 @@ def _feed_results_from_checkmon(
                 mode=str(info.get("mode") or ""),
                 operator_hint=str(info.get("operator_hint") or ""),
                 keitaro_offer_url=str(info.get("keitaro_offer_url") or ""),
+                keitaro_alt_offer_url=str(info.get("keitaro_alt_offer_url") or ""),
             )
         )
     return results
 
 
+def _adexa_offer_from_row(row: CampaignCheckmonRow) -> str:
+    for fr in row.feed_results:
+        if fr.feed_key == "feed4" and fr.keitaro_offer_url:
+            return fr.keitaro_offer_url.strip()
+    return ""
+
+
 def _adexa_golink_from_row(row: CampaignCheckmonRow) -> str:
     for fr in row.feed_results:
-        if fr.mode in ("smartlink", "links+smartlink") and fr.keitaro_offer_url:
+        if fr.feed_key == "feed4" and fr.keitaro_alt_offer_url:
+            return fr.keitaro_alt_offer_url.strip()
+    return ""
+
+
+def _yadore_offer_from_row(row: CampaignCheckmonRow) -> str:
+    for fr in row.feed_results:
+        if fr.feed_key == "feed3" and fr.keitaro_offer_url:
             return fr.keitaro_offer_url.strip()
     return ""
 
@@ -669,9 +727,15 @@ def format_checkmon_report_block(row: CampaignCheckmonRow, *, ts: str, dry_run: 
         f"url: {row.url}",
         f"geo: {row.geo}",
     ]
+    adexa_offer = _adexa_offer_from_row(row)
+    if adexa_offer:
+        lines.append(f"adexa_offer: {adexa_offer}")
     golink = _adexa_golink_from_row(row)
     if golink:
         lines.append(f"adexa_golink: {golink}")
+    yadore_offer = _yadore_offer_from_row(row)
+    if yadore_offer:
+        lines.append(f"yadore_offer: {yadore_offer}")
     lines.extend(["", "Feed monetization (no weight changes):"])
     if row.error:
         lines.append(f"  ERROR: {row.error}")
@@ -693,8 +757,6 @@ def format_checkmon_report_block(row: CampaignCheckmonRow, *, ts: str, dry_run: 
         if extra:
             extra = f" ({extra})"
         lines.append(f"  {fr.label:10} {status:7}  {share_part:12}  {fr.offer_name}{extra}")
-        if fr.mode in ("smartlink", "links+smartlink") and fr.keitaro_offer_url:
-            lines.append(f"             -> Keitaro golink offer: {fr.keitaro_offer_url}")
         if fr.operator_hint:
             lines.append(f"             -> {fr.operator_hint}")
     return "\n".join(lines)

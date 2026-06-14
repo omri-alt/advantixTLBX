@@ -258,8 +258,10 @@ def _monetization_for_network(mon_network: str, mon_url: str, geo: str) -> Tuple
             st = format_kelkoo_monetization_status(kelkoo_merchant_link_check(url, g, FEED5_API_KEY))
             return st.startswith("monetized"), None
         if net in ("feed3", "yadore"):
-            d = deeplink(url, g)
-            return bool(d.get("found")), None
+            from integrations.yadore import merchant_monetization_check
+
+            res = merchant_monetization_check(url, g)
+            return bool(res.get("found")), None
         if net in ("feed4", "adexa"):
             if not (ADEXA_SITE_ID or "").strip():
                 return None, "error"

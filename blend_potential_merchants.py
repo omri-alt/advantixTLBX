@@ -412,23 +412,20 @@ def run_potential_yadore(
 ) -> None:
     from integrations.yadore import (
         YadoreClientError,
-        deeplink,
         fetch_conversion_detail_merchant,
+        fetch_deeplink_merchants,
+        merchant_monetization_check,
         parse_conversion_detail_merchant_rows,
     )
+    from integrations.monetization_geo import geo_for_yadore
 
-    def _is_yadore_monetized_probe(resp: Dict[str, Any]) -> bool:
-        """
-        Yadore can signal monetization in different fields depending on endpoint version.
-        Treat as monetized when any positive signal is present.
-        """
-        if not isinstance(resp, dict):
-            return False
-        if bool(resp.get("found")) or bool(resp.get("root_found")):
-            return True
-        if str(resp.get("clickUrl") or "").strip():
-            return True
-        return False
+    def _monetization_label(res: Dict[str, Any]) -> str:
+        if not res.get("found"):
+            return "not_monetized_yadore"
+        mode = str(res.get("mode") or "")
+        if res.get("is_smartlink") or mode in ("smartlink_catalog", "smartlink"):
+            return "monetized_yadore_smartlink"
+        return "monetized_yadore"
 
     def _domain_fallback_from_name(name: str) -> str:
         """
@@ -480,6 +477,17 @@ def run_potential_yadore(
     header = _potential_header_with_device()
     rows_out: List[List[str]] = []
     checked = 0
+    catalog_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+    def _catalog_for_geo(geo: str) -> List[Dict[str, Any]]:
+        mkt = geo_for_yadore(geo)
+        if mkt not in catalog_cache:
+            try:
+                catalog_cache[mkt] = fetch_deeplink_merchants(mkt)
+            except YadoreClientError:
+                catalog_cache[mkt] = []
+        return catalog_cache[mkt]
+
     for (geo, mid), rec in sorted(agg.items(), key=lambda kv: kv[0]):
         leads = int(rec["leads"])
         sales = int(rec["sales"])
@@ -497,9 +505,15 @@ def run_potential_yadore(
             checked += 1
             url_norm = domain if domain.lower().startswith("http") else f"https://{domain.lstrip('/')}"
             try:
-                market = geo_for_yadore(geo)
-                d = deeplink(url_norm, market)
-                monetization = "monetized_yadore" if _is_yadore_monetized_probe(d) else "not_monetized_yadore"
+                res = merchant_monetization_check(
+                    url_norm,
+                    geo,
+                    merchant_name=name,
+                    deeplink_merchants=_catalog_for_geo(geo),
+                )
+                monetization = _monetization_label(res)
+                if not res.get("found") and res.get("note"):
+                    monetization = f"not_monetized_yadore:{res.get('note')[:80]}"
             except YadoreClientError as e:
                 monetization = f"not_monetized_yadore:{e}"
         is_monetized = monetization.startswith("monetized")
