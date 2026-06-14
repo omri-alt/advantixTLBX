@@ -5,7 +5,7 @@ Reads targets from the Blend sheet (device-weighted clickCap) and today's clicks
 Keitaro ``report/build`` on the Blend campaign — same shape as the admin UI report:
 ``interval: today`` + timezone, ``campaign_id IN_LIST``, grouping ``country`` + ``device_type``.
 
-``BlendTrCapGuard`` / ``BlendZpCapGuard`` refresh this on each run (default every 20 minutes)
+``BlendTrCapGuard`` refreshes this on each run (default every 20 minutes); a separate scheduler also refreshes periodically.
 and pause traffic sources when clicks meet the device-weighted cap.
 """
 from __future__ import annotations

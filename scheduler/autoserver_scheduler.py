@@ -252,7 +252,6 @@ def start_autoserver_scheduler() -> None:
 
     from config import (
         TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES,
-        ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES,
         ZEROPARK_CLOSE_HOUR,
         ZEROPARK_CLOSE_MINUTE,
         ZEROPARK_CLOSE_TZ,
@@ -266,14 +265,6 @@ def start_autoserver_scheduler() -> None:
             continue
         trigger_kwargs: dict[str, Any] = {"minute": 0}
         job_id = f"autoserver_hourly_{name}"
-        if name == "BlendZpCapGuard":
-            interval_m = int(ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES)
-            trigger_kwargs = (
-                {"minute": 0}
-                if interval_m >= 60
-                else {"minute": f"*/{interval_m}"}
-            )
-            job_id = f"autoserver_interval_{name}"
         if name == "BlendTrCapGuard":
             interval_m = int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES)
             trigger_kwargs = (
@@ -337,11 +328,10 @@ def start_autoserver_scheduler() -> None:
     logger.info(
         (
             "AutoServer APScheduler started (%s scheduled jobs; "
-            "BlendZpCapGuard every %d minutes; BlendTrCapGuard every %d minutes; "
+            "BlendTrCapGuard every %d minutes; "
             "Zeropark close at %02d:%02d %s)"
         ),
         len(_automation_listeners) - 1,
-        int(ZEROPARK_BLEND_CAP_GUARD_INTERVAL_MINUTES),
         int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES),
         int(ZEROPARK_CLOSE_HOUR),
         int(ZEROPARK_CLOSE_MINUTE),

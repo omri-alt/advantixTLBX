@@ -45,15 +45,6 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
         "schedule": "Every 2 hours (even hours)",
     },
     {
-        "class_name": "BlendZpCapGuard",
-        "label": "Pause Blend Zeropark campaigns on cap",
-        "schedule": "Every 20 minutes",
-        "actions": [
-            {"id": "default", "label": "Pause over cap"},
-            {"id": "resume_under_cap", "label": "Activate under-cap"},
-        ],
-    },
-    {
         "class_name": "BlendTrCapGuard",
         "label": "Pause Blend Trillion campaigns on cap",
         "schedule": "Every 20 minutes",
@@ -78,7 +69,6 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
 def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.blend_sync_2h import BlendSync2h
     from automations.autoserver.blend_tr_cap_guard import BlendTrCapGuard
-    from automations.autoserver.blend_zp_cap_guard import BlendZpCapGuard
     from automations.autoserver.close_nipuhim import CloseNipuhimAuto
     from automations.autoserver.keitaro_feed_balance_checkmon import KeitaroFeedBalanceCheckmon
     from automations.autoserver.klfix_optimize import KLFIXoptimize
@@ -97,7 +87,6 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     register_func(QualityWL())
     register_func(CloseNipuhimAuto())
     register_func(BlendSync2h())
-    register_func(BlendZpCapGuard())
     register_func(BlendTrCapGuard())
     register_func(NipuhimUnmonRepair())
     register_func(KeitaroFeedBalanceCheckmon())
