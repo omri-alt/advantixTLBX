@@ -25,6 +25,11 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
         "schedule": "Every hour",
     },
     {
+        "class_name": "SKExplorationWlSyncAuto",
+        "label": "SK exploration WL from Keitaro sales",
+        "schedule": "Daily 12:00 Asia/Jerusalem (SK_EXPLORATION_WL_SYNC_* env)",
+    },
+    {
         "class_name": "KLWL",
         "label": "SK KLWL sources",
         "schedule": "Every even hour",
@@ -78,11 +83,13 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.pause_unmon_sk import PauseUnmonSK
     from automations.autoserver.quality_wl import QualityWL
     from automations.autoserver.sk_exploration_optimizer import SKExplorationOptimizer
+    from automations.autoserver.sk_exploration_wl_sync_auto import SKExplorationWlSyncAuto
 
     register_func(EcomniaTrackAuto())
     register_func(KLFIXoptimize())
     register_func(PauseUnmonSK())
     register_func(SKExplorationOptimizer())
+    register_func(SKExplorationWlSyncAuto())
     register_func(KLWL())
     register_func(QualityWL())
     register_func(CloseNipuhimAuto())

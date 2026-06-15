@@ -117,6 +117,22 @@ def _run_close_nipuhim_scheduled() -> None:
     logger.warning("CloseNipuhimAuto not registered; skip Zeropark close cron")
 
 
+def _run_sk_exploration_wl_sync_scheduled() -> None:
+    """Daily Keitaro sales → ``SKtrackExploration.wl`` append."""
+    from config import SK_EXPLORATION_WL_SYNC_ENABLED
+
+    if not SK_EXPLORATION_WL_SYNC_ENABLED:
+        logger.info("SKExplorationWlSyncAuto skipped (SK_EXPLORATION_WL_SYNC_ENABLED=0)")
+        return
+    _ensure_listeners()
+    for automation in _automation_listeners:
+        if automation.__class__.__name__ == "SKExplorationWlSyncAuto":
+            logger.info("=== SKExplorationWlSyncAuto daily cron ===")
+            automation._wrap_run("scheduler", automation._execute)
+            return
+    logger.warning("SKExplorationWlSyncAuto not registered; skip WL sync cron")
+
+
 def _hourly_signal_broadcast() -> None:
     """Legacy single-threaded broadcast (manual catch-up / trigger-all internals)."""
     hour = _current_scheduler_hour()
@@ -251,6 +267,9 @@ def start_autoserver_scheduler() -> None:
     from apscheduler.schedulers.background import BackgroundScheduler
 
     from config import (
+        SK_EXPLORATION_WL_SYNC_HOUR_LOCAL,
+        SK_EXPLORATION_WL_SYNC_MINUTE,
+        SK_EXPLORATION_WL_SYNC_TZ,
         TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES,
         ZEROPARK_CLOSE_HOUR,
         ZEROPARK_CLOSE_MINUTE,
@@ -262,6 +281,8 @@ def start_autoserver_scheduler() -> None:
     for automation in _automation_listeners:
         name = automation.__class__.__name__
         if name == "CloseNipuhimAuto":
+            continue
+        if name == "SKExplorationWlSyncAuto":
             continue
         trigger_kwargs: dict[str, Any] = {"minute": 0}
         job_id = f"autoserver_hourly_{name}"
@@ -303,6 +324,25 @@ def start_autoserver_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
     )
+    try:
+        from zoneinfo import ZoneInfo
+
+        sk_wl_tz = ZoneInfo(SK_EXPLORATION_WL_SYNC_TZ or "UTC")
+    except Exception:
+        logger.warning("Invalid SK_EXPLORATION_WL_SYNC_TZ %r; using UTC", SK_EXPLORATION_WL_SYNC_TZ)
+        from zoneinfo import ZoneInfo
+
+        sk_wl_tz = ZoneInfo("UTC")
+    _scheduler.add_job(
+        _run_sk_exploration_wl_sync_scheduled,
+        trigger="cron",
+        hour=int(SK_EXPLORATION_WL_SYNC_HOUR_LOCAL),
+        minute=int(SK_EXPLORATION_WL_SYNC_MINUTE),
+        timezone=sk_wl_tz,
+        id="sk_exploration_wl_sync_daily",
+        replace_existing=True,
+        max_instances=1,
+    )
     _scheduler.add_job(
         _write_scheduler_heartbeat,
         trigger="interval",
@@ -314,7 +354,7 @@ def start_autoserver_scheduler() -> None:
     _write_scheduler_heartbeat()
     if _should_schedule_startup_catchup():
         for automation in _automation_listeners:
-            if automation.__class__.__name__ == "CloseNipuhimAuto":
+            if automation.__class__.__name__ in ("CloseNipuhimAuto", "SKExplorationWlSyncAuto"):
                 continue
             _scheduler.add_job(
                 _run_automation_hourly,
@@ -329,13 +369,17 @@ def start_autoserver_scheduler() -> None:
         (
             "AutoServer APScheduler started (%s scheduled jobs; "
             "BlendTrCapGuard every %d minutes; "
-            "Zeropark close at %02d:%02d %s)"
+            "Zeropark close at %02d:%02d %s; "
+            "SK WL sync at %02d:%02d %s)"
         ),
         len(_automation_listeners) - 1,
         int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES),
         int(ZEROPARK_CLOSE_HOUR),
         int(ZEROPARK_CLOSE_MINUTE),
         ZEROPARK_CLOSE_TZ,
+        int(SK_EXPLORATION_WL_SYNC_HOUR_LOCAL),
+        int(SK_EXPLORATION_WL_SYNC_MINUTE),
+        SK_EXPLORATION_WL_SYNC_TZ,
     )
 
 

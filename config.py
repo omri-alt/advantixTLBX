@@ -812,3 +812,38 @@ def _parse_sk_unmon_skip_campaign_ids() -> tuple[int, ...]:
 
 SK_UNMON_SKIP_CAMPAIGN_IDS: tuple[int, ...] = _parse_sk_unmon_skip_campaign_ids()
 
+# SK exploration WL sync — Keitaro SaleOur/LateSale → SKtrackExploration.wl (daily).
+SK_EXPLORATION_WL_SYNC_ENABLED = (
+    os.getenv("SK_EXPLORATION_WL_SYNC_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+)
+SK_EXPLORATION_WL_SYNC_TZ = (
+    os.getenv("SK_EXPLORATION_WL_SYNC_TZ") or os.getenv("AUTOSERVER_SCHEDULER_TZ") or "Asia/Jerusalem"
+).strip()
+try:
+    SK_EXPLORATION_WL_SYNC_HOUR_LOCAL = int(
+        (os.getenv("SK_EXPLORATION_WL_SYNC_HOUR_LOCAL") or "12").strip()
+    )
+except Exception:
+    SK_EXPLORATION_WL_SYNC_HOUR_LOCAL = 12
+SK_EXPLORATION_WL_SYNC_HOUR_LOCAL = max(0, min(23, SK_EXPLORATION_WL_SYNC_HOUR_LOCAL))
+try:
+    SK_EXPLORATION_WL_SYNC_MINUTE = int((os.getenv("SK_EXPLORATION_WL_SYNC_MINUTE") or "0").strip())
+except Exception:
+    SK_EXPLORATION_WL_SYNC_MINUTE = 0
+SK_EXPLORATION_WL_SYNC_MINUTE = max(0, min(59, SK_EXPLORATION_WL_SYNC_MINUTE))
+try:
+    SK_EXPLORATION_WL_LOOKBACK_DAYS = int((os.getenv("SK_EXPLORATION_WL_LOOKBACK_DAYS") or "30").strip())
+except Exception:
+    SK_EXPLORATION_WL_LOOKBACK_DAYS = 30
+SK_EXPLORATION_WL_LOOKBACK_DAYS = max(1, min(90, SK_EXPLORATION_WL_LOOKBACK_DAYS))
+try:
+    SK_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD = float(
+        (
+            os.getenv("SK_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD")
+            or os.getenv("SK_EXPLORATION_WL_REACTIVATE_TARGET_BID")
+            or "0.10"
+        ).strip()
+    )
+except Exception:
+    SK_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD = 0.10
+

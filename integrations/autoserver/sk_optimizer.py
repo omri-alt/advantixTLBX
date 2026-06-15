@@ -191,6 +191,7 @@ def _append_logs_cell(existing: str, line: str, max_entries: int = 5) -> str:
 
 
 def _parse_wl(raw: Any) -> List[str]:
+    """Parse sheet ``wl`` cell — accepts ``['a']`` or ``["a"]`` JSON lists."""
     s = (raw or "").strip() if isinstance(raw, str) else ""
     while "'" in s:
         s = s.replace("'", '"')
@@ -203,6 +204,57 @@ def _parse_wl(raw: Any) -> List[str]:
     except Exception:
         pass
     return []
+
+
+def _format_wl(items: List[str]) -> str:
+    """Serialize ``wl`` for sheet cells: ``['sub1', 'sub2']`` (single-quoted)."""
+    if not items:
+        return "[]"
+    return "[" + ", ".join(f"'{s}'" for s in items) + "]"
+
+
+def _sk_campaign_cpc(campaign_id: int) -> Optional[float]:
+    try:
+        camp = sk.get_campaignById(campaign_id)
+        if isinstance(camp, dict) and camp.get("cpc") is not None:
+            v = float(camp["cpc"])
+            if v > 0:
+                return v
+    except Exception as e:
+        logger.warning("SK campaign %s CPC read failed: %s", campaign_id, e)
+    return None
+
+
+def _bid_factor_for_effective_bid(campaign_cpc: float, effective_bid_usd: float) -> float:
+    """``bidFactor`` so ``campaign_cpc * bidFactor == effective_bid_usd``."""
+    if campaign_cpc <= 0:
+        raise ValueError("campaign_cpc must be positive")
+    if effective_bid_usd <= 0:
+        raise ValueError("effective_bid_usd must be positive")
+    return effective_bid_usd / campaign_cpc
+
+
+def resolve_wl_reactivate_bid_factor(
+    campaign_id: int,
+    *,
+    target_effective_bid_usd: Optional[float] = None,
+) -> Tuple[Optional[float], Optional[float]]:
+    """Return ``(bid_factor, campaign_cpc)`` for WL reactivation at a fixed effective bid."""
+    from config import SK_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD
+
+    target = (
+        float(target_effective_bid_usd)
+        if target_effective_bid_usd is not None
+        else SK_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD
+    )
+    cpc = _sk_campaign_cpc(campaign_id)
+    if cpc is None:
+        return None, None
+    try:
+        return _bid_factor_for_effective_bid(cpc, target), cpc
+    except ValueError as e:
+        logger.warning("SK campaign %s bid-factor resolve failed: %s", campaign_id, e)
+        return None, cpc
 
 
 def _norm_mon_network(raw: str) -> str:
@@ -845,6 +897,59 @@ def _blacklist_sources_sk(campaign_id: int, sub_ids: List[str]) -> List[str]:
         logger.error("SK bid-factor 0 rate-limited %s %s after retries", campaign_id, sid)
         failed.append(sid)
     return failed
+
+
+def _reactivate_sources_sk(
+    campaign_id: int,
+    sub_ids: List[str],
+    *,
+    bid_factor: Optional[float] = None,
+    target_effective_bid_usd: Optional[float] = None,
+) -> Tuple[List[str], List[str], Optional[float]]:
+    """
+    Restore buying for sub-publishers (``bidFactor`` > 0). Returns
+    ``(ok_sub_ids, failed_sub_ids, bid_factor_used)``.
+    """
+    if not sub_ids:
+        return [], [], None
+    if bid_factor is not None:
+        bf = float(bid_factor)
+    else:
+        bf, _cpc = resolve_wl_reactivate_bid_factor(
+            campaign_id, target_effective_bid_usd=target_effective_bid_usd
+        )
+        if bf is None:
+            pending = [str(s).strip() for s in sub_ids if str(s).strip()]
+            logger.error("SK reactivate: could not resolve bid factor for campaign %s", campaign_id)
+            return [], pending, None
+    ok_all: List[str] = []
+    failed: List[str] = []
+    pending = list(dict.fromkeys(str(s).strip() for s in sub_ids if str(s).strip()))
+    for round_i in range(_SK_BID_DECAY_RETRY_ROUNDS):
+        if not pending:
+            break
+        if round_i > 0:
+            time.sleep(2.0)
+        updates = [(sid, bf) for sid in pending]
+        ok_sids, fail_pairs = _post_bid_factors_bulk_with_retry(campaign_id, updates)
+        ok_set = set(ok_sids)
+        fail_map = {sid: reason for sid, reason in fail_pairs}
+        ok_all.extend([s for s in pending if s in ok_set])
+        next_pending: List[str] = []
+        for sid in pending:
+            if sid in ok_set:
+                continue
+            reason = fail_map.get(sid, "http_0")
+            if reason in ("rate_limit", "exception"):
+                next_pending.append(sid)
+                continue
+            logger.error("SK bid-factor reactivate failed %s %s: %s", campaign_id, sid, reason)
+            failed.append(sid)
+        pending = next_pending
+    for sid in pending:
+        logger.error("SK bid-factor reactivate rate-limited %s %s after retries", campaign_id, sid)
+        failed.append(sid)
+    return ok_all, failed, bf
 
 
 def _load_status_sync_state() -> Dict[str, str]:

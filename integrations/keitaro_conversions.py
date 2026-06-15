@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import parse_qs
 
 from integrations.keitaro import KeitaroClient, KeitaroClientError
@@ -88,20 +88,23 @@ def iter_conversion_log(
     date_to: date,
     status: Optional[str] = None,
     page_size: int = _DEFAULT_PAGE_SIZE,
+    columns: Optional[Sequence[str]] = None,
 ) -> Iterable[Dict[str, Any]]:
     """
     Paginate conversion log rows in ``[date_from, date_to]`` (inclusive, UTC day bounds).
 
     ``status``: when set, only rows with that conversion status (e.g. ``LateSale``, ``SaleOur``).
+    ``columns``: override default log columns (e.g. include ``sub_id_5`` for SK WL sync).
     """
     url = client._api_path("conversions/log")
     d0 = date_from.isoformat()
     d1 = date_to.isoformat()
+    cols = list(columns) if columns else list(_LOG_COLUMNS)
     offset = 0
     while True:
         body: Dict[str, Any] = {
             "range": {"from": f"{d0} 00:00:00", "to": f"{d1} 23:59:59"},
-            "columns": list(_LOG_COLUMNS),
+            "columns": cols,
             "limit": max(1, min(int(page_size), 10000)),
             "offset": offset,
         }
