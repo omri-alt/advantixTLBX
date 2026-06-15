@@ -444,17 +444,18 @@ def optimize_newsource_fix7days2():
 
 # auxilary function finds campaigns bid
 def campaign_cpc(camp_id):
-    endpoint = f"https://api.sourceknowledge.com/affiliate/v2/campaigns/{camp_id}"
-    try:
-        r = requests.get(endpoint, headers=headers_sk)
-        return r.json()['cpc']
-    except:
-        return 0
+    camp = get_campaignById(camp_id)
+    if isinstance(camp, dict) and camp.get("cpc") is not None:
+        try:
+            return camp["cpc"]
+        except (TypeError, ValueError):
+            pass
+    return 0
 
 
 def winRate(camp_id, data):
     endpoint = f"https://api.sourceknowledge.com/affiliate/v2/stats/campaigns/{camp_id}/by-publisher"
-    r = requests.get(endpoint, headers=headers_sk, params=data)
+    r = requests.get(endpoint, headers=_sk_headers(), params=data)
     match r.status_code:
         case 200:
             if r.json()['itemsCount'] == 0:
@@ -464,7 +465,7 @@ def winRate(camp_id, data):
         case _:
             print(f"error in getting winrate for campaign {camp_id}")
             time.sleep(60)
-            r = requests.get(endpoint, headers=headers_sk, params=data)
+            r = requests.get(endpoint, headers=_sk_headers(), params=data)
             if r.status_code == 200:
                 try:
                     return r.json()['items'][0]['winRate'], r.json(
@@ -489,7 +490,12 @@ def findSourceinCampaign(source, camp, campaign_cache=None):
         campaign = campaign_cache[camp]
     else:
         campaign = get_campaignById(camp)
-        if campaign_cache is not None and camp:
+        if (
+            campaign_cache is not None
+            and camp
+            and isinstance(campaign, dict)
+            and "active" in campaign
+        ):
             campaign_cache[camp] = campaign
 
     if isinstance(campaign, dict) and "active" in campaign:
@@ -576,21 +582,21 @@ def findSourceInCampaigns(source):
                         "subid": source,
                     }
                     endpoint = f"https://api.sourceknowledge.com/affiliate/v2/stats/campaigns/{camp['id']}/by-publisher"
-                    r = requests.get(endpoint, headers=headers_sk, params=data)
+                    r = requests.get(endpoint, headers=_sk_headers(), params=data)
                     try:
                         winrate = r.json()['items'][0]['winRate']
                     except:
                         winrate = "couldn't obtain today's winrate"
                     data['from'] = yesterday
                     data['to'] = yesterday
-                    r = requests.get(endpoint, headers=headers_sk, params=data)
+                    r = requests.get(endpoint, headers=_sk_headers(), params=data)
                     try:
                         winrateYest = r.json()['items'][0]['winRate']
                     except:
                         winrateYest = "couldn't obtain yesterday's winrate"
 
                     data['from'] = days7
-                    r = requests.get(endpoint, headers=headers_sk, params=data)
+                    r = requests.get(endpoint, headers=_sk_headers(), params=data)
                     try:
                         winrate7 = r.json()['items'][0]['winRate']
                     except:
