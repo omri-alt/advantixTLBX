@@ -5,8 +5,8 @@ from typing import Any, Callable, Dict, List
 # Human-facing metadata for dashboard + API (class_name must match automation class).
 AUTOMATION_SPECS: List[Dict[str, Any]] = [
     {
-        "class_name": "MehilotAuto",
-        "label": "Mehilot + Ecomnia tracks",
+        "class_name": "EcomniaTrackAuto",
+        "label": "Ecomnia track sheets",
         "schedule": "Every hour",
     },
     {
@@ -73,13 +73,13 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.keitaro_feed_balance_checkmon import KeitaroFeedBalanceCheckmon
     from automations.autoserver.klfix_optimize import KLFIXoptimize
     from automations.autoserver.klwl import KLWL
-    from automations.autoserver.mehilot_auto import MehilotAuto
+    from automations.autoserver.ecomnia_track_auto import EcomniaTrackAuto
     from automations.autoserver.nipuhim_unmon_repair import NipuhimUnmonRepair
     from automations.autoserver.pause_unmon_sk import PauseUnmonSK
     from automations.autoserver.quality_wl import QualityWL
     from automations.autoserver.sk_exploration_optimizer import SKExplorationOptimizer
 
-    register_func(MehilotAuto())
+    register_func(EcomniaTrackAuto())
     register_func(KLFIXoptimize())
     register_func(PauseUnmonSK())
     register_func(SKExplorationOptimizer())

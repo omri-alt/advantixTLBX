@@ -166,8 +166,10 @@ def mehilot():
               plan['monStatus'] = plan['monStatus']
         except:
           try:
-            plan['monStatus'] = plan['monStatus']['error'] + camp['details'][
-                'url'].split('oadest=')[1]
+            err = plan['monStatus'].get('error') if isinstance(plan['monStatus'], dict) else str(plan['monStatus'])
+            url = camp['details'].get('url') or ''
+            oadest_tail = url.split('oadest=', 1)[1] if 'oadest=' in url else url
+            plan['monStatus'] = f"{err} {oadest_tail}".strip()
           except:
             plan['monStatus'] = plan['monStatus']
         camps.remove(camp)

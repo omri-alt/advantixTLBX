@@ -1,7 +1,7 @@
 """
 APScheduler jobs for AutoServer-derived automations.
 
-Each automation has its own hourly cron job (minute 0) so a slow Mehilot run does not
+Each automation has its own hourly cron job (minute 0) so a slow Ecomnia track run does not
 block KLWL / Blend sync on the same worker tick.
 
 Start via ``start_autoserver_scheduler()`` from ``scheduler.background`` (one Gunicorn

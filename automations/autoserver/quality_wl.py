@@ -27,9 +27,24 @@ class QualityWL(BaseAutomation):
 
     def _execute(self) -> None:
         logger.info("Executing QualityWL")
+        from integrations.autoserver.env import ensure_autoserver_env
+
+        ensure_autoserver_env()
+        sk.refresh_sk_headers()
         sheet = gd.read_sheet("QualityWL")
+        campaign_cache: dict[str, dict] = {}
         for i in range(len(sheet)):
-            data = sk.findSourceinCampaign(sheet[i]["SUBID"], sheet[i]["CampaignID"])
+            cid = str(sheet[i].get("CampaignID") or "").strip()
+            if not cid:
+                sheet[i]["SKstatus"] = "missing CampaignID"
+                sheet[i]["bid"] = "missing CampaignID"
+                sheet[i]["lastUpdate"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                continue
+            data = sk.findSourceinCampaign(
+                sheet[i]["SUBID"],
+                cid,
+                campaign_cache=campaign_cache,
+            )
             sheet[i]["winrate30"] = data["winrate30"]
             sheet[i]["winrate7"] = data["winrate7"]
             sheet[i]["winrateYest"] = data["winrateYest"]

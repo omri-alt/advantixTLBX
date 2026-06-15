@@ -17,6 +17,56 @@ headers_sk = {
 }
 
 
+def _sk_api_key() -> str:
+    key = (os.getenv("keySK") or os.getenv("KEYSK") or "").strip()
+    if not key:
+        try:
+            import config
+
+            key = (getattr(config, "SOURCEKNOWLEDGE_API_KEY", None) or "").strip()
+        except Exception:
+            pass
+    return key
+
+
+def refresh_sk_headers() -> None:
+    """Refresh module headers from env/config (call after ensure_autoserver_env)."""
+    global keySK, headers_sk
+    keySK = _sk_api_key()
+    headers_sk = {
+        "accept": "application/json",
+        "X-API-KEY": keySK or "",
+    }
+
+
+def _sk_headers() -> dict:
+    return {
+        "accept": "application/json",
+        "X-API-KEY": _sk_api_key(),
+    }
+
+
+def _normalize_campaign_id(camp_id) -> str:
+    if camp_id is None:
+        return ""
+    s = str(camp_id).strip()
+    if not s:
+        return ""
+    if s.endswith(".0"):
+        head = s[:-2]
+        if head.isdigit():
+            return head
+    return s
+
+
+def _format_sk_status(active) -> str:
+    if active is True:
+        return "Active"
+    if active is False:
+        return "Paused"
+    return "could not obtain status"
+
+
 #1. 12.06 - reicves a list of dictionaries,required file name and list of values for headers and saves them to a csv file
 def save_response_to_csv(response, filename, field_names):
     """Save the response content to a CSV file"""
@@ -115,10 +165,39 @@ def get_campaigns():
 
 
 #3b 12.06 - gets campaign id and returns campaign data
-def get_campaignById(id):
-    endpoint = f"https://api.sourceknowledge.com//affiliate/v2/campaigns/{id}"
-    r = requests.get(endpoint, headers=headers_sk)
-    return r.json()
+def get_campaignById(id, *, max_attempts: int = 4):
+    cid = _normalize_campaign_id(id)
+    if not cid:
+        return {"error": "missing campaign id"}
+    endpoint = f"https://api.sourceknowledge.com/affiliate/v2/campaigns/{cid}"
+    last_err = None
+    for attempt in range(max_attempts):
+        try:
+            r = requests.get(endpoint, headers=_sk_headers(), timeout=60)
+        except requests.RequestException as e:
+            last_err = str(e)
+            if attempt < max_attempts - 1:
+                time.sleep(min(60, 5 * (attempt + 1)))
+            continue
+        if r.status_code == 429 and attempt < max_attempts - 1:
+            time.sleep(60)
+            continue
+        if r.status_code in (502, 503) and attempt < max_attempts - 1:
+            time.sleep(15)
+            continue
+        if r.status_code != 200:
+            try:
+                body = r.json()
+            except Exception:
+                body = {"error": (r.text or "")[:200]}
+            if isinstance(body, dict):
+                body["_http_status"] = r.status_code
+            return body
+        try:
+            return r.json()
+        except Exception as e:
+            return {"error": str(e)}
+    return {"error": last_err or "request failed"}
 
 
 #4. 12.06 - recives an advertiser id and using the SK api returns a list of all active campaigns, when exceeding the rate limit it waits for 60 sec and tries again
@@ -398,12 +477,26 @@ def winRate(camp_id, data):
 
 
 #22.a 26.06 function recives source id and campaign Id and returns it's winrate30 , winrate7 and winrateYest and winrateToday and current bid factor bidfactor
-def findSourceinCampaign(source, camp):
+def findSourceinCampaign(source, camp, campaign_cache=None):
+    camp = _normalize_campaign_id(camp)
+    source = str(source or "").strip()
     yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
     today = datetime.now().strftime('%Y-%m-%d')
     days30 = (datetime.now() - timedelta(days=31)).strftime('%Y-%m-%d')
     days7 = (datetime.now() - timedelta(days=8)).strftime('%Y-%m-%d')
-    endpoint = f"https://api.sourceknowledge.com/affiliate/v2/stats/campaigns/{camp}/by-publisher"
+
+    if campaign_cache is not None and camp in campaign_cache:
+        campaign = campaign_cache[camp]
+    else:
+        campaign = get_campaignById(camp)
+        if campaign_cache is not None and camp:
+            campaign_cache[camp] = campaign
+
+    if isinstance(campaign, dict) and "active" in campaign:
+        skStatus = _format_sk_status(campaign["active"])
+    else:
+        skStatus = "could not obtain status"
+
     data = {
         "from": days30,
         "to": yesterday,
@@ -428,18 +521,13 @@ def findSourceinCampaign(source, camp):
                 bid1 = bid3
         else:
             bid1 = bid2
-    campaign = get_campaignById(camp)
     if (camp == '322908'):
         print(campaign)
-    try:
-        skStatus = campaign['active']
-    except:
-        skStatus = 'could not obtain status'
     try:
         cpc = campaign['cpc'] * bid1
         if bid1 == 1:
             cpc = f"Src Bfactor N/A, campaign cpc is {campaign['cpc']}"
-    except:
+    except Exception:
         cpc = 'could not obtain campaign cpc'
 
     return {
@@ -660,6 +748,9 @@ def optimize_KLWL1():
     klwlIDS, klwlObj = get_KLWLadv()
     for adv in klwlObj:
         campaigns = get_campaignsByAdvid(adv['id'])
+        if not isinstance(campaigns, list) or not campaigns:
+            print(f"skip KLWL optimize: no campaigns for advertiser {adv.get('name') or adv.get('id')}")
+            continue
         campId = campaigns[0]['id']
         start = campaigns[0]['start'][0:10]
         stats = campaign_buying_stats(campId, start, today)

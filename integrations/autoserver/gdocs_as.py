@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 
 import gspread
@@ -25,6 +26,37 @@ sheet_id = (
     or "176wSQDDz9D1APmAXiYPeECwMqCQm3mvMBwgj8MKqmgk"
 ).strip()
 workbook = client.open_by_key(sheet_id)
+
+
+def _worksheet_update_with_retry(worksheet, data, *, attempts: int = 4) -> None:
+    """Retry Google Sheets writes on transient connection resets."""
+    last_err: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            worksheet.update(data)
+            return
+        except Exception as e:
+            last_err = e
+            msg = str(e).lower()
+            transient = any(
+                x in msg
+                for x in (
+                    "connection reset",
+                    "connection aborted",
+                    "remote end closed",
+                    "timed out",
+                    "timeout",
+                    "503",
+                    "502",
+                    "429",
+                    "quota",
+                )
+            )
+            if not transient or attempt >= attempts - 1:
+                raise
+            time.sleep(min(60, 5 * (attempt + 1)))
+    if last_err:
+        raise last_err
 
 def create_or_update_sheet_from_list(sheet_name, data):
     spreadsheet = workbook
@@ -80,7 +112,7 @@ def create_or_update_sheet_from_dicts(sheet_name, dict_data):
             cols=str(len(headers))
         )
 
-    worksheet.update(data)
+    _worksheet_update_with_retry(worksheet, data)
     print(f"Worksheet '{sheet_name}' updated successfully.")
 
 def read_sheet(sheet_name):
