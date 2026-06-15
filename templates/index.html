@@ -89,6 +89,7 @@
     .pb-banner.level-all { background: rgba(34, 197, 94, 0.14); border-color: rgba(34, 197, 94, 0.35); color: #dcfce7; }
     .pb-banner.level-partial { background: rgba(234, 179, 8, 0.12); border-color: rgba(234, 179, 8, 0.35); color: #fef9c3; }
     .pb-banner.level-none { background: rgba(239, 68, 68, 0.12); border-color: rgba(248, 113, 113, 0.35); color: #fecaca; }
+    .pb-banner.level-new { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: #e0f2fe; }
     .pb-banner .pb-msg { flex: 1; }
     .pb-dismiss {
       flex-shrink: 0; background: transparent; border: 0; color: inherit; cursor: pointer;
@@ -142,6 +143,10 @@
     <div id="postback-status-banner" class="pb-banner" role="status" aria-live="polite" hidden>
       <span class="pb-msg" id="postback-status-text"></span>
       <button type="button" class="pb-dismiss" id="postback-status-dismiss" aria-label="Dismiss notice">×</button>
+    </div>
+    <div id="sk-wl-sync-banner" class="pb-banner" role="status" aria-live="polite" hidden>
+      <span class="pb-msg" id="sk-wl-sync-text"></span>
+      <button type="button" class="pb-dismiss" id="sk-wl-sync-dismiss" aria-label="Dismiss notice">×</button>
     </div>
     <div class="hero">
       <div>
@@ -584,6 +589,45 @@
         textEl.textContent = prefixIcon(level) + (data.message || "");
         textEl.setAttribute("data-day", day);
         banner.className = "pb-banner pb-on level-" + level;
+        banner.removeAttribute("hidden");
+      })
+      .catch(function() {});
+
+    dismissBtn.addEventListener("click", function() {
+      var day = textEl.getAttribute("data-day") || "";
+      try {
+        if (day) localStorage.setItem(lsKey, day);
+      } catch (e) {}
+      banner.setAttribute("hidden", "hidden");
+      banner.className = "pb-banner";
+    });
+  })();
+  </script>
+  <script>
+  (function() {
+    var banner = document.getElementById("sk-wl-sync-banner");
+    var textEl = document.getElementById("sk-wl-sync-text");
+    var dismissBtn = document.getElementById("sk-wl-sync-dismiss");
+    var statusUrl = {{ url_for("api_sk_wl_sync_status") | tojson }};
+    var lsKey = "klblend_sk_wl_sync_banner_dismiss_v1";
+    if (!banner || !textEl || !dismissBtn) return;
+
+    fetch(statusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function(r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function(data) {
+        if (!data.show) return;
+        var day = data.calendar_day || "";
+        var dismissed = "";
+        try {
+          dismissed = localStorage.getItem(lsKey) || "";
+        } catch (e) {}
+        if (day && dismissed === day) return;
+        textEl.textContent = "✨ " + (data.message || "");
+        textEl.setAttribute("data-day", day);
+        banner.className = "pb-banner pb-on level-" + (data.level || "new");
         banner.removeAttribute("hidden");
       })
       .catch(function() {});

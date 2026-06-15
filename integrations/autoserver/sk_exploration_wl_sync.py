@@ -998,6 +998,12 @@ def sync_exploration_wl_from_keitaro_sales(
 
     )
 
+    if not dry_run:
+
+        from integrations.sk_exploration_wl_sync_run_history import record_last_run
+
+        record_last_run(summary)
+
     return summary
 
 

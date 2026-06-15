@@ -2305,6 +2305,14 @@ def api_postback_status():
     return jsonify(postback_banner_payload_for_today())
 
 
+@app.route("/api/sk-wl-sync-status", methods=["GET"])
+def api_sk_wl_sync_status():
+    """SK exploration WL sync banner — new converting sources found today."""
+    from integrations.sk_exploration_wl_sync_run_history import wl_sync_banner_payload_for_today
+
+    return jsonify(wl_sync_banner_payload_for_today())
+
+
 @app.route("/api/blend-cap-progress", methods=["GET"])
 def api_blend_cap_progress():
     """Blend click-cap fill by geo × device (cached; refreshes every ~3h)."""
