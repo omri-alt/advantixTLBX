@@ -47,9 +47,27 @@ def placement_feed_class(non_placement_found: bool, coupon_placement_found: bool
     return "none"
 
 
-def yadore_feed_class(non_coupon_found: bool, coupon_found: bool) -> str:
-    """Alias for Yadore deeplink probes (``isCouponing`` false vs true)."""
-    return placement_feed_class(non_coupon_found, coupon_found)
+def yadore_link_class(deeplink_found: bool, smartlink_found: bool) -> str:
+    """
+    Yadore monetization type for this publisher account.
+
+    - ``deeplink`` — specific landing URL (links / deeplink path)
+    - ``smartlink`` — provider-chosen offer (``isSmartlink`` merchants)
+    - ``both`` — deeplink URL works and merchant is smartlink-capable
+    - ``none`` — neither matched
+    """
+    if deeplink_found and smartlink_found:
+        return "both"
+    if deeplink_found:
+        return "deeplink"
+    if smartlink_found:
+        return "smartlink"
+    return "none"
+
+
+def yadore_feed_class(deeplink_found: bool, smartlink_found: bool) -> str:
+    """Alias for :func:`yadore_link_class` (legacy name kept for callers)."""
+    return yadore_link_class(deeplink_found, smartlink_found)
 
 
 def shopnomix_feed_class(tile_found: bool, coupons_found: bool) -> str:

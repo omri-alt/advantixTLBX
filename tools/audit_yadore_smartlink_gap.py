@@ -3,7 +3,7 @@
 Audit Yadore potential merchants for false negatives (especially smartlink-only).
 
 Compares ``potentialYadore`` rows marked not monetized against:
-  - POST /v2/deeplink (non-coupon + coupon, multiple URL shapes)
+  - POST /v2/deeplink (coupon-inclusive; deeplink vs smartlink)
   - GET /v2/deeplink/merchant catalog (``isSmartlink``, ``hasSmartlinkHomepage``)
 
 Read-only — no sheet writes.
@@ -29,7 +29,7 @@ load_dotenv()
 
 from config import BLEND_SHEETS_SPREADSHEET_ID, YADORE_REPORT_DETAIL_MARKETS  # noqa: E402
 from integrations.monetization_geo import geo_for_yadore  # noqa: E402
-from integrations.yadore import YadoreClientError, deeplink, fetch_deeplink_merchants  # noqa: E402
+from integrations.yadore import YadoreClientError, deeplink, fetch_deeplink_merchants, find_catalog_merchant  # noqa: E402
 from populate_blend_from_potential import get_sheets_service, read_values  # noqa: E402
 
 POTENTIAL_SHEET = "potentialYadore"
@@ -71,25 +71,26 @@ def _url_variants(domain: str, name: str) -> List[str]:
 
 
 def _probe_urls(urls: List[str], geo: str) -> Tuple[bool, bool, str]:
-    """Returns (non_coupon_found, coupon_found, detail)."""
-    nc = False
-    c = False
+    """Returns (deeplink_found, smartlink_found, detail)."""
+    from config import YADORE_IS_COUPONING
+
+    deeplink_ok = False
+    smartlink_ok = False
     detail = ""
     for url in urls:
-        for coupon in (False, True):
-            try:
-                d = deeplink(url, geo, is_couponing=coupon)
-                found = bool(d.get("found")) or bool(str(d.get("clickUrl") or "").strip())
-            except YadoreClientError as e:
-                found = False
-                detail = str(e)[:80]
-            if coupon:
-                c = c or found
-            else:
-                nc = nc or found
-        if nc or c:
+        try:
+            resp = deeplink(url, geo, is_couponing=YADORE_IS_COUPONING)
+            found = bool(resp.get("found")) or bool(str(resp.get("clickUrl") or "").strip())
+        except YadoreClientError as e:
+            found = False
+            detail = str(e)[:80]
+        if found:
+            deeplink_ok = True
+            if resp.get("isSmartlink"):
+                smartlink_ok = True
+        if deeplink_ok:
             break
-    return nc, c, detail
+    return deeplink_ok, smartlink_ok, detail
 
 
 def _catalog_index(markets: List[str]) -> Dict[Tuple[str, str], Dict[str, Any]]:
@@ -105,6 +106,12 @@ def _catalog_index(markets: List[str]) -> Dict[Tuple[str, str], Dict[str, Any]]:
             host = _norm_host(str(row.get("name") or ""))
             if host:
                 idx[(mkt, host)] = row
+            # also index by registrable domain for subdomain lookups
+            parts = host.split(".")
+            if len(parts) >= 2:
+                base = ".".join(parts[-2:])
+                if base != host:
+                    idx.setdefault((mkt, base), row)
     return idx
 
 

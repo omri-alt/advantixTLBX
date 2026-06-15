@@ -8,7 +8,7 @@ Output sheet: Matches
 
 For each (url, geo):
   - Kelkoo link check (feed1/2/5): GET …/search/link
-  - Yadore deeplink (feed3): POST /v2/deeplink with ``isCouponing`` false and true
+  - Yadore deeplink (feed3): POST /v2/deeplink (coupon-inclusive; deeplink vs smartlink)
   - Adexa (feed4): LinksMerchant homepage probe, then GetMerchant smartlink (Goffers golink)
   - Shopnomix demand (feed6): GET …/api/v2/demand/:campaign_id (tile + coupons placements)
 
@@ -48,17 +48,21 @@ _ROW_POOL_WORKERS = 8
 
 
 def _yadore_legacy_probe_fields(y: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Map ``merchant_monetization_check`` to legacy ync/yc keys for sheet columns."""
+    """Map ``merchant_monetization_check`` to sheet columns (deeplink vs smartlink)."""
     ecpc = str(y.get("estimated_cpc") or "")
+    deeplink = bool(y.get("deeplink_link_found")) or (
+        bool(y.get("non_coupon_found")) and not bool(y.get("smartlink_found"))
+    )
+    smartlink = bool(y.get("smartlink_found")) or bool(y.get("coupon_found"))
     y_nc = {
-        "found": bool(y.get("non_coupon_found")),
-        "estimatedCpc_amount": ecpc if y.get("non_coupon_found") else "",
-        "estimatedCpc_currency": "EUR" if y.get("non_coupon_found") and ecpc else "",
+        "found": deeplink,
+        "estimatedCpc_amount": ecpc if deeplink else "",
+        "estimatedCpc_currency": "EUR" if deeplink and ecpc else "",
     }
     y_c = {
-        "found": bool(y.get("coupon_found")),
-        "estimatedCpc_amount": ecpc if y.get("coupon_found") else "",
-        "estimatedCpc_currency": "EUR" if y.get("coupon_found") and ecpc else "",
+        "found": smartlink,
+        "estimatedCpc_amount": ecpc if smartlink else "",
+        "estimatedCpc_currency": "EUR" if smartlink and ecpc else "",
     }
     return y_nc, y_c
 
@@ -147,6 +151,8 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
                 "note": str(e)[:200],
                 "non_coupon_found": False,
                 "coupon_found": False,
+                "deeplink_link_found": False,
+                "smartlink_found": False,
                 "estimated_cpc": "",
                 "is_smartlink": False,
             }
@@ -196,6 +202,8 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
                     "note": str(e)[:200],
                     "non_coupon_found": False,
                     "coupon_found": False,
+                    "deeplink_link_found": False,
+                    "smartlink_found": False,
                     "estimated_cpc": "",
                     "is_smartlink": False,
                 }
@@ -288,7 +296,11 @@ def main() -> None:
         y_c_cpc = y_c.get("estimatedCpc_amount") or ""
         y_c_cur = y_c.get("estimatedCpc_currency") or ""
 
-        y_class = yadore_feed_class(y_nc_found, y_c_found)
+        y = r.get("yadore") or {}
+        y_class = yadore_feed_class(
+            bool(y.get("deeplink_link_found")) or y_nc_found,
+            bool(y.get("smartlink_found")) or y_c_found,
+        )
 
         sn_tile_found = bool(sn_tile.get("found"))
         sn_coupons_found = bool(sn_coupons.get("found"))

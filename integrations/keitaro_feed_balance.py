@@ -564,36 +564,47 @@ def list_regular_flow_feed_offers(
 
 
 def _yadore_checkmon_fields(y: Dict[str, Any]) -> Dict[str, Any]:
-    from integrations.monetization_geo import yadore_feed_class
+    from integrations.monetization_geo import yadore_link_class
 
     mode = str(y.get("mode") or "")
     found = bool(y.get("found"))
     ecpc = str(y.get("estimated_cpc") or "")
-    traffic_class = yadore_feed_class(bool(y.get("non_coupon_found")), bool(y.get("coupon_found")))
+    deeplink = bool(y.get("deeplink_link_found")) or (
+        bool(y.get("non_coupon_found")) and not bool(y.get("smartlink_found"))
+    )
+    smartlink = bool(y.get("smartlink_found")) or bool(y.get("is_smartlink"))
+    link_class = yadore_link_class(deeplink, smartlink)
     checkmon_mode = ""
     detail = ""
     operator_hint = ""
     if found:
-        if y.get("is_smartlink") or mode in ("smartlink", "smartlink_catalog"):
+        if smartlink and deeplink:
+            checkmon_mode = "links+smartlink"
+            detail = f"deeplink+smartlink ecpc={ecpc or '?'} ({link_class})"
+        elif smartlink or mode in ("smartlink", "smartlink_catalog"):
             checkmon_mode = "smartlink"
-            detail = f"smartlink ecpc={ecpc or '?'} ({traffic_class})"
+            detail = f"smartlink ecpc={ecpc or '?'}"
             if mode == "smartlink_catalog":
                 operator_hint = (
                     "Active smartlink merchant in Yadore /v2/deeplink/merchant; "
-                    "homepage deeplink probe did not match — verify URL in notes."
+                    "URL probe returned no clickUrl — use yadore_offer (/v2/d) or verify notes URL."
                 )
-        elif mode == "both":
-            detail = f"both nc+coupon ecpc={ecpc or '?'} ({traffic_class})"
-        elif mode == "coupon_only":
-            detail = f"coupon_only ecpc={ecpc or '?'} ({traffic_class})"
         else:
-            detail = f"deeplink ecpc={ecpc or '?'} ({traffic_class})"
+            detail = f"deeplink ecpc={ecpc or '?'} ({link_class})"
+            if mode == "deeplink_catalog":
+                operator_hint = (
+                    "Active deeplink merchant in catalog; homepage probe returned no clickUrl. "
+                    "Use a product/deeplink URL or yadore_offer for traffic."
+                )
+        click = str(y.get("clickUrl") or "").strip()
+        if click:
+            detail += f" clickUrl={click[:120]}{'…' if len(click) > 120 else ''}"
     else:
-        detail = str(y.get("note") or traffic_class)
+        detail = str(y.get("note") or link_class)
     return {
         "found": found,
         "detail": detail,
-        "note": traffic_class if found else str(y.get("note") or traffic_class),
+        "note": link_class if found else str(y.get("note") or link_class),
         "mode": checkmon_mode,
         "operator_hint": operator_hint,
     }
@@ -653,6 +664,7 @@ def _feed_results_from_checkmon(
             "mode": y_fields["mode"],
             "operator_hint": y_fields["operator_hint"],
             "keitaro_offer_url": str(y.get("keitaro_offer_url") or "") if y_fields["found"] else "",
+            "keitaro_alt_offer_url": str(y.get("clickUrl") or "").strip(),
         },
         "feed6": {
             "found": bool(sn_tile.get("found") or sn_coupons.get("found")),
@@ -711,6 +723,13 @@ def _adexa_golink_from_row(row: CampaignCheckmonRow) -> str:
     return ""
 
 
+def _yadore_click_url_from_row(row: CampaignCheckmonRow) -> str:
+    for fr in row.feed_results:
+        if fr.feed_key == "feed3" and fr.keitaro_alt_offer_url:
+            return fr.keitaro_alt_offer_url.strip()
+    return ""
+
+
 def _yadore_offer_from_row(row: CampaignCheckmonRow) -> str:
     for fr in row.feed_results:
         if fr.feed_key == "feed3" and fr.keitaro_offer_url:
@@ -736,6 +755,9 @@ def format_checkmon_report_block(row: CampaignCheckmonRow, *, ts: str, dry_run: 
     yadore_offer = _yadore_offer_from_row(row)
     if yadore_offer:
         lines.append(f"yadore_offer: {yadore_offer}")
+    yadore_click = _yadore_click_url_from_row(row)
+    if yadore_click:
+        lines.append(f"yadore_click_url: {yadore_click}")
     lines.extend(["", "Feed monetization (no weight changes):"])
     if row.error:
         lines.append(f"  ERROR: {row.error}")
@@ -745,6 +767,8 @@ def format_checkmon_report_block(row: CampaignCheckmonRow, *, ts: str, dry_run: 
             if fr.mode == "links+smartlink":
                 status = "YES+BOTH"
             elif fr.mode == "smartlink":
+                status = "SMARTLINK"
+            elif fr.feed_key == "feed3" and fr.note in ("smartlink", "both"):
                 status = "SMARTLINK"
             else:
                 status = "YES"

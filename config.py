@@ -633,6 +633,10 @@ YADORE_PROJECT_ID = (YADORE_PROJECT_ID or "").strip().lstrip("= ").strip().strip
 _yad_blend_sub = (os.getenv("BLEND_YADORE_OFFER_USE_SUB_MACROS") or "").strip().lower()
 BLEND_YADORE_OFFER_USE_SUB_MACROS = _yad_blend_sub in ("1", "true", "yes", "on")
 
+# Yadore deeplink / checkmon: this publisher site is coupon-inclusive (single probe with isCouponing=true).
+_yad_coupon = (os.getenv("YADORE_IS_COUPONING") or "1").strip().lower()
+YADORE_IS_COUPONING = _yad_coupon not in ("0", "false", "no", "off")
+
 # Yadore GET /v2/report/detail — comma-separated markets (e.g. de,uk,fr). Multi-market accounts must list each market.
 _yad_rd_m = (os.getenv("YADORE_REPORT_DETAIL_MARKETS") or "").strip()
 if not _yad_rd_m:

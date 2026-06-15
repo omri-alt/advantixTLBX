@@ -44,7 +44,7 @@ from config import (
 from workflows.campaign_setup import run_create_campaign_workflow
 from integrations.keitaro import KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
-from integrations.yadore import deeplink as yadore_deeplink, YadoreClientError
+from integrations.yadore import merchant_monetization_check as yadore_merchant_check, YadoreClientError
 from integrations.adexa import merchant_monetization_check as adexa_merchant_check, AdexaClientError
 from integrations.shopnomix import demand_tile_check, demand_coupons_check, ShopnomixClientError
 from integrations.monetization_geo import yadore_feed_class, shopnomix_feed_class
@@ -1149,16 +1149,17 @@ def ui_matchmaking_manual():
                     if (FEED5_API_KEY or "").strip()
                     else {"found": False, "estimatedCpc": ""}
                 )
+                yadore_res: Dict[str, Any] = {}
+                y_nc_found = False
+                y_c_found = False
                 try:
-                    y_nc = yadore_deeplink(domain, g, is_couponing=False)
-                    y_nc_found = bool(y_nc.get("found"))
-                except YadoreClientError:
-                    y_nc_found = False
-                try:
-                    y_c = yadore_deeplink(domain, g, is_couponing=True)
-                    y_c_found = bool(y_c.get("found"))
-                except YadoreClientError:
-                    y_c_found = False
+                    yadore_res = yadore_merchant_check(domain, g)
+                    y_nc_found = bool(yadore_res.get("deeplink_link_found")) or bool(
+                        yadore_res.get("non_coupon_found")
+                    )
+                    y_c_found = bool(yadore_res.get("smartlink_found")) or bool(yadore_res.get("coupon_found"))
+                except YadoreClientError as e:
+                    yadore_res = {"found": False, "note": str(e)[:120]}
                 ax: Dict[str, Any] = {}
                 adexa_mode = ""
                 adexa_keitaro_offer_url = ""
@@ -1201,6 +1202,8 @@ def ui_matchmaking_manual():
                         "yadore_non_coupon_found": y_nc_found,
                         "yadore_coupon_found": y_c_found,
                         "yadore_class": yadore_feed_class(y_nc_found, y_c_found),
+                        "yadore_click_url": str(yadore_res.get("clickUrl") or ""),
+                        "yadore_mode": str(yadore_res.get("mode") or ""),
                         "adexa_found": adexa_found,
                         "adexa_mode": adexa_mode,
                         "adexa_note": adexa_note,
