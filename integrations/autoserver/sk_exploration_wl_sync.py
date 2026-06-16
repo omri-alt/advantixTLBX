@@ -98,8 +98,6 @@ _SK_LOG_COLUMNS = ("sub_id_5", "sub_id_6", "status", "datetime")
 
 _BID_ZERO_EPS = 0.001
 
-_BID_TARGET_EPS = 0.002
-
 
 
 _STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_exploration_wl_sync_state.json"
@@ -614,31 +612,15 @@ def _subs_needing_reactivation(
 
     stats_to: str,
 
-    campaign_cpc: Optional[float] = None,
-
-    target_effective_bid_usd: Optional[float] = None,
-
 ) -> List[str]:
 
-    """New WL subs + WL subs blacklisted or not at the target effective bid."""
+    """New WL subs + existing WL subs that are blacklisted (``bidFactor`` ~ 0)."""
 
     need: Set[str] = set(to_add)
 
     if not campaign_id or not sale_subs:
 
         return sorted(need)
-
-
-
-    target_bid = (
-
-        float(target_effective_bid_usd)
-
-        if target_effective_bid_usd is not None
-
-        else SK_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD
-
-    )
 
 
 
@@ -666,25 +648,11 @@ def _subs_needing_reactivation(
 
         if bf is None:
 
-            need.add(sid)
-
             continue
 
-        bf_f = float(bf)
-
-        if bf_f <= _BID_ZERO_EPS:
+        if float(bf) <= _BID_ZERO_EPS:
 
             need.add(sid)
-
-            continue
-
-        if campaign_cpc and campaign_cpc > 0:
-
-            effective = bf_f * campaign_cpc
-
-            if abs(effective - target_bid) > _BID_TARGET_EPS:
-
-                need.add(sid)
 
     return sorted(need)
 
@@ -766,9 +734,11 @@ def sync_exploration_wl_from_keitaro_sales(
 
     """
 
-    Ensure converting SK sources are on ``SKtrackExploration.wl`` (append at end) and
+    Ensure converting SK sources are on ``SKtrackExploration.wl`` (append at end). New WL subs and
 
-    reactivated on the SK campaign (``bidFactor = target_bid_usd / campaign_cpc``, default $0.10).
+    blacklisted subs (``bidFactor`` ~ 0) are reactivated at ``target_bid_usd / campaign_cpc``
+
+    (default $0.10 effective). Active subs with ``bidFactor`` > 0 are not modified.
 
     Also appends missing ``QualityWL`` rows (``CampaignID`` × ``SUBID``) at the end of that tab.
 
@@ -907,8 +877,6 @@ def sync_exploration_wl_from_keitaro_sales(
             stats_from=stats_from,
 
             stats_to=stats_to,
-
-            campaign_cpc=campaign_cpc,
 
         )
 
