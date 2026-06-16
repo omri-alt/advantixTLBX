@@ -21,6 +21,11 @@ def geo_for_yadore(geo: str) -> str:
     return g
 
 
+def geo_for_blend(geo: str) -> str:
+    """Canonical 2-letter geo for Blend sheet keys (Kelkoo/Adexa/Yadore dedupe)."""
+    return geo_for_yadore(geo)
+
+
 def geo_for_shopnomix(geo: str) -> str:
     """Alpha-2 for Shopnomix ``country_codes`` (API examples use ``gb`` not ``uk``)."""
     g = two_letter_lower(geo)

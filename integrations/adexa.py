@@ -281,6 +281,14 @@ def find_get_merchant_by_url(
     return best[1] if best else None
 
 
+def is_adexa_golink_url(url: str) -> bool:
+    """True when ``url`` is an Adexa Goffers / golink smartlink (not a merchant homepage)."""
+    u = (url or "").strip().lower()
+    if not u:
+        return False
+    return "/goffers/" in u
+
+
 def normalize_adexa_golink_url(golink_url: str) -> str:
     """
     Normalize Adexa Goffers URLs for Keitaro copy-paste.

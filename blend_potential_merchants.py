@@ -296,6 +296,7 @@ def run_potential_adexa(
         infer_merchant_url_from_adexa_name,
         merchant_monetization_check,
     )
+    from integrations.monetization_geo import geo_for_blend
 
     try:
         raw_stats = fetch_shopping_search_stats(start, end)
@@ -341,6 +342,7 @@ def run_potential_adexa(
     checked = 0
     inferred = 0
     for (geo, mid), rec in sorted(agg.items(), key=lambda kv: kv[0]):
+        geo = geo_for_blend(geo)
         leads = int(rec["leads"])
         sales = int(rec["sales"])
         cr = sales / max(leads, 1)
@@ -362,9 +364,14 @@ def run_potential_adexa(
             url_norm = domain if domain.lower().startswith("http") else f"https://{domain.lstrip('/')}"
             domain = url_norm
             try:
+                from integrations.adexa import normalize_adexa_golink_url
+
                 res = merchant_monetization_check(url_norm, geo)
                 if res.get("found") and res.get("mode") == "smartlink":
                     monetization = "monetized_adexa_smartlink"
+                    golink = str(res.get("smartlink_url") or "").strip()
+                    if golink:
+                        domain = normalize_adexa_golink_url(golink) or golink
                 elif res.get("found"):
                     monetization = "monetized_adexa"
                 else:
@@ -417,7 +424,7 @@ def run_potential_yadore(
         merchant_monetization_check,
         parse_conversion_detail_merchant_rows,
     )
-    from integrations.monetization_geo import geo_for_yadore
+    from integrations.monetization_geo import geo_for_blend, geo_for_yadore
 
     def _monetization_label(res: Dict[str, Any]) -> str:
         if not res.get("found"):
@@ -489,6 +496,7 @@ def run_potential_yadore(
         return catalog_cache[mkt]
 
     for (geo, mid), rec in sorted(agg.items(), key=lambda kv: kv[0]):
+        geo = geo_for_blend(geo)
         leads = int(rec["leads"])
         sales = int(rec["sales"])
         cr = sales / max(leads, 1)
@@ -642,7 +650,11 @@ def main() -> None:
         if not domain:
             domain = _domain_fallback_from_name(merchant)
         domain = _normalize_merchant_domain(domain)
+        from integrations.monetization_geo import geo_for_blend
+
         geo_origin = (info.get("geo_origin") or _best_geo_from_country_sales(rep.get("by_country") or {})).strip()
+        if geo_origin:
+            geo_origin = geo_for_blend(geo_origin)
 
         geo2 = (geo_origin or "").strip().lower()[:2]
         if not domain:

@@ -163,8 +163,8 @@ def main() -> None:
                 "--prioritize-brand <substring>` once."
             )
             reasons.append(
-                "Keitaro: blend_sync_from_sheet does not attach auto=v rows with 0 month-to-date "
-                "Kelkoo sales (sheet row can remain)."
+                "Keitaro: blend_sync suppresses auto=v Kelkoo rows with 0 MTD sales unless the "
+                "potential sheet shows sales > 0 for the same geo+merchantId (sheet row can remain)."
             )
 
         for r in reasons:

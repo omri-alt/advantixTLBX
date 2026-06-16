@@ -35,7 +35,7 @@ Usage:
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
@@ -80,7 +80,7 @@ from integrations.blend_device import (
 )
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
-from integrations.monetization_geo import geo_for_yadore
+from integrations.monetization_geo import geo_for_blend
 from workflows.kelkoo_daily import fetch_reports
 
 SPREADSHEET_ID = BLEND_SHEETS_SPREADSHEET_ID
@@ -147,7 +147,68 @@ class BlendRow:
 
 
 def _normalize_geo(g: str) -> str:
-    return (g or "").strip().lower()[:2]
+    return geo_for_blend(g)
+
+
+def _fetch_kelkoo_mtd_sales_map(api_key: str) -> Optional[Dict[str, Dict[str, int]]]:
+    """Month-to-date Kelkoo sales by merchantId; end=yesterday if today is not in API yet."""
+    today = datetime.now(timezone.utc).date()
+    month_start = today.replace(day=1)
+    for end in (today, today - timedelta(days=1)):
+        if end < month_start:
+            continue
+        try:
+            return fetch_reports(api_key, month_start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+        except Exception:
+            continue
+    return None
+
+
+def _load_potential_sales_index(service) -> Dict[str, Dict[Tuple[str, str], int]]:
+    """``feed -> {(geo, merchantId): sales}`` from potential sheets (report window, not live MTD)."""
+    out: Dict[str, Dict[Tuple[str, str], int]] = {}
+    for feed_tag, title in POTENTIAL_TAB_BY_FEED.items():
+        quoted = title.replace("'", "''")
+        try:
+            vals = (
+                service.values()
+                .get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A:Z")
+                .execute()
+                .get("values")
+                or []
+            )
+        except Exception:
+            continue
+        if len(vals) < 2:
+            continue
+        header = [str(c or "").strip().lower() for c in vals[0]]
+
+        def col(name: str) -> int:
+            try:
+                return header.index(name)
+            except ValueError:
+                return -1
+
+        i_mid = col("merchantid")
+        i_geo = col("geo_origin")
+        i_sales = col("sales")
+        if min(i_mid, i_geo, i_sales) < 0:
+            continue
+        bucket: Dict[Tuple[str, str], int] = {}
+        for row in vals[1:]:
+            geo = geo_for_blend(str(row[i_geo] if i_geo < len(row) else ""))
+            mid = str(row[i_mid] if i_mid < len(row) else "").strip()
+            if not geo or not mid:
+                continue
+            try:
+                sales = int(row[i_sales] if i_sales < len(row) else 0)
+            except (TypeError, ValueError):
+                sales = 0
+            if sales > 0:
+                bucket[(geo, mid)] = max(bucket.get((geo, mid), 0), sales)
+        if bucket:
+            out[feed_tag] = bucket
+    return out
 
 
 def _column_letter(one_based_col: int) -> str:
@@ -367,8 +428,30 @@ def _blend_merchant_url_https(url: str) -> str:
 
 
 def _blend_adexa_action_payload(geo: str, merchant_url: str) -> str:
-    from integrations.adexa import build_adexa_links_keitaro_payload
+    from integrations.adexa import (
+        build_adexa_golink_keitaro_payload,
+        build_adexa_links_keitaro_payload,
+        is_adexa_golink_url,
+        merchant_monetization_check,
+        normalize_adexa_golink_url,
+    )
 
+    url = (merchant_url or "").strip()
+    if is_adexa_golink_url(url):
+        return build_adexa_golink_keitaro_payload(url)
+
+    probe = url
+    if probe and not re.match(r"^https?://", probe, flags=re.IGNORECASE):
+        probe = f"https://{probe.lstrip('/')}"
+    try:
+        res = merchant_monetization_check(probe, geo)
+    except Exception:
+        res = {}
+    mode = str(res.get("mode") or "")
+    if mode == "smartlink":
+        golink = normalize_adexa_golink_url(str(res.get("smartlink_url") or ""))
+        if golink:
+            return build_adexa_golink_keitaro_payload(golink)
     return build_adexa_links_keitaro_payload(geo, merchant_url)
 
 
@@ -512,17 +595,20 @@ def _filter_and_delete_non_monetized_auto_rows(
 
 def _suppress_auto_v_rows_without_mtd_sales(
     rows: List[BlendRow],
+    *,
+    service=None,
 ) -> Tuple[List[BlendRow], int]:
     """
     Month-start gating for Take-Down:
     - Keep monetized Blend rows in the sheet.
     - If an `auto='v'` merchant has 0 MTD sales, suppress it from being attached
       to Keitaro flows (so traffic is taken down) until MTD sales becomes > 0.
+    - Kelkoo feeds: also allow attach when the potential sheet shows sales > 0 for
+      the same (geo, merchantId) in the current report window (aligns with CR rules).
     """
     today = datetime.now(timezone.utc).date()
 
-    month_start = today.replace(day=1).strftime("%Y-%m-%d")
-    month_end = today.strftime("%Y-%m-%d")
+    potential_sales = _load_potential_sales_index(service) if service is not None else {}
 
     targets = [r for r in rows if (r.auto_flag or "").strip().lower() == "v" and r.merchant_id]
     if not targets:
@@ -538,11 +624,7 @@ def _suppress_auto_v_rows_without_mtd_sales(
             # Can't verify; don't take down.
             reports_cache[feed_tag] = None
             continue
-        try:
-            reports_cache[feed_tag] = fetch_reports(api_key, month_start, month_end)
-        except Exception:
-            # Fail open: if we can't fetch, keep traffic attached to avoid accidental drop.
-            reports_cache[feed_tag] = None
+        reports_cache[feed_tag] = _fetch_kelkoo_mtd_sales_map(api_key)
 
     kept: List[BlendRow] = []
     suppressed = 0
@@ -556,6 +638,12 @@ def _suppress_auto_v_rows_without_mtd_sales(
             kept.append(r)
             continue
         sales = int((perf_map.get(str(r.merchant_id)) or {}).get("sales", 0) or 0)
+        if sales <= 0 and feed_tag in ("kelkoo1", "kelkoo2", "kelkoo5"):
+            pot_sales = int(
+                (potential_sales.get(feed_tag) or {}).get((r.geo, str(r.merchant_id)), 0) or 0
+            )
+            if pot_sales > 0:
+                sales = pot_sales
         if sales <= 0:
             suppressed += 1
             continue
@@ -1006,7 +1094,7 @@ def main() -> None:
 
     # Take-down without deleting sheet rows: on month start we suppress auto='v' merchants
     # with 0 MTD sales from being attached to Keitaro flows.
-    rows_for_sync, suppressed = _suppress_auto_v_rows_without_mtd_sales(rows)
+    rows_for_sync, suppressed = _suppress_auto_v_rows_without_mtd_sales(rows, service=service)
     if suppressed:
         print(f"MTD take-down: suppressed {suppressed} auto='v' Blend rows with 0 MTD sales (no sheet deletions).")
 

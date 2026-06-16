@@ -40,6 +40,7 @@ load_dotenv()
 
 from config import BLEND_FEED_CHOICES, BLEND_SHEETS_SPREADSHEET_ID
 from integrations.blend_device import DEVICE_MODE_LEGACY, normalize_device_mode
+from integrations.monetization_geo import geo_for_blend
 
 BLEND_SPREADSHEET_ID = BLEND_SHEETS_SPREADSHEET_ID
 BLEND_SHEET = "Blend"
@@ -212,12 +213,9 @@ def main() -> None:
     existing = set()
     if blend_vals and len(blend_vals) >= 2:
         for row in blend_vals[1:]:
-            geo = (row[b_i("geo")] if b_i("geo") >= 0 and b_i("geo") < len(row) else "") or ""
-            mid = (row[b_i("merchantid")] if b_i("merchantid") >= 0 and b_i("merchantid") < len(row) else "") or ""
-            feed = (row[b_i("feed")] if b_i("feed") >= 0 and b_i("feed") < len(row) else "") or ""
-            geo = str(geo).strip().lower()[:2]
-            mid = str(mid).strip()
-            feed = str(feed).strip().lower()
+            geo = geo_for_blend(str(row[b_i("geo")] if b_i("geo") >= 0 and b_i("geo") < len(row) else ""))
+            mid = str(row[b_i("merchantid")] if b_i("merchantid") >= 0 and b_i("merchantid") < len(row) else "").strip()
+            feed = str(row[b_i("feed")] if b_i("feed") >= 0 and b_i("feed") < len(row) else "").strip().lower()
             if geo and mid and feed:
                 existing.add((geo, mid, feed))
 
@@ -232,7 +230,7 @@ def main() -> None:
         if not monet.startswith("monetized"):
             continue
         monetized_rows += 1
-        geo = str(row[i_geo] or "").strip().lower()[:2]
+        geo = geo_for_blend(str(row[i_geo] or ""))
         mid = str(row[i_mid] or "").strip()
         name = str(row[i_name] or "").strip()
         domain = str(row[i_domain] or "").strip()
@@ -244,10 +242,28 @@ def main() -> None:
             dup_rows += 1
             continue
 
+        offer_url = domain
+        if args.feed == "adexa" and monet == "monetized_adexa_smartlink":
+            from integrations.adexa import (
+                is_adexa_golink_url,
+                merchant_monetization_check,
+                normalize_adexa_golink_url,
+            )
+
+            if not is_adexa_golink_url(domain):
+                probe = domain if domain.lower().startswith("http") else f"https://{domain.lstrip('/')}"
+                try:
+                    ax = merchant_monetization_check(probe, geo)
+                    golink = str(ax.get("smartlink_url") or "").strip()
+                    if ax.get("mode") == "smartlink" and golink:
+                        offer_url = normalize_adexa_golink_url(golink) or golink
+                except Exception:
+                    pass
+
         new_row = [""] * max(len(blend_header), len(header_blend))
         # Fill known columns
         new_row[b_i("brandname")] = name
-        new_row[b_i("offerurl")] = domain
+        new_row[b_i("offerurl")] = offer_url
         new_row[b_i("clickcap")] = "50"
         new_row[b_i("geo")] = geo
         new_row[b_i("merchantid")] = mid
