@@ -133,6 +133,22 @@ def _run_sk_exploration_wl_sync_scheduled() -> None:
     logger.warning("SKExplorationWlSyncAuto not registered; skip WL sync cron")
 
 
+def _run_close_blend_zp_scheduled() -> None:
+    """Daily pause for mapped Zeropark Blend campaigns (``ZP BLEND campaignsID``)."""
+    from config import ZEROPARK_BLEND_NIGHTLY_CLOSE_ENABLED
+
+    if not ZEROPARK_BLEND_NIGHTLY_CLOSE_ENABLED:
+        logger.info("CloseBlendZpAuto skipped (ZEROPARK_BLEND_NIGHTLY_CLOSE_ENABLED=0)")
+        return
+    _ensure_listeners()
+    for automation in _automation_listeners:
+        if automation.__class__.__name__ == "CloseBlendZpAuto":
+            logger.info("=== CloseBlendZpAuto daily cron (Zeropark Blend pause) ===")
+            automation._wrap_run("scheduler", automation._execute)
+            return
+    logger.warning("CloseBlendZpAuto not registered; skip Blend ZP close cron")
+
+
 def _hourly_signal_broadcast() -> None:
     """Legacy single-threaded broadcast (manual catch-up / trigger-all internals)."""
     hour = _current_scheduler_hour()
@@ -271,6 +287,9 @@ def start_autoserver_scheduler() -> None:
         SK_EXPLORATION_WL_SYNC_MINUTE,
         SK_EXPLORATION_WL_SYNC_TZ,
         TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES,
+        ZEROPARK_BLEND_CLOSE_HOUR,
+        ZEROPARK_BLEND_CLOSE_MINUTE,
+        ZEROPARK_BLEND_CLOSE_TZ,
         ZEROPARK_CLOSE_HOUR,
         ZEROPARK_CLOSE_MINUTE,
         ZEROPARK_CLOSE_TZ,
@@ -281,6 +300,8 @@ def start_autoserver_scheduler() -> None:
     for automation in _automation_listeners:
         name = automation.__class__.__name__
         if name == "CloseNipuhimAuto":
+            continue
+        if name == "CloseBlendZpAuto":
             continue
         if name == "SKExplorationWlSyncAuto":
             continue
@@ -327,6 +348,25 @@ def start_autoserver_scheduler() -> None:
     try:
         from zoneinfo import ZoneInfo
 
+        zp_blend_close_tz = ZoneInfo(ZEROPARK_BLEND_CLOSE_TZ or "Europe/Warsaw")
+    except Exception:
+        logger.warning("Invalid ZEROPARK_BLEND_CLOSE_TZ %r; using Europe/Warsaw", ZEROPARK_BLEND_CLOSE_TZ)
+        from zoneinfo import ZoneInfo
+
+        zp_blend_close_tz = ZoneInfo("Europe/Warsaw")
+    _scheduler.add_job(
+        _run_close_blend_zp_scheduled,
+        trigger="cron",
+        hour=int(ZEROPARK_BLEND_CLOSE_HOUR),
+        minute=int(ZEROPARK_BLEND_CLOSE_MINUTE),
+        timezone=zp_blend_close_tz,
+        id="zeropark_close_blend_mapped",
+        replace_existing=True,
+        max_instances=1,
+    )
+    try:
+        from zoneinfo import ZoneInfo
+
         sk_wl_tz = ZoneInfo(SK_EXPLORATION_WL_SYNC_TZ or "UTC")
     except Exception:
         logger.warning("Invalid SK_EXPLORATION_WL_SYNC_TZ %r; using UTC", SK_EXPLORATION_WL_SYNC_TZ)
@@ -354,7 +394,11 @@ def start_autoserver_scheduler() -> None:
     _write_scheduler_heartbeat()
     if _should_schedule_startup_catchup():
         for automation in _automation_listeners:
-            if automation.__class__.__name__ in ("CloseNipuhimAuto", "SKExplorationWlSyncAuto"):
+            if automation.__class__.__name__ in (
+                "CloseNipuhimAuto",
+                "CloseBlendZpAuto",
+                "SKExplorationWlSyncAuto",
+            ):
                 continue
             _scheduler.add_job(
                 _run_automation_hourly,
@@ -370,13 +414,17 @@ def start_autoserver_scheduler() -> None:
             "AutoServer APScheduler started (%s scheduled jobs; "
             "BlendTrCapGuard every %d minutes; "
             "Zeropark close at %02d:%02d %s; "
+            "Zeropark Blend close at %02d:%02d %s; "
             "SK WL sync at %02d:%02d %s)"
         ),
-        len(_automation_listeners) - 1,
+        len(_automation_listeners) - 2,
         int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES),
         int(ZEROPARK_CLOSE_HOUR),
         int(ZEROPARK_CLOSE_MINUTE),
         ZEROPARK_CLOSE_TZ,
+        int(ZEROPARK_BLEND_CLOSE_HOUR),
+        int(ZEROPARK_BLEND_CLOSE_MINUTE),
+        ZEROPARK_BLEND_CLOSE_TZ,
         int(SK_EXPLORATION_WL_SYNC_HOUR_LOCAL),
         int(SK_EXPLORATION_WL_SYNC_MINUTE),
         SK_EXPLORATION_WL_SYNC_TZ,

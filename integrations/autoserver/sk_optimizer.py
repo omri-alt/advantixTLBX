@@ -200,7 +200,7 @@ def _parse_wl(raw: Any) -> List[str]:
     try:
         v = json.loads(s)
         if isinstance(v, list):
-            return [str(x) for x in v]
+            return [str(x).strip() for x in v if str(x).strip()]
     except Exception:
         pass
     return []

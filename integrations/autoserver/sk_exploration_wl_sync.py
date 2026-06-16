@@ -386,6 +386,130 @@ def _exploration_index(rows: List[Dict[str, Any]]) -> Dict[Tuple[str, str], Dict
 
 
 
+def _exploration_row_by_campaign_id(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+
+    out: Dict[str, Dict[str, Any]] = {}
+
+    for row in rows:
+
+        cid = str(row.get("campaignId") or row.get("campId") or "").strip()
+
+        if cid:
+
+            out[cid] = row
+
+    return out
+
+
+
+
+
+def _append_subs_to_exploration_wl_row(row: Dict[str, Any], subs: List[str]) -> List[str]:
+
+    """Append missing subs to a row's ``wl`` list; returns subs actually added."""
+
+    wl = _parse_wl(row.get("wl"))
+
+    wl_set = set(wl)
+
+    added: List[str] = []
+
+    for raw in subs:
+
+        sub = str(raw or "").strip()
+
+        if not sub or sub in wl_set:
+
+            continue
+
+        wl_set.add(sub)
+
+        added.append(sub)
+
+    if added:
+
+        row["wl"] = _format_wl(wl + added)
+
+    return added
+
+
+
+
+
+def _backfill_exploration_wl_from_quality_appends(
+
+    rows: List[Dict[str, Any]],
+
+    quality_wl_result: Dict[str, Any],
+
+    *,
+
+    dry_run: bool = False,
+
+) -> Dict[str, Any]:
+
+    """
+
+    Ensure ``SKtrackExploration.wl`` includes subs newly appended to QualityWL.
+
+    Fixes cases where QualityWL rows were added but exploration ``wl`` was not updated.
+
+    """
+
+    appended = quality_wl_result.get("details") or []
+
+    if not appended or dry_run:
+
+        return {"sources_appended": 0, "rows_updated": 0}
+
+
+
+    by_cid = _exploration_row_by_campaign_id(rows)
+
+    sources_appended = 0
+
+    rows_updated = 0
+
+    for item in appended:
+
+        cid = str(item.get("campaign_id") or "").strip()
+
+        sub = str(item.get("sub_id") or "").strip()
+
+        if not cid or not sub:
+
+            continue
+
+        row = by_cid.get(cid)
+
+        if not row:
+
+            continue
+
+        added = _append_subs_to_exploration_wl_row(row, [sub])
+
+        if added:
+
+            sources_appended += len(added)
+
+            rows_updated += 1
+
+            row["lastAction"] = "wl-from-sales"
+
+            row["logs"] = _append_logs_cell(
+
+                row.get("logs", ""),
+
+                "WL sync backfill: appended " + ", ".join(added) + " (QualityWL)",
+
+            )
+
+    return {"sources_appended": sources_appended, "rows_updated": rows_updated}
+
+
+
+
+
 def collect_sk_sale_sources_by_brand_geo(
 
     *,
@@ -732,7 +856,9 @@ def sync_exploration_wl_from_keitaro_sales(
 
         wl_set = set(wl)
 
-        to_add = [s for s in sale_subs if s and s not in wl_set]
+        sale_subs_norm = [str(s).strip() for s in sale_subs if str(s).strip()]
+
+        to_add = [s for s in sale_subs_norm if s not in wl_set]
 
         cid_raw = str(row.get("campaignId") or row.get("campId") or "").strip()
 
@@ -772,7 +898,7 @@ def sync_exploration_wl_from_keitaro_sales(
 
             cid_int,
 
-            sale_subs,
+            sale_subs_norm,
 
             wl_set,
 
@@ -882,6 +1008,8 @@ def sync_exploration_wl_from_keitaro_sales(
 
             row["wl"] = _format_wl(new_wl)
 
+            changed = True
+
         parts: List[str] = []
 
         if to_add:
@@ -940,13 +1068,23 @@ def sync_exploration_wl_from_keitaro_sales(
 
 
 
+    quality_wl_result = append_quality_wl_rows(quality_wl_candidates, dry_run=dry_run)
+
+
+
+    backfill = _backfill_exploration_wl_from_quality_appends(rows, quality_wl_result, dry_run=dry_run)
+
+    if int(backfill.get("sources_appended") or 0) > 0:
+
+        sources_appended += int(backfill["sources_appended"])
+
+        changed = True
+
+
+
     if changed and not dry_run:
 
         gd.create_or_update_sheet_from_dicts_withId(sheet_id, TAB_EXPLORATION, rows)
-
-
-
-    quality_wl_result = append_quality_wl_rows(quality_wl_candidates, dry_run=dry_run)
 
 
 
@@ -977,6 +1115,8 @@ def sync_exploration_wl_from_keitaro_sales(
         "unmatched": unmatched_keys[:30],
 
         "quality_wl": quality_wl_result,
+
+        "exploration_wl_backfill": backfill,
 
     }
 

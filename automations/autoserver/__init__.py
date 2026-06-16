@@ -45,6 +45,11 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
         "schedule": "Daily 23:30 Europe/Warsaw (ZEROPARK_CLOSE_* env)",
     },
     {
+        "class_name": "CloseBlendZpAuto",
+        "label": "Close Blend Zeropark (mapped campaigns)",
+        "schedule": "Daily (ZEROPARK_BLEND_CLOSE_* env, defaults to Nipuhim close)",
+    },
+    {
         "class_name": "BlendSync2h",
         "label": "Blend sheet → Keitaro sync (monetization + weights)",
         "schedule": "Every 2 hours (even hours)",
@@ -74,6 +79,7 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
 def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.blend_sync_2h import BlendSync2h
     from automations.autoserver.blend_tr_cap_guard import BlendTrCapGuard
+    from automations.autoserver.close_blend_zp import CloseBlendZpAuto
     from automations.autoserver.close_nipuhim import CloseNipuhimAuto
     from automations.autoserver.keitaro_feed_balance_checkmon import KeitaroFeedBalanceCheckmon
     from automations.autoserver.klfix_optimize import KLFIXoptimize
@@ -93,6 +99,7 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     register_func(KLWL())
     register_func(QualityWL())
     register_func(CloseNipuhimAuto())
+    register_func(CloseBlendZpAuto())
     register_func(BlendSync2h())
     register_func(BlendTrCapGuard())
     register_func(NipuhimUnmonRepair())

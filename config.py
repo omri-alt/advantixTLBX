@@ -555,6 +555,25 @@ except ValueError:
 ZEROPARK_CLOSE_HOUR = max(0, min(23, ZEROPARK_CLOSE_HOUR))
 ZEROPARK_CLOSE_MINUTE = max(0, min(59, ZEROPARK_CLOSE_MINUTE))
 
+# CloseBlendZpAuto: nightly pause for mapped Zeropark Blend campaigns (defaults = Nipuhim close).
+ZEROPARK_BLEND_NIGHTLY_CLOSE_ENABLED = (
+    os.getenv("ZEROPARK_BLEND_NIGHTLY_CLOSE_ENABLED", "1").strip().lower()
+    not in ("0", "false", "no", "off")
+)
+ZEROPARK_BLEND_CLOSE_TZ = (os.getenv("ZEROPARK_BLEND_CLOSE_TZ") or ZEROPARK_CLOSE_TZ).strip()
+_blend_close_h = (os.getenv("ZEROPARK_BLEND_CLOSE_HOUR") or str(ZEROPARK_CLOSE_HOUR)).strip()
+_blend_close_m = (os.getenv("ZEROPARK_BLEND_CLOSE_MINUTE") or str(ZEROPARK_CLOSE_MINUTE)).strip()
+try:
+    ZEROPARK_BLEND_CLOSE_HOUR = int(_blend_close_h)
+except ValueError:
+    ZEROPARK_BLEND_CLOSE_HOUR = ZEROPARK_CLOSE_HOUR
+try:
+    ZEROPARK_BLEND_CLOSE_MINUTE = int(_blend_close_m)
+except ValueError:
+    ZEROPARK_BLEND_CLOSE_MINUTE = ZEROPARK_CLOSE_MINUTE
+ZEROPARK_BLEND_CLOSE_HOUR = max(0, min(23, ZEROPARK_BLEND_CLOSE_HOUR))
+ZEROPARK_BLEND_CLOSE_MINUTE = max(0, min(59, ZEROPARK_BLEND_CLOSE_MINUTE))
+
 # SourceKnowledge (affiliate API — X-API-KEY)
 SOURCEKNOWLEDGE_API_KEY = (os.getenv("KEYSK") or os.getenv("keySK") or "").strip()
 if not SOURCEKNOWLEDGE_API_KEY:

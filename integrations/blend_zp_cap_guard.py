@@ -345,3 +345,74 @@ def run_blend_zp_cap_guard(
         dry_run,
     )
     return payload
+
+
+def pause_all_mapped_blend_zp_campaigns(
+    *,
+    dry_run: bool = False,
+    reason: str = "nightly_close",
+    spreadsheet_id: str = ZEROPARK_BLEND_CAP_SPREADSHEET_ID,
+    sheet_name: str = ZEROPARK_BLEND_CAP_SHEET_NAME,
+) -> Dict[str, Any]:
+    """Pause every Zeropark campaign listed on the Blend mapping sheet (nightly close)."""
+    if not KEYZP:
+        raise RuntimeError("KEYZP is not configured")
+
+    mapping = load_mapping(spreadsheet_id=spreadsheet_id, sheet_name=sheet_name)
+    campaign_ids = sorted({cid for cid in mapping.values() if str(cid).strip()})
+    state_map = _campaign_state_map(campaign_ids)
+
+    paused = 0
+    already_paused = 0
+    errors: List[str] = []
+    actions: List[Dict[str, Any]] = []
+
+    for campaign_id in campaign_ids:
+        state = state_map.get(campaign_id, "")
+        action: Dict[str, Any] = {"campaign_id": campaign_id, "state": state}
+        if _state_is_paused(state):
+            action["status"] = "already_paused"
+            already_paused += 1
+            actions.append(action)
+            continue
+        if dry_run:
+            action["status"] = "would_pause"
+            paused += 1
+            actions.append(action)
+            continue
+        try:
+            pause_campaign(campaign_id, KEYZP)
+            action["status"] = "paused"
+            paused += 1
+        except ZeroparkClientError as e:
+            msg = f"{campaign_id}: {e}"
+            if e.response_body:
+                msg = f"{msg} | {e.response_body}"
+            errors.append(msg)
+            action["status"] = "error"
+            action["error"] = str(e)
+        actions.append(action)
+
+    payload = {
+        "reason": reason,
+        "dry_run": dry_run,
+        "mapping_sheet": {
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_name": sheet_name,
+            "mappings": len(mapping),
+            "campaign_ids": len(campaign_ids),
+        },
+        "paused": paused,
+        "already_paused": already_paused,
+        "errors": errors,
+        "actions": actions,
+    }
+    logger.info(
+        "Blend ZP nightly close (%s): campaigns=%s paused=%s already_paused=%s errors=%s",
+        reason,
+        len(campaign_ids),
+        paused,
+        already_paused,
+        len(errors),
+    )
+    return payload
