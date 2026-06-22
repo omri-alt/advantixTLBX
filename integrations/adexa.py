@@ -81,6 +81,19 @@ def _looks_like_domain(host: str) -> bool:
     return len(tld) >= 2 and tld.isalpha()
 
 
+def merchant_url_from_adexa_stat_row(row: Dict[str, Any]) -> str:
+    """Homepage / domain from GetShoppingSearchStats row (``merchantDomain`` is common)."""
+    return str(
+        row.get("merchantUrl")
+        or row.get("merchant_url")
+        or row.get("merchantDomain")
+        or row.get("merchant_domain")
+        or row.get("url")
+        or row.get("website")
+        or ""
+    ).strip()
+
+
 def infer_merchant_url_from_adexa_name(name: str) -> str:
     """
     Best-effort homepage host when GetMerchant has no URL but the stats name encodes the domain.
@@ -281,6 +294,63 @@ def find_get_merchant_by_url(
     return best[1] if best else None
 
 
+def find_get_merchant_by_id(
+    merchant_id: str,
+    country_iso2: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    merchants: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Match a GetMerchant row by ``id`` / ``merchantId``."""
+    mid = str(merchant_id or "").strip()
+    if not mid:
+        return None
+    rows = merchants
+    if rows is None:
+        try:
+            rows = get_merchants(country_iso2, site_id=site_id, api_key=api_key)
+        except AdexaClientError:
+            return None
+    for m in rows or []:
+        if not isinstance(m, dict):
+            continue
+        row_mid = str(m.get("id") or m.get("merchantId") or m.get("merchant_id") or "").strip()
+        if row_mid == mid:
+            return m
+    return None
+
+
+def _adexa_goffers_country_token(country_iso2: str) -> str:
+    g = two_letter_lower(country_iso2 or "")
+    if g == "gb":
+        g = "uk"
+    return g.upper()
+
+
+def build_adexa_golink_url(
+    country_iso2: str,
+    merchant_id: str,
+    *,
+    site_id: Optional[str] = None,
+    pf: str = "347",
+) -> str:
+    """
+    Build Adexa Goffers golink from ``merchantId`` when GetMerchant omits ``randomOffer``.
+
+    Used for merchants that appear in shopping stats but not in the GetMerchant catalog.
+    """
+    sid = (site_id or ADEXA_SITE_ID or "").strip()
+    mid = str(merchant_id or "").strip()
+    g = two_letter_lower(country_iso2 or "")
+    if g == "gb":
+        g = "uk"
+    if not sid or not mid or len(g) != 2:
+        return ""
+    country = _adexa_goffers_country_token(g)
+    return f"https://go.adexad.com/v1/Goffers/country={country}?mid={mid}&siteID={sid}&pf={pf}"
+
+
 def is_adexa_golink_url(url: str) -> bool:
     """True when ``url`` is an Adexa Goffers / golink smartlink (not a merchant homepage)."""
     u = (url or "").strip().lower()
@@ -387,6 +457,7 @@ def merchant_monetization_check(
     site_id: Optional[str] = None,
     api_key: Optional[str] = None,
     merchants: Optional[List[Dict[str, Any]]] = None,
+    merchant_id: Optional[str] = None,
     timeout: int = 45,
 ) -> Dict[str, Any]:
     """
@@ -394,16 +465,16 @@ def merchant_monetization_check(
 
     1. ``LinksMerchant.php`` homepage probe (redirect = monetized links).
     2. ``GetMerchant`` golink when ``supportsOffer`` + ``randomOffer``.
-
-    Returns ``found`` True for either path. ``mode`` is ``links``, ``smartlink``,
-    ``links+smartlink``, or ``none``. ``keitaro_offer_url`` is set when golink is available.
+    3. When ``merchant_id`` is set and the merchant is absent from GetMerchant, synthesize
+       a Goffers golink (common for stats-only merchants with ``merchantDomain``).
     """
     probe_url = normalize_merchant_homepage_url(merchant_url) or (merchant_url or "").strip()
+    mid = str(merchant_id or "").strip()
     links = links_merchant_check(
         probe_url,
         country_iso2,
         site_id=site_id,
-        merchant_id=None,
+        merchant_id=mid or None,
         timeout=timeout,
     )
     links_found = bool(links.get("found"))
@@ -436,6 +507,14 @@ def merchant_monetization_check(
         api_key=api_key,
         merchants=merchants,
     )
+    if not merchant and mid:
+        merchant = find_get_merchant_by_id(
+            mid,
+            country_iso2,
+            site_id=site_id,
+            api_key=api_key,
+            merchants=merchants,
+        )
     smartlink_found = False
     golink = ""
     links_keitaro = build_adexa_links_keitaro_payload(country_iso2, probe_url, site_id=site_id) if links_found else ""
@@ -447,6 +526,16 @@ def merchant_monetization_check(
             out["smartlink_found"] = True
             out["smartlink_url"] = golink
             out["keitaro_golink_url"] = build_adexa_golink_keitaro_payload(golink)
+    elif mid and not links_found:
+        synth = build_adexa_golink_url(country_iso2, mid, site_id=site_id)
+        if synth:
+            golink = synth
+            smartlink_found = True
+            out["merchant_id"] = mid
+            out["smartlink_found"] = True
+            out["smartlink_url"] = golink
+            out["keitaro_golink_url"] = build_adexa_golink_keitaro_payload(golink)
+            out["note"] = "smartlink_goffers_by_merchant_id"
 
     out["keitaro_links_url"] = links_keitaro
     if links_keitaro:

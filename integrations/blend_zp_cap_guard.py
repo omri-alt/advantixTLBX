@@ -13,11 +13,13 @@ single source of truth for Blend click-cap math.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from config import (
+    BLEND_SHEETS_SPREADSHEET_ID,
     KEYZP,
     ZEROPARK_BLEND_CAP_SHEET_NAME,
     ZEROPARK_BLEND_CAP_SPREADSHEET_ID,
@@ -31,6 +33,9 @@ from integrations.zeropark import (
 )
 
 logger = logging.getLogger(__name__)
+
+_BLEND_ZP_NAME_RE = re.compile(r"^Blend-KL-([A-Za-z]{2})(?:-(Desktop|Mobile))?$", re.IGNORECASE)
+_MAPPING_SHEET_HEADER = ["geo", "device", "campaign id"]
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,8 @@ def _normalize_device(value: str) -> str:
     raw = (value or "").strip().lower().replace("-", " ").replace("_", " ")
     if not raw:
         return ""
+    if raw in ("all", "both", "any"):
+        return "all"
     if "desktop" in raw:
         return "desktop"
     if raw in ("mobile", "phone", "mobile phone", "tablet", "smartphone"):
@@ -88,12 +95,116 @@ def _looks_like_header(row: list[str]) -> bool:
     )
 
 
+def _list_sheet_titles(service, spreadsheet_id: str) -> List[str]:
+    meta = service.get(spreadsheetId=spreadsheet_id, fields="sheets(properties(title))").execute()
+    return [
+        str(s.get("properties", {}).get("title") or "")
+        for s in meta.get("sheets", [])
+        if s.get("properties", {}).get("title")
+    ]
+
+
+def _resolve_mapping_sheet_title(titles: List[str], preferred: str) -> Optional[str]:
+    if preferred in titles:
+        return preferred
+    pref_norm = (preferred or "").replace(" ", "").lower()
+    for title in titles:
+        if title.replace(" ", "").lower() == pref_norm:
+            return title
+    for title in titles:
+        tl = title.lower()
+        if "zp" in tl and "blend" in tl and "campaign" in tl:
+            return title
+    return None
+
+
+def _ensure_mapping_sheet_tab(service, spreadsheet_id: str, sheet_name: str) -> str:
+    titles = _list_sheet_titles(service, spreadsheet_id)
+    resolved = _resolve_mapping_sheet_title(titles, sheet_name)
+    if resolved:
+        return resolved
+    service.batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"requests": [{"addSheet": {"properties": {"title": sheet_name}}}]},
+    ).execute()
+    quoted = sheet_name.replace("'", "''")
+    service.values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{quoted}'!A1:C1",
+        valueInputOption="RAW",
+        body={"values": [_MAPPING_SHEET_HEADER]},
+    ).execute()
+    logger.info("Created ZP Blend mapping tab %r on spreadsheet %s", sheet_name, spreadsheet_id)
+    return sheet_name
+
+
+def _parse_blend_zp_campaign_name(name: str) -> Optional[Tuple[str, str]]:
+    m = _BLEND_ZP_NAME_RE.match((name or "").strip())
+    if not m:
+        return None
+    geo = _normalize_geo(m.group(1))
+    device_raw = m.group(2)
+    device = device_raw.lower() if device_raw else "all"
+    if not geo:
+        return None
+    return geo, device
+
+
+def discover_blend_zp_mappings_from_api() -> List[BlendZpCampaignMapping]:
+    """Infer geo/device/campaign-id rows from live Zeropark ``Blend-KL-*`` campaigns."""
+    if not KEYZP:
+        return []
+    rows: List[BlendZpCampaignMapping] = []
+    seen_ids: set[str] = set()
+    for row in list_campaign_rows_today(KEYZP):
+        details = row.get("details") if isinstance(row, dict) else None
+        if not isinstance(details, dict):
+            continue
+        name = str(details.get("name") or "").strip()
+        campaign_id = str(details.get("id") or "").strip()
+        if not name.startswith("Blend-KL-") or not campaign_id:
+            continue
+        if "blendwl" in name.lower():
+            continue
+        parsed = _parse_blend_zp_campaign_name(name)
+        if not parsed:
+            continue
+        if campaign_id in seen_ids:
+            continue
+        seen_ids.add(campaign_id)
+        geo, device = parsed
+        rows.append(BlendZpCampaignMapping(geo=geo, device=device, campaign_id=campaign_id))
+    return rows
+
+
+def _write_mapping_rows(
+    service,
+    spreadsheet_id: str,
+    sheet_name: str,
+    mappings: List[BlendZpCampaignMapping],
+) -> None:
+    quoted = sheet_name.replace("'", "''")
+    values = [_MAPPING_SHEET_HEADER]
+    for row in mappings:
+        values.append([row.geo, row.device, row.campaign_id])
+    service.values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{quoted}'!A1",
+        valueInputOption="RAW",
+        body={"values": values},
+    ).execute()
+
+
 def _read_mapping_rows(
     spreadsheet_id: str = ZEROPARK_BLEND_CAP_SPREADSHEET_ID,
     sheet_name: str = ZEROPARK_BLEND_CAP_SHEET_NAME,
+    *,
+    bootstrap_if_empty: bool = True,
 ) -> List[BlendZpCampaignMapping]:
+    spreadsheet_id = (spreadsheet_id or BLEND_SHEETS_SPREADSHEET_ID).strip()
     service = _get_sheets_service()
-    quoted = sheet_name.replace("'", "''")
+    resolved_name = _ensure_mapping_sheet_tab(service, spreadsheet_id, sheet_name)
+    quoted = resolved_name.replace("'", "''")
     result = service.values().get(
         spreadsheetId=spreadsheet_id,
         range=f"'{quoted}'!A:C",
@@ -112,11 +223,22 @@ def _read_mapping_rows(
             logger.warning(
                 "Skipping incomplete ZP Blend mapping row %s on %s: %r",
                 index + 1,
-                sheet_name,
+                resolved_name,
                 raw_row,
             )
             continue
         rows.append(BlendZpCampaignMapping(geo=geo, device=device, campaign_id=campaign_id))
+
+    if not rows and bootstrap_if_empty:
+        discovered = discover_blend_zp_mappings_from_api()
+        if discovered:
+            logger.info(
+                "Bootstrapping %s with %s Blend-KL-* Zeropark campaign(s)",
+                resolved_name,
+                len(discovered),
+            )
+            _write_mapping_rows(service, spreadsheet_id, resolved_name, discovered)
+            return discovered
     return rows
 
 

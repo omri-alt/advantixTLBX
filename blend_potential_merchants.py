@@ -275,6 +275,8 @@ def _adexa_stat_url(row: Dict[str, Any]) -> str:
     return str(
         row.get("merchantUrl")
         or row.get("merchant_url")
+        or row.get("merchantDomain")
+        or row.get("merchant_domain")
         or row.get("url")
         or row.get("website")
         or ""
@@ -366,7 +368,7 @@ def run_potential_adexa(
             try:
                 from integrations.adexa import normalize_adexa_golink_url
 
-                res = merchant_monetization_check(url_norm, geo)
+                res = merchant_monetization_check(url_norm, geo, merchant_id=mid)
                 if res.get("found") and res.get("mode") == "smartlink":
                     monetization = "monetized_adexa_smartlink"
                     golink = str(res.get("smartlink_url") or "").strip()
