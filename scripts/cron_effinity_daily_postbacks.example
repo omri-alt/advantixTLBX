@@ -1,0 +1,7 @@
+# Effinity MTD conversions → Keitaro salecpa postbacks (once per day).
+# Copy to crontab on the server if Flask/Gunicorn is not running 24/7.
+#
+# Default in-app schedule: 10:15 Asia/Jerusalem (EFFINITY_SALES_SCHEDULER_*).
+# Requires KEYEFFINITY and Keitaro postback base in .env.
+#
+# 15 10 * * * cd /path/to/KLblend && /usr/bin/python3 cli/run_effinity_daily_postbacks.py >> runtime/logs/effinity_daily_postbacks.log 2>&1

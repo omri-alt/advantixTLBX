@@ -149,6 +149,22 @@ def _run_close_blend_zp_scheduled() -> None:
     logger.warning("CloseBlendZpAuto not registered; skip Blend ZP close cron")
 
 
+def _run_effinity_mtd_postbacks_scheduled() -> None:
+    """Daily Effinity MTD sales → Keitaro ``salecpa`` postbacks for missing conversions."""
+    from config import EFFINITY_API_KEY, EFFINITY_SALES_SCHEDULER_ENABLED
+
+    if not EFFINITY_SALES_SCHEDULER_ENABLED:
+        logger.info("Effinity daily postbacks skipped (EFFINITY_SALES_SCHEDULER_ENABLED=0)")
+        return
+    if not (EFFINITY_API_KEY or "").strip():
+        logger.info("Effinity daily postbacks skipped (KEYEFFINITY not set)")
+        return
+    from scheduler.effinity_sales_scheduler import run_effinity_daily_postbacks
+
+    logger.info("=== Effinity daily MTD salecpa postbacks cron ===")
+    run_effinity_daily_postbacks()
+
+
 def _hourly_signal_broadcast() -> None:
     """Legacy single-threaded broadcast (manual catch-up / trigger-all internals)."""
     hour = _current_scheduler_hour()
@@ -283,6 +299,9 @@ def start_autoserver_scheduler() -> None:
     from apscheduler.schedulers.background import BackgroundScheduler
 
     from config import (
+        EFFINITY_SALES_SCHEDULER_HOUR_LOCAL,
+        EFFINITY_SALES_SCHEDULER_MINUTE,
+        EFFINITY_SALES_SCHEDULER_TZ,
         SK_EXPLORATION_WL_SYNC_HOUR_LOCAL,
         SK_EXPLORATION_WL_SYNC_MINUTE,
         SK_EXPLORATION_WL_SYNC_TZ,
@@ -383,6 +402,30 @@ def start_autoserver_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
     )
+    try:
+        from zoneinfo import ZoneInfo
+
+        effinity_tz = ZoneInfo(EFFINITY_SALES_SCHEDULER_TZ or "Asia/Jerusalem")
+    except Exception:
+        logger.warning(
+            "Invalid EFFINITY_SALES_SCHEDULER_TZ %r; using Asia/Jerusalem",
+            EFFINITY_SALES_SCHEDULER_TZ,
+        )
+        from zoneinfo import ZoneInfo
+
+        effinity_tz = ZoneInfo("Asia/Jerusalem")
+    _scheduler.add_job(
+        _run_effinity_mtd_postbacks_scheduled,
+        trigger="cron",
+        hour=int(EFFINITY_SALES_SCHEDULER_HOUR_LOCAL),
+        minute=int(EFFINITY_SALES_SCHEDULER_MINUTE),
+        timezone=effinity_tz,
+        id="effinity_mtd_salecpa_daily",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
     _scheduler.add_job(
         _write_scheduler_heartbeat,
         trigger="interval",
@@ -415,7 +458,8 @@ def start_autoserver_scheduler() -> None:
             "BlendTrCapGuard every %d minutes; "
             "Zeropark close at %02d:%02d %s; "
             "Zeropark Blend close at %02d:%02d %s; "
-            "SK WL sync at %02d:%02d %s)"
+            "SK WL sync at %02d:%02d %s; "
+            "Effinity MTD postbacks at %02d:%02d %s)"
         ),
         len(_automation_listeners) - 2,
         int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES),
@@ -428,6 +472,9 @@ def start_autoserver_scheduler() -> None:
         int(SK_EXPLORATION_WL_SYNC_HOUR_LOCAL),
         int(SK_EXPLORATION_WL_SYNC_MINUTE),
         SK_EXPLORATION_WL_SYNC_TZ,
+        int(EFFINITY_SALES_SCHEDULER_HOUR_LOCAL),
+        int(EFFINITY_SALES_SCHEDULER_MINUTE),
+        EFFINITY_SALES_SCHEDULER_TZ,
     )
 
 

@@ -5,6 +5,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
+from typing import Any, Dict
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -21,12 +22,17 @@ def _seconds_until_local_hour(hour_local: int, tz_name: str) -> float:
     return max(1.0, (target - now).total_seconds())
 
 
-def _run_once() -> None:
+def run_effinity_daily_postbacks(*, dry_run: bool = False) -> Dict[str, Any]:
+    """
+    Fetch Effinity MTD sales, diff against Keitaro ``salecpa`` log, fire missing postbacks.
+
+    Used by APScheduler (when AutoServer scheduler is on), the thread fallback, and CLI/cron.
+    """
     from integrations.daily_conversion_postbacks import default_report_date_str
     from late_conversion_sales import apply_effinity_mtd_cpasale_backlog
 
     report_date = default_report_date_str()
-    out = apply_effinity_mtd_cpasale_backlog(dry_run=False)
+    out = apply_effinity_mtd_cpasale_backlog(dry_run=dry_run)
     if out.get("ok"):
         logger.info(
             "Effinity daily sales postbacks done: window=%s sales=%s eligible=%s sent_ok=%s sent_fail=%s",
@@ -36,21 +42,23 @@ def _run_once() -> None:
             out.get("postbacks_ok"),
             out.get("postbacks_fail"),
         )
-        try:
-            from integrations.daily_postbacks_run_history import record_last_run
+        if not dry_run:
+            try:
+                from integrations.daily_postbacks_run_history import record_last_run
 
-            record_last_run(
-                "effinity",
-                report_date,
-                dry_run=False,
-                ok=True,
-                summary=out,
-                batch_exit_code=0,
-            )
-        except Exception:
-            logger.exception("Effinity sales scheduler: could not write last-run history")
+                record_last_run(
+                    "effinity",
+                    report_date,
+                    dry_run=False,
+                    ok=True,
+                    summary=out,
+                    batch_exit_code=0,
+                )
+            except Exception:
+                logger.exception("Effinity sales scheduler: could not write last-run history")
     else:
         logger.error("Effinity daily sales postbacks failed: %s", out.get("error", out))
+    return out
 
 
 def _loop() -> None:
@@ -69,7 +77,7 @@ def _loop() -> None:
                 EFFINITY_SALES_SCHEDULER_TZ,
             )
             time.sleep(delay)
-            _run_once()
+            run_effinity_daily_postbacks()
         except Exception:
             logger.exception("Effinity sales scheduler run failed")
             time.sleep(60)
@@ -78,6 +86,7 @@ def _loop() -> None:
 def start_effinity_sales_scheduler() -> None:
     global _started
     from config import (
+        AUTOSERVER_SCHEDULER_ENABLED,
         EFFINITY_API_KEY,
         EFFINITY_SALES_SCHEDULER_ENABLED,
         EFFINITY_SALES_SCHEDULER_HOUR_LOCAL,
@@ -88,6 +97,11 @@ def start_effinity_sales_scheduler() -> None:
         return
     if not EFFINITY_SALES_SCHEDULER_ENABLED:
         logger.info("Effinity sales scheduler disabled (EFFINITY_SALES_SCHEDULER_ENABLED=0)")
+        return
+    if AUTOSERVER_SCHEDULER_ENABLED:
+        logger.info(
+            "Effinity daily postbacks use APScheduler cron (AutoServer scheduler); thread loop skipped"
+        )
         return
     if os.getenv("FLASK_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") == "false":
         return
