@@ -194,6 +194,7 @@
       <p class="muted" style="margin:4px 0 0;font-size:13px;">
         Lifetime + yesterday + per-geo + weekly WoW (garbage vs effective spend) ·
         writes <code>SKbuyingEfficiencyCampaigns</code> &amp; <code>SKbuyingEfficiencySummary</code> ·
+        full run ~15–25 min ·
         <span id="sk-audit-meta">Loading…</span>
       </p>
     </div>
@@ -264,7 +265,7 @@
     var running = data.status === 'running' || data.status === 'building' || data.refresh_running;
     if (runBtn) runBtn.disabled = !!running;
     if (running) {
-      if (!pollTimer) pollTimer = setInterval(function() { load(false); }, 8000);
+      if (!pollTimer) pollTimer = setInterval(function() { load(false); }, 5000);
     } else if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -278,13 +279,22 @@
     if (runBtn && trigger) runBtn.disabled = true;
     if (metaEl && trigger) metaEl.textContent = 'Starting audit…';
     fetch(url, opts)
-      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        if (!r.ok) {
+          return r.json().catch(function() { return { error: 'HTTP ' + r.status }; })
+            .then(function(body) {
+              throw new Error((body && body.error) ? body.error : ('HTTP ' + r.status));
+            });
+        }
+        return r.json();
+      })
       .then(render)
       .catch(function(e) {
         if (errEl) {
           errEl.style.display = 'block';
           errEl.textContent = 'Failed: ' + (e && e.message ? e.message : String(e));
         }
+        if (runBtn) runBtn.disabled = false;
       });
   }
 

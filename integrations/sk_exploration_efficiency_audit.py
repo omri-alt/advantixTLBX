@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -77,6 +79,9 @@ HEADERS_SUMMARY = [
 
 _ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = _ROOT / "runtime" / "sk_exploration_efficiency_audit.json"
+LOCK_PATH = STATE_PATH.with_suffix(".lock")
+_AUDIT_LOG_PATH = STATE_PATH.parent / "sk_exploration_efficiency_audit.log"
+_AUDIT_SCRIPT = _ROOT / "scripts" / "sk_exploration_efficiency_audit.py"
 
 _HTTP_TIMEOUT = max(30, int((os.getenv("SK_EFFICIENCY_AUDIT_TIMEOUT") or "45").strip() or "45"))
 _MAX_WORKERS = max(1, int((os.getenv("SK_AUDIT_WORKERS") or "6").strip() or "6"))
@@ -86,6 +91,62 @@ _WEEKLY_LOOKBACK = max(
 
 _REFRESH_LOCK = threading.Lock()
 _REFRESH_RUNNING = False
+_AUDIT_PROC: Optional[subprocess.Popen] = None
+_STALE_RUNNING_HOURS = max(
+    1, int((os.getenv("SK_EFFICIENCY_AUDIT_STALE_HOURS") or "3").strip() or "3")
+)
+
+
+def _release_audit_lock() -> None:
+    try:
+        LOCK_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _try_acquire_audit_lock() -> bool:
+    """Cross-process mutex so Gunicorn workers do not spawn duplicate audits."""
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(LOCK_PATH), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        try:
+            os.write(fd, f"{os.getpid()}\n".encode())
+        finally:
+            os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+
+
+def _parse_utc_iso(raw: str) -> Optional[datetime]:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s).astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _is_stale_running(state: dict) -> bool:
+    if (state.get("status") or "").strip().lower() != "running":
+        return False
+    started = _parse_utc_iso(str(state.get("started_at") or ""))
+    if started is None:
+        return True
+    return datetime.now(timezone.utc) - started > timedelta(hours=_STALE_RUNNING_HOURS)
+
+
+def _subprocess_audit_running() -> bool:
+    global _AUDIT_PROC
+    proc = _AUDIT_PROC
+    if proc is not None and proc.poll() is None:
+        return True
+    if proc is not None and proc.poll() is not None:
+        _AUDIT_PROC = None
+    return False
 
 
 def _utc_now() -> str:
@@ -429,6 +490,21 @@ def ensure_audit_worksheets(spreadsheet_id: str) -> None:
 
 def run_efficiency_audit() -> Dict[str, Any]:
     """Full audit; writes both SK tools tabs. Raises on fatal error."""
+    if not _try_acquire_audit_lock():
+        state = load_state()
+        if not _is_stale_running(state):
+            raise RuntimeError("Buying efficiency audit is already running")
+        _release_audit_lock()
+        if not _try_acquire_audit_lock():
+            raise RuntimeError("Could not acquire audit lock")
+
+    try:
+        return _run_efficiency_audit_body()
+    finally:
+        _release_audit_lock()
+
+
+def _run_efficiency_audit_body() -> Dict[str, Any]:
     api_key = (SOURCEKNOWLEDGE_API_KEY or "").strip()
     tools_id = (SK_TOOLS_SPREADSHEET_ID or "").strip()
     if not api_key:
@@ -610,14 +686,40 @@ def run_efficiency_audit() -> Dict[str, Any]:
 
 
 def refresh_running() -> bool:
+    state = load_state()
+    if (state.get("status") or "").strip().lower() == "running" and not _is_stale_running(state):
+        return True
     with _REFRESH_LOCK:
-        return _REFRESH_RUNNING
+        return _subprocess_audit_running() or _REFRESH_RUNNING
+
+
+def _spawn_audit_subprocess() -> bool:
+    """Start ``scripts/sk_exploration_efficiency_audit.py`` (lock acquired inside child)."""
+    global _AUDIT_PROC
+    if not _AUDIT_SCRIPT.is_file():
+        raise RuntimeError(f"Audit script missing: {_AUDIT_SCRIPT}")
+
+    _AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    log_f = open(_AUDIT_LOG_PATH, "a", encoding="utf-8")
+    try:
+        _AUDIT_PROC = subprocess.Popen(
+            [sys.executable, str(_AUDIT_SCRIPT)],
+            cwd=str(_ROOT),
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            env=os.environ.copy(),
+        )
+    except Exception:
+        log_f.close()
+        raise
+    else:
+        log_f.close()
+    return True
 
 
 def _run_refresh() -> None:
     global _REFRESH_RUNNING
     try:
-        _write_state({"status": "running", "progress": "starting", "started_at": _utc_now(), "error": None})
         run_efficiency_audit()
     except Exception as e:
         logger.exception("SK efficiency audit failed")
@@ -635,7 +737,41 @@ def _run_refresh() -> None:
 
 
 def queue_refresh() -> bool:
+    """Queue a full audit (subprocess when possible). Returns False if already running."""
     global _REFRESH_RUNNING
+    state = load_state()
+    if (state.get("status") or "").strip().lower() == "running":
+        if _is_stale_running(state):
+            _write_state(
+                {
+                    "status": "error",
+                    "error": "Previous audit run timed out (stale running state)",
+                    "finished_at_utc": _utc_now(),
+                    "progress": "failed",
+                }
+            )
+            _release_audit_lock()
+        else:
+            return False
+
+    with _REFRESH_LOCK:
+        if _subprocess_audit_running() or _REFRESH_RUNNING:
+            return False
+
+    try:
+        if _spawn_audit_subprocess():
+            _write_state(
+                {
+                    "status": "running",
+                    "progress": "starting",
+                    "started_at": _utc_now(),
+                    "error": None,
+                }
+            )
+            return True
+    except Exception as e:
+        logger.warning("Audit subprocess spawn failed (%s); falling back to in-process thread", e)
+
     with _REFRESH_LOCK:
         if _REFRESH_RUNNING:
             return False
@@ -649,17 +785,20 @@ def payload_for_api(*, force_refresh: bool = False) -> Dict[str, Any]:
     state = load_state()
     if force_refresh:
         started = queue_refresh()
-        if state.get("status") not in ("ready", "running"):
+        state = load_state()
+        if started and state.get("status") not in ("ready", "running"):
             return {
                 "status": "building",
                 "refresh_running": True,
-                "message": "Buying efficiency audit started…",
+                "message": "Buying efficiency audit started (typically 15–25 min)…",
             }
         out = dict(state)
         out["refresh_running"] = refresh_running() or started
-        out["cached"] = state.get("status") == "ready"
-        if started and state.get("status") != "ready":
-            out["status"] = "building"
+        out["cached"] = state.get("status") == "ready" and not started
+        if started or out["refresh_running"]:
+            out["status"] = "running" if state.get("status") == "running" else "building"
+        if started and not out.get("message"):
+            out["message"] = "Buying efficiency audit started (typically 15–25 min)…"
         return out
 
     if state.get("status") == "running" or refresh_running():
