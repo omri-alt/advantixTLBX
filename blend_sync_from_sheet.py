@@ -913,6 +913,150 @@ def load_potential_monetized_offer_rows_by_feed(service) -> Tuple[Dict[str, List
     return out, failed
 
 
+def load_monetized_potential_keys_by_feed(
+    service,
+) -> Tuple[Dict[str, Set[Tuple[str, str]]], Set[str]]:
+    """
+    Monetized potential rows keyed by ``(geo, merchantId)`` per feed tag.
+
+    Used to drop Blend sheet rows whose ``feed`` column does not match the
+    merchant's monetized row on the corresponding potential tab.
+    """
+    out: Dict[str, Set[Tuple[str, str]]] = {k: set() for k in POTENTIAL_TAB_BY_FEED}
+    failed: Set[str] = set()
+
+    for feed_tag, title in POTENTIAL_TAB_BY_FEED.items():
+        quoted = title.replace("'", "''")
+        try:
+            vals = (
+                service.values()
+                .get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A:Z")
+                .execute()
+                .get("values")
+                or []
+            )
+        except Exception as e:
+            print(
+                f"Warning: could not read potential sheet {title!r} for {feed_tag}: {e}. "
+                f"Skipping Blend sheet orphan prune for this feed."
+            )
+            failed.add(feed_tag)
+            continue
+
+        if len(vals) < 2:
+            continue
+
+        header = [str(c or "").strip().lower() for c in vals[0]]
+
+        def col(name: str) -> int:
+            try:
+                return header.index(name)
+            except ValueError:
+                return -1
+
+        i_mid = col("merchantid")
+        i_geo = col("geo_origin")
+        i_mon = col("kelkoo_monetization")
+        if min(i_mid, i_geo, i_mon) < 0:
+            print(
+                f"Warning: potential sheet {title!r} missing required columns "
+                f"(merchantId, geo_origin, kelkoo_monetization). Skipping orphan prune for {feed_tag}."
+            )
+            failed.add(feed_tag)
+            continue
+
+        for row in vals[1:]:
+            monet = str(row[i_mon] if i_mon < len(row) else "").strip().lower()
+            if not monet.startswith("monetized"):
+                continue
+            geo = _normalize_geo(str(row[i_geo] if i_geo < len(row) else ""))
+            mid = str(row[i_mid] if i_mid < len(row) else "").strip()
+            if len(geo) == 2 and mid:
+                out[feed_tag].add((geo, mid))
+
+    return out, failed
+
+
+def prune_blend_sheet_orphans_from_potential(
+    service,
+    *,
+    only_geo: Optional[str] = None,
+    dry_run: bool = False,
+    only_auto_v: bool = False,
+) -> Dict[str, Any]:
+    """
+    Delete Blend rows whose ``(geo, merchantId, feed)`` is absent from the
+    monetized snapshot on the matching potential sheet (e.g. sixt.de on kelkoo1
+    when only potentialYadore lists that merchant).
+    """
+    keys_by_feed, failed = load_monetized_potential_keys_by_feed(service)
+    quoted = BLEND_SHEET_NAME.replace("'", "''")
+    result = service.values().get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A:Z").execute()
+    rows = result.get("values") or []
+    if len(rows) < 2:
+        return {"deleted": 0, "rows": [], "skipped_feeds": sorted(failed)}
+
+    header = [str(c).strip() for c in rows[0]]
+    idx = {name.strip().lower(): i for i, name in enumerate(header)}
+
+    def get_cell(row: list, name: str) -> str:
+        i = idx.get((name or "").strip().lower())
+        if i is None or i >= len(row):
+            return ""
+        return str(row[i] or "").strip()
+
+    to_delete: List[int] = []
+    removed: List[Dict[str, str]] = []
+    for row_i, row in enumerate(rows[1:], start=2):
+        geo = _normalize_geo(get_cell(row, "geo"))
+        if not geo:
+            continue
+        if only_geo and geo != only_geo:
+            continue
+        mid = get_cell(row, "merchantId")
+        feed_tag = get_cell(row, "feed").lower()
+        if not mid or not feed_tag:
+            continue
+        if feed_tag in failed:
+            continue
+        if only_auto_v and (get_cell(row, "auto") or "x").strip().lower() != "v":
+            continue
+        if (geo, mid) in keys_by_feed.get(feed_tag, set()):
+            continue
+        to_delete.append(row_i)
+        removed.append(
+            {
+                "row": str(row_i),
+                "brand": get_cell(row, "brandName"),
+                "geo": geo,
+                "feed": feed_tag,
+                "merchantId": mid,
+                "auto": get_cell(row, "auto"),
+                "clickCap": get_cell(row, "clickCap"),
+            }
+        )
+        mid_short = mid if len(mid) <= 20 else f"{mid[:16]}…"
+        msg = (
+            f"Blend sheet orphan: row {row_i} {get_cell(row, 'brandName')!r} "
+            f"geo={geo} feed={feed_tag} merchantId={mid_short} "
+            f"(not monetized on potential sheet for this feed)"
+        )
+        if dry_run:
+            print(f"[dry-run] would delete {msg}")
+        else:
+            print(f"Deleting {msg}")
+
+    if to_delete and not dry_run:
+        _delete_rows_from_blend_sheet(service, to_delete)
+
+    return {
+        "deleted": len(to_delete) if not dry_run else 0,
+        "would_delete": len(to_delete) if dry_run else 0,
+        "rows": removed,
+        "skipped_feeds": sorted(failed),
+    }
+
+
 def prune_unmonetized_from_keitaro(
     client: KeitaroClient,
     campaign_id: int,
@@ -1077,6 +1221,12 @@ def main() -> None:
         print(f"Blend prune: detached {n_pr} offer(s) from Keitaro flows.")
     if pre_prune.get("errors"):
         print(f"Blend prune: {len(pre_prune['errors'])} stream update error(s) (see logs above).")
+
+    orphan = prune_blend_sheet_orphans_from_potential(service, only_geo=only_geo, dry_run=dry_run)
+    n_orphan = orphan.get("would_delete") if dry_run else orphan.get("deleted")
+    if n_orphan:
+        label = "would delete" if dry_run else "deleted"
+        print(f"Blend sheet orphan prune: {label} {n_orphan} row(s) not on matching potential sheet.")
 
     deleted = _filter_and_delete_non_monetized_auto_rows(service, only_geo=only_geo)
     if deleted:
