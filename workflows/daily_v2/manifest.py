@@ -27,6 +27,18 @@ def _skip_keitaro(ctx: RunContext) -> bool:
     return bool(ctx.pa.get("skip_keitaro"))
 
 
+def _skip_nipuhim_v2(ctx: RunContext) -> bool:
+    if _skip_keitaro(ctx):
+        return True
+    if ctx.pa.get("skip_nipuhim_v2"):
+        return True
+    if ctx.pa.get("nipuhim_v2"):
+        return False
+    from config import NIPUHIM_BLEND_V2_ENABLED
+
+    return not bool(NIPUHIM_BLEND_V2_ENABLED)
+
+
 def _skip_late_sales(ctx: RunContext) -> bool:
     return bool(ctx.pa.get("skip_late_sales"))
 
@@ -61,9 +73,16 @@ STAGES: tuple[StageDef, ...] = (
     StageDef("combined_offers", "5 - Combined offers tab", ("pla_offers",)),
     StageDef(
         "keitaro_sync",
-        "6 - Keitaro sync",
+        "6 - Keitaro sync (legacy HrQBXp)",
         ("combined_offers",),
         skip_if=_skip_keitaro,
+        fatal=True,
+    ),
+    StageDef(
+        "keitaro_sync_nipuhim_v2",
+        "6b - Nipuhim v2 sync (NIPUHIM-feed*)",
+        ("keitaro_sync",),
+        skip_if=_skip_nipuhim_v2,
         fatal=True,
     ),
     StageDef(

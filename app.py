@@ -476,14 +476,18 @@ def ui_require_auth():
 
 WORKFLOWS: Dict[str, Dict[str, Any]] = {
     "daily": {
-        "title": "Nipuhim-Keitaro workflow",
+        "title": "Daily workflow (v2 staged)",
         "script": "run_daily_workflow_v2.py",
-        "description": "Full daily pipeline (v2 staged): feeds, reports, offers, Keitaro, Blend — one subprocess per stage.",
+        "description": (
+            "Full daily pipeline (v2 staged): feeds, reports, offers, legacy Keitaro (HrQBXp), "
+            "Nipuhim v2 (NIPUHIM-feed*), Blend — one subprocess per stage."
+        ),
         "group": "daily-automations",
         "args_hint": "Optional args, e.g. --date 2026-03-08 --skip-keitaro (country/blend sync use controls below)",
         "args_templates": [
             {"label": "Default (no args)", "value": ""},
-            {"label": "Skip Keitaro", "value": "--skip-keitaro"},
+            {"label": "Skip Keitaro (legacy + v2)", "value": "--skip-keitaro"},
+            {"label": "Skip Nipuhim v2 only", "value": "--skip-nipuhim-v2"},
             {"label": "Feed1 traffic only", "value": "--feed1-traffic-only"},
             {"label": "Skip Blend sync to Keitaro", "value": "--skip-blend-sync"},
             {"label": "UK+FR offers rerun (merge geos)", "value": "--geo uk,fr"},
@@ -496,6 +500,37 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             },
             {"label": "Date + Skip Keitaro (example)", "value": "--date 2026-03-08 --skip-keitaro"},
             {"label": "Date only (example)", "value": "--date 2026-03-08"},
+        ],
+    },
+    "daily-legacy": {
+        "title": "Daily workflow (legacy single-process)",
+        "script": "run_daily_workflow.py",
+        "prepend_args": ["--legacy"],
+        "description": (
+            "Same Kelkoo daily steps as v2 staged, but one Python process (no per-stage subprocesses). "
+            "Legacy Keitaro (HrQBXp) + optional Nipuhim v2. Use if staged v2 has issues."
+        ),
+        "group": "daily-automations",
+        "args_hint": "Same flags as v2 staged (country / blend / Nipuhim v2 use controls below)",
+        "args_templates": [
+            {"label": "Default (no args)", "value": ""},
+            {"label": "Skip Keitaro (legacy + v2)", "value": "--skip-keitaro"},
+            {"label": "Skip Nipuhim v2 only", "value": "--skip-nipuhim-v2"},
+            {"label": "Feed1 traffic only", "value": "--feed1-traffic-only"},
+            {"label": "Offers + Keitaro only (fast)", "value": "--offers-and-keitaro-only --geo uk"},
+            {"label": "Date only (example)", "value": "--date 2026-03-08"},
+        ],
+    },
+    "keitaro-sync-v2": {
+        "title": "Nipuhim v2 Keitaro sync",
+        "script": "run_keitaro_sync_v2.py",
+        "description": "Sync offers sheets into NIPUHIM-feed* hub children only (device flows). Legacy HrQBXp unchanged.",
+        "group": "daily-automations",
+        "args_hint": "Optional: --date YYYY-MM-DD --feed1-traffic-only",
+        "args_templates": [
+            {"label": "Default (today)", "value": ""},
+            {"label": "Date only (example)", "value": "--date 2026-06-25"},
+            {"label": "Feed1 only", "value": "--feed1-traffic-only"},
         ],
     },
     "keitaro-sync": {
@@ -631,11 +666,19 @@ def _pid_is_running(pid: Any) -> bool:
         return False
 
 
-def _run_workflow(workflow_key: str, extra_args: str = "") -> Dict[str, Any]:
+def _workflow_command(workflow_key: str, extra_args: str = "") -> list[str]:
     wf = WORKFLOWS[workflow_key]
     script = ROOT_DIR / wf["script"]
     args = shlex.split(extra_args.strip(), posix=False) if extra_args.strip() else []
-    cmd = [sys.executable, str(script)] + args
+    prepend = list(wf.get("prepend_args") or [])
+    return [sys.executable, str(script)] + prepend + args
+
+
+def _run_workflow(workflow_key: str, extra_args: str = "") -> Dict[str, Any]:
+    wf = WORKFLOWS[workflow_key]
+    args = shlex.split(extra_args.strip(), posix=False) if extra_args.strip() else []
+    prepend = list(wf.get("prepend_args") or [])
+    cmd = _workflow_command(workflow_key, extra_args)
 
     started = time.time()
     started_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -659,7 +702,7 @@ def _run_workflow(workflow_key: str, extra_args: str = "") -> Dict[str, Any]:
         "finished_at_utc": finished_iso,
         "duration_seconds": round(finished - started, 2),
         "command": cmd,
-        "args": args,
+        "args": prepend + args,
         "log": output[-20000:],  # keep last ~20k chars
     }
     _save_last_run(workflow_key, result)
@@ -672,9 +715,9 @@ def _run_workflow_in_background(workflow_key: str, extra_args: str = "") -> Dict
     Prevents gateway/proxy timeouts for long workflows (daily/blend/etc.).
     """
     wf = WORKFLOWS[workflow_key]
-    script = ROOT_DIR / wf["script"]
     args = shlex.split(extra_args.strip(), posix=False) if extra_args.strip() else []
-    cmd = [sys.executable, str(script)] + args
+    prepend = list(wf.get("prepend_args") or [])
+    cmd = _workflow_command(workflow_key, extra_args)
 
     with _WORKFLOW_THREADS_LOCK:
         last = _load_last_run(workflow_key)
@@ -730,7 +773,7 @@ def _run_workflow_in_background(workflow_key: str, extra_args: str = "") -> Dict
             "finished_at_utc": "",
             "duration_seconds": 0,
             "command": cmd,
-            "args": args,
+            "args": prepend + args,
             "pid": proc.pid,
             "log": "Workflow started in background. Refresh to see final logs.",
         }
@@ -2166,7 +2209,7 @@ def ui_workflow(workflow_key: str):
             if dry_on:
                 parts.append("--dry-run")
             extra_args = " ".join(parts + ([extra_args] if extra_args else [])).strip()
-        if workflow_key == "daily":
+        if workflow_key in ("daily", "daily-legacy"):
             dg = (request.form.get("daily_geo") or "").strip()
             # Remove a manually-typed --geo; the dedicated control wins when set.
             extra_args = re.sub(
@@ -2185,6 +2228,15 @@ def ui_workflow(workflow_key: str):
             extra_args = " ".join(extra_args.split())
             if blend_sync_mode == "off":
                 extra_args = f"--skip-blend-sync {extra_args}".strip()
+
+            nipuhim_v2_mode = (request.form.get("daily_nipuhim_v2") or "on").strip().lower()
+            extra_args = re.sub(r"--skip-nipuhim-v2\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--nipuhim-v2\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = " ".join(extra_args.split())
+            if nipuhim_v2_mode == "off":
+                extra_args = f"--skip-nipuhim-v2 {extra_args}".strip()
+            elif nipuhim_v2_mode == "force":
+                extra_args = f"--nipuhim-v2 {extra_args}".strip()
 
             # Normalize merchant override flags; dropdown mode controls become source of truth.
             extra_args = re.sub(r"--merchant-override\s+\S+", "", extra_args, flags=re.IGNORECASE)
@@ -2524,7 +2576,7 @@ def assistance_get_campaigns():
     offset = request.args.get("offset", 0, type=int)
     limit = request.args.get("limit", 100, type=int)
     try:
-        campaigns = get_campaigns_data(offset=offset, limit=limit)
+        campaigns = get_campaigns_data(offset=offset, limit=limit, all_pages=False)
         return jsonify({"campaigns": campaigns, "count": len(campaigns)})
     except KeitaroClientError as e:
         return jsonify({

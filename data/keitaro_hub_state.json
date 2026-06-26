@@ -1,0 +1,170 @@
+{
+  "child_campaigns": {
+    "blend_adexa": {
+      "alias": "blendAdexa",
+      "feed_key": "adexa",
+      "hub_type": "blend",
+      "id": 100,
+      "name": "BLEND-adexa"
+    },
+    "blend_kelkoo1": {
+      "alias": "blendFeed1",
+      "feed_key": "kelkoo1",
+      "hub_type": "blend",
+      "id": 97,
+      "name": "BLEND-feed1"
+    },
+    "blend_kelkoo2": {
+      "alias": "blendFeed2",
+      "feed_key": "kelkoo2",
+      "hub_type": "blend",
+      "id": 98,
+      "name": "BLEND-feed2"
+    },
+    "blend_kelkoo5": {
+      "alias": "blendFeed5",
+      "feed_key": "kelkoo5",
+      "hub_type": "blend",
+      "id": 99,
+      "name": "BLEND-feed5"
+    },
+    "blend_shopnomix": {
+      "alias": "blendShopnomix",
+      "feed_key": "shopnomix",
+      "hub_type": "blend",
+      "id": 102,
+      "name": "BLEND-shopnomix"
+    },
+    "blend_yadore": {
+      "alias": "blendYadore",
+      "feed_key": "yadore",
+      "hub_type": "blend",
+      "id": 101,
+      "name": "BLEND-yadore"
+    },
+    "nipuhim_adexa": {
+      "alias": "nipuhAdexa",
+      "cloned_from": 1,
+      "feed_key": "adexa",
+      "hub_type": "nipuhim",
+      "id": 107,
+      "name": "NIPUHIM-adexa"
+    },
+    "nipuhim_kelkoo1": {
+      "alias": "nipuhFeed1",
+      "cloned_from": 1,
+      "feed_key": "kelkoo1",
+      "hub_type": "nipuhim",
+      "id": 104,
+      "name": "NIPUHIM-feed1"
+    },
+    "nipuhim_kelkoo2": {
+      "alias": "nipuhFeed2",
+      "cloned_from": 1,
+      "feed_key": "kelkoo2",
+      "hub_type": "nipuhim",
+      "id": 105,
+      "name": "NIPUHIM-feed2"
+    },
+    "nipuhim_kelkoo5": {
+      "alias": "nipuhFeed5",
+      "cloned_from": 1,
+      "feed_key": "kelkoo5",
+      "hub_type": "nipuhim",
+      "id": 106,
+      "name": "NIPUHIM-feed5"
+    },
+    "nipuhim_shopnomix": {
+      "alias": "nipuhShopnomix",
+      "cloned_from": 1,
+      "feed_key": "shopnomix",
+      "hub_type": "nipuhim",
+      "id": 109,
+      "name": "NIPUHIM-shopnomix"
+    },
+    "nipuhim_yadore": {
+      "alias": "nipuhYadore",
+      "cloned_from": 1,
+      "feed_key": "yadore",
+      "hub_type": "nipuhim",
+      "id": 108,
+      "name": "NIPUHIM-yadore"
+    }
+  },
+  "hub_campaign_id": 94,
+  "hub_offers": {
+    "hub_blend_adexa": {
+      "child_campaign_id": 100,
+      "feed_key": "adexa",
+      "hub_type": "blend",
+      "id": 7135
+    },
+    "hub_blend_kelkoo1": {
+      "child_campaign_id": 97,
+      "feed_key": "kelkoo1",
+      "hub_type": "blend",
+      "id": 7132
+    },
+    "hub_blend_kelkoo2": {
+      "child_campaign_id": 98,
+      "feed_key": "kelkoo2",
+      "hub_type": "blend",
+      "id": 7133
+    },
+    "hub_blend_kelkoo5": {
+      "child_campaign_id": 99,
+      "feed_key": "kelkoo5",
+      "hub_type": "blend",
+      "id": 7134
+    },
+    "hub_blend_shopnomix": {
+      "child_campaign_id": 102,
+      "feed_key": "shopnomix",
+      "hub_type": "blend",
+      "id": 7137
+    },
+    "hub_blend_yadore": {
+      "child_campaign_id": 101,
+      "feed_key": "yadore",
+      "hub_type": "blend",
+      "id": 7136
+    },
+    "hub_nipuhim_adexa": {
+      "child_campaign_id": 107,
+      "feed_key": "adexa",
+      "hub_type": "nipuhim",
+      "id": 7141
+    },
+    "hub_nipuhim_kelkoo1": {
+      "child_campaign_id": 104,
+      "feed_key": "kelkoo1",
+      "hub_type": "nipuhim",
+      "id": 7138
+    },
+    "hub_nipuhim_kelkoo2": {
+      "child_campaign_id": 105,
+      "feed_key": "kelkoo2",
+      "hub_type": "nipuhim",
+      "id": 7139
+    },
+    "hub_nipuhim_kelkoo5": {
+      "child_campaign_id": 106,
+      "feed_key": "kelkoo5",
+      "hub_type": "nipuhim",
+      "id": 7140
+    },
+    "hub_nipuhim_shopnomix": {
+      "child_campaign_id": 109,
+      "feed_key": "shopnomix",
+      "hub_type": "nipuhim",
+      "id": 7143
+    },
+    "hub_nipuhim_yadore": {
+      "child_campaign_id": 108,
+      "feed_key": "yadore",
+      "hub_type": "nipuhim",
+      "id": 7142
+    }
+  },
+  "updated_at": "2026-06-25T08:47:50+00:00"
+}

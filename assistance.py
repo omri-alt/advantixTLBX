@@ -22,14 +22,25 @@ logger = logging.getLogger(__name__)
 def get_campaigns_data(
     offset: int = 0,
     limit: int = 100,
+    *,
+    all_pages: Optional[bool] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Fetch campaigns from Keitaro (e.g. your test campaign created in the UI).
-    Returns list of campaign objects.
+    Fetch campaigns from Keitaro.
+
+    By default (offset=0, limit=100) returns **all** campaigns via pagination so
+    legacy aliases (e.g. HrQBXp) are not missed when the tracker has >100 rows.
+    Pass ``all_pages=False`` for a single API page (assistance API with offset/limit).
     """
     client = KeitaroClient(base_url=base_url, api_key=api_key)
+    if all_pages is None:
+        all_pages = offset == 0 and limit == 100
+    if all_pages:
+        campaigns = client.list_all_campaigns(page_size=max(limit, 100))
+        logger.info("Fetched %s campaigns (all pages)", len(campaigns))
+        return campaigns
     campaigns = client.get_campaigns(offset=offset, limit=limit)
     logger.info("Fetched %s campaigns (offset=%s, limit=%s)", len(campaigns), offset, limit)
     return campaigns

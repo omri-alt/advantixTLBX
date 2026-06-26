@@ -67,6 +67,22 @@ KEITARO_API_KEY = (os.getenv("KEITARO_API_KEY") or "").strip()
 KEITARO_CAMPAIGN_ID = (os.getenv("KEITARO_CAMPAIGN_ID") or "").strip()
 KEITARO_CAMPAIGN_ALIAS = (os.getenv("KEITARO_CAMPAIGN_ALIAS") or "HrQBXp").strip() or None
 
+# Hub campaign (Domain): bought traffic lands here, then routes to per-feed Blend/Nipuhim child campaigns.
+KEITARO_HUB_CAMPAIGN_ID = int((os.getenv("KEITARO_HUB_CAMPAIGN_ID") or "94").strip() or "94")
+KEITARO_HUB_BLEND_PCT = int((os.getenv("KEITARO_HUB_BLEND_PCT") or "50").strip() or "50")
+KEITARO_HUB_NIPUHIM_PCT = int((os.getenv("KEITARO_HUB_NIPUHIM_PCT") or "50").strip() or "50")
+KEITARO_HUB_STATE_PATH = (
+    os.getenv("KEITARO_HUB_STATE_PATH") or "data/keitaro_hub_state.json"
+).strip()
+# Nipuhim template for hub children: country flows + static product URLs (not KL-Main dynamic oadest).
+KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID = int(
+    (os.getenv("KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID") or "1").strip() or "1"
+)
+# When enabled, daily v2 (and legacy with flag) also sync offers into NIPUHIM-feed* hub children.
+NIPUHIM_BLEND_V2_ENABLED = str(
+    os.getenv("NIPUHIM_BLEND_V2_ENABLED") or "1"
+).strip().lower() in ("1", "true", "yes", "on")
+
 # Keitaro PHP admin bulk (POST /admin/?bulk): object names to try for removing offers.
 # - offers.update: postData {"id": N, "state": "deleted"} (soft-delete; matches UI response).
 # - others: postData {"ids": [N]} (e.g. offers.delete / clone-style).

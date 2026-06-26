@@ -260,6 +260,8 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
     skip_late_sales = "--skip-late-sales" in argv
     late_sales_apply = "--late-sales-apply" in argv
     workflow_dry_run = "--dry-run" in argv
+    nipuhim_v2 = "--nipuhim-v2" in argv
+    skip_nipuhim_v2 = "--skip-nipuhim-v2" in argv
     merchant_overrides, implied_geos_manual = _collect_merchant_overrides(argv)
     merchant_auto_overrides, implied_geos_auto = _collect_merchant_auto_overrides(argv)
     merchant_skip_replaces = _collect_merchant_skip_replaces(argv)
@@ -316,6 +318,8 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
         "skip_late_sales": skip_late_sales,
         "late_sales_apply": late_sales_apply,
         "workflow_dry_run": workflow_dry_run,
+        "nipuhim_v2": nipuhim_v2,
+        "skip_nipuhim_v2": skip_nipuhim_v2,
     }
 
 BLEND_DAILY_MAX_NEW_ROWS = BLEND_POPULATE_MAX_ADD
@@ -553,6 +557,76 @@ def create_combined_offers_sheet(service, date_str: str) -> bool:
     return True
 
 
+def nipuhim_blend_v2_enabled(argv: list[str] | None = None) -> bool:
+    """True when Nipuhim v2 (NIPUHIM-feed* device flows) should run after legacy Keitaro sync."""
+    from config import NIPUHIM_BLEND_V2_ENABLED
+
+    if argv:
+        if "--skip-nipuhim-v2" in argv:
+            return False
+        if "--nipuhim-v2" in argv:
+            return True
+    return bool(NIPUHIM_BLEND_V2_ENABLED)
+
+
+def run_update_offers_from_sheet_v2(
+    sheet_name: str,
+    account: int,
+    *,
+    max_offers: int | None = None,
+) -> bool:
+    """Sync sheet into per-feed NIPUHIM-feed* campaign (geo × device flows)."""
+    from integrations.nipuhim_v2_sync import sync_sheet_to_nipuhim_v2
+
+    cap = max_offers if max_offers is not None else KEITARO_SYNC_MAX_OFFERS_PER_GEO
+    return sync_sheet_to_nipuhim_v2(sheet_name, account, max_offers=cap) == 0
+
+
+def run_nipuhim_v2_keitaro_sync(
+    date_str: str,
+    *,
+    feed1_traffic_only: bool = False,
+    max_offers: int | None = None,
+) -> bool:
+    """
+    Sync today's offers sheets into NIPUHIM-feed1/2/5 child campaigns.
+    Does not modify legacy HrQBXp sync.
+    """
+    offers_1 = f"{date_str}_offers_1"
+    offers_2 = f"{date_str}_offers_2"
+    offers_5 = f"{date_str}_offers_5"
+    use_feed5 = nipuhim_feed5_enabled()
+    cap = max_offers if max_offers is not None else KEITARO_SYNC_MAX_OFFERS_PER_GEO
+
+    print(
+        f"6b. Nipuhim v2 sync -> NIPUHIM-feed* campaigns "
+        f"(up to {cap} offers per geo, device flows) ..."
+    )
+
+    if not run_update_offers_from_sheet_v2(offers_1, 1, max_offers=cap):
+        print("   Nipuhim v2 feed1 sync failed.")
+        return False
+    print()
+
+    if feed1_traffic_only:
+        print("   Nipuhim v2: feed1 only (skipping feed2/feed5).")
+        return True
+
+    if not run_update_offers_from_sheet_v2(offers_2, 2, max_offers=cap):
+        print("   Nipuhim v2 feed2 sync failed.")
+        return False
+    print()
+
+    if use_feed5:
+        if not run_update_offers_from_sheet_v2(offers_5, 5, max_offers=cap):
+            print("   Nipuhim v2 feed5 sync failed.")
+            return False
+        print()
+
+    print("   Nipuhim v2 sync complete.")
+    return True
+
+
 def run_update_offers_from_sheet(
     sheet_name: str,
     account: int,
@@ -758,6 +832,7 @@ def run_pla_offers_keitaro_blend_tail(
     run_daily_conversion_postbacks: bool,
     postback_report_date: str,
     skip_blend_prune: bool = False,
+    nipuhim_v2_enabled: bool = False,
 ) -> None:
     """Steps 3–6 (optional 4b) and optional 7: merchant selection → PLA → Keitaro → Blend."""
     offers_1 = f"{date_str}_offers_1"
@@ -994,6 +1069,13 @@ def run_pla_offers_keitaro_blend_tail(
 
     if feed1_traffic_only:
         print("   Feed2 traffic disabled (skipping feed2 sync).")
+        if nipuhim_v2_enabled:
+            print()
+            if not run_nipuhim_v2_keitaro_sync(
+                date_str,
+                feed1_traffic_only=True,
+            ):
+                sys.exit(1)
         print()
         if run_blend_steps:
             run_blend_daily_steps(
@@ -1020,6 +1102,14 @@ def run_pla_offers_keitaro_blend_tail(
             print("   No feed5 offers generated; skipping feed5 sync.")
         elif not run_update_offers_from_sheet(offers_5, 5):
             print("   Feed5 sync failed.")
+            sys.exit(1)
+
+    if nipuhim_v2_enabled:
+        print()
+        if not run_nipuhim_v2_keitaro_sync(
+            date_str,
+            feed1_traffic_only=feed1_traffic_only,
+        ):
             sys.exit(1)
 
     print()
@@ -1189,6 +1279,7 @@ def main() -> None:
             run_daily_conversion_postbacks=run_daily_conversion_postbacks,
             postback_report_date=postback_report_date,
             skip_blend_prune=skip_blend_prune,
+            nipuhim_v2_enabled=nipuhim_blend_v2_enabled(argv),
         )
         _run_post_pla_automation_tail(service, pa)
         return
@@ -1320,6 +1411,7 @@ def main() -> None:
         run_daily_conversion_postbacks=run_daily_conversion_postbacks,
         postback_report_date=postback_report_date,
         skip_blend_prune=skip_blend_prune,
+        nipuhim_v2_enabled=nipuhim_blend_v2_enabled(argv),
     )
     _run_post_pla_automation_tail(service, pa)
 

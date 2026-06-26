@@ -85,10 +85,19 @@
     <div style="height: 10px;"></div>
     <label><input type="checkbox" name="detach_dry_run" value="on"> Dry run (no Keitaro writes)</label>
     {% endif %}
-    {% if workflow_key == 'daily' %}
+    {% if workflow_key in ('daily', 'daily-legacy') %}
     <div style="height: 12px;"></div>
     <label for="daily_geo">Country rerun (optional)</label><br>
     <input id="daily_geo" name="daily_geo" type="text" placeholder="e.g. uk, fr, de" style="width: 220px;">
+
+    <div style="height: 12px;"></div>
+    <label for="daily_nipuhim_v2">Nipuhim v2 sync → NIPUHIM-feed* (step 6b)</label><br>
+    <select id="daily_nipuhim_v2" name="daily_nipuhim_v2" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+      <option value="on" selected>On (default — populates hub children; legacy HrQBXp still synced in step 6)</option>
+      <option value="off">Off (skip Nipuhim v2; HrQBXp only)</option>
+      <option value="force">Force on (even if NIPUHIM_BLEND_V2_ENABLED=0)</option>
+    </select>
+    <p class="muted" style="margin:6px 0 0;font-size:12px;">Traffic still goes to HrQBXp until cutover next week. Step 6b fills NIPUHIM-feed* for validation.</p>
 
     <div style="height: 12px;"></div>
     <label for="daily_blend_sync">Blend sheet → Keitaro sync (step 7b)</label><br>

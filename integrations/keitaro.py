@@ -237,6 +237,21 @@ class KeitaroClient:
         data = resp.json()
         return data if isinstance(data, list) else data.get("campaigns", data) or []
 
+    def list_all_campaigns(self, *, page_size: int = 100) -> list:
+        """Fetch every campaign (paginated GET until exhausted)."""
+        page_size = max(1, min(int(page_size), 250))
+        out: List[Any] = []
+        offset = 0
+        while True:
+            batch = self.get_campaigns(offset=offset, limit=page_size)
+            if not batch:
+                break
+            out.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+        return out
+
     def get_campaign(self, campaign_id: int) -> Dict[str, Any]:
         cid = int(campaign_id)
         url = f"{self._campaigns_url().rstrip('/')}/{cid}"
@@ -262,6 +277,48 @@ class KeitaroClient:
             raise KeitaroClientError(f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text)
         data = resp.json()
         return data if isinstance(data, dict) else {"raw": data}
+
+    def create_campaign(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        url = self._campaigns_url()
+        try:
+            resp = self._session.post(url, json=payload, timeout=30)
+        except requests.RequestException as e:
+            raise KeitaroClientError(str(e)) from e
+        if not resp.ok:
+            raise KeitaroClientError(f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text)
+        data = resp.json()
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            return data[0]
+        return {"raw": data}
+
+    def clone_campaign(self, campaign_id: int) -> Dict[str, Any]:
+        """POST ``campaigns/{id}/clone`` — returns the new campaign object."""
+        cid = int(campaign_id)
+        url = f"{self._campaigns_url().rstrip('/')}/{cid}/clone"
+        try:
+            resp = self._session.post(url, json={}, timeout=120)
+        except requests.RequestException as e:
+            raise KeitaroClientError(str(e)) from e
+        if not resp.ok:
+            raise KeitaroClientError(f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text)
+        data = resp.json()
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            return data[0]
+        return {"raw": data}
+
+    def delete_campaign(self, campaign_id: int) -> None:
+        cid = int(campaign_id)
+        url = f"{self._campaigns_url().rstrip('/')}/{cid}"
+        try:
+            resp = self._session.delete(url, timeout=30)
+        except requests.RequestException as e:
+            raise KeitaroClientError(str(e)) from e
+        if not resp.ok:
+            raise KeitaroClientError(f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text)
 
     def get_streams(self, campaign_id: int) -> list:
         cid = int(campaign_id)

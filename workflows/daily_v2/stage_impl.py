@@ -488,6 +488,25 @@ def stage_keitaro_sync(ctx: RunContext) -> int:
     return 0
 
 
+def stage_keitaro_sync_nipuhim_v2(ctx: RunContext) -> int:
+    rdw = _import_daily()
+    pa = ctx.pa
+    meta = ctx.read_json_artifact("offers_meta.json")
+    rows1 = int(meta.get("rows1") or 0)
+    rows2 = int(meta.get("rows2") or 0)
+    rows5 = int(meta.get("rows5") or 0)
+    if not rows1 and not rows2 and (not rdw.nipuhim_feed5_enabled() or not rows5):
+        print("6b. Nipuhim v2 sync ...")
+        print("   No offers generated for any feed today; skipping.")
+        return 0
+    if not rdw.run_nipuhim_v2_keitaro_sync(
+        ctx.date_str,
+        feed1_traffic_only=bool(pa.get("feed1_traffic_only")),
+    ):
+        return 1
+    return 0
+
+
 def stage_blend(ctx: RunContext) -> int:
     rdw = _import_daily()
     pa = ctx.pa
@@ -529,6 +548,7 @@ STAGE_HANDLERS: Dict[str, Callable[[RunContext], int]] = {
     "pla_offers": stage_pla_offers,
     "combined_offers": stage_combined_offers,
     "keitaro_sync": stage_keitaro_sync,
+    "keitaro_sync_nipuhim_v2": stage_keitaro_sync_nipuhim_v2,
     "blend": stage_blend,
     "late_sales": stage_late_sales,
     "conversion_postbacks": stage_conversion_postbacks,
