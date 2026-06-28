@@ -64,6 +64,8 @@ from integrations.autoserver.sk_optimizer import (
 
     _format_wl,
 
+    _normalize_exploration_sheet_row,
+
     _parse_wl,
 
     _reactivate_sources_sk,
@@ -87,6 +89,8 @@ logger = logging.getLogger(__name__)
 
 
 _SK_SUBID6_RE = re.compile(r"^(.+)-([A-Z]{2})-.+-SK$", re.IGNORECASE)
+
+_SK_SUBID6_FULL_RE = re.compile(r"^(.+)-([A-Z]{2})-(.+)-SK$", re.IGNORECASE)
 
 _SK_CAMPAIGN_PREFIX_RE = re.compile(r"(KLFIX|KLFLEX|KLTESTED|KLWL\d*)", re.IGNORECASE)
 
@@ -138,9 +142,28 @@ def _quality_wl_geo_label(geo: str) -> str:
 
 
 
+def _quality_wl_label_from_sub_id_6(sub_id_6: str, brand: str, geo: str, campaign_name: str) -> str:
+
+    """Sheet column A label, e.g. ``dyson-UK-YADWL`` from Keitaro ``sub_id_6``."""
+
+    m = _SK_SUBID6_FULL_RE.match((sub_id_6 or "").strip())
+
+    if m:
+
+        brand_key = _norm_brand_key(m.group(1))
+
+        geo_up = _quality_wl_geo_label(_norm_geo(m.group(2)))
+
+        prefix = m.group(3)
+
+        return f"{brand_key}-{geo_up}-{prefix}"
+
+    return _quality_wl_label(brand, geo, campaign_name)
+
+
 def _quality_wl_label(brand: str, geo: str, campaign_name: str) -> str:
 
-    """Sheet column A label, e.g. ``petitbeguin-FR-KLFLEX``."""
+    """Sheet column A label fallback when ``sub_id_6`` is unavailable."""
 
     brand_key = _norm_brand_key(brand)
 
@@ -434,6 +457,88 @@ def _append_subs_to_exploration_wl_row(row: Dict[str, Any], subs: List[str]) -> 
 
 
 
+def _backfill_exploration_wl_from_quality_tab(
+
+    rows: List[Dict[str, Any]],
+
+    *,
+
+    dry_run: bool = False,
+
+) -> Dict[str, Any]:
+
+    """
+
+    Ensure every ``QualityWL`` (CampaignID × SUBID) pair exists on ``SKtrackExploration.wl``.
+
+    Runs on the full tab each sync so exploration ``wl`` is repaired even when a prior
+
+  write was lost (e.g. hourly optimizer full-sheet rewrite racing this job).
+
+    """
+
+    try:
+
+        quality_rows = gd.read_sheet(TAB_QUALITY_WL)
+
+    except Exception as e:
+
+        logger.warning("SK WL sync: QualityWL read failed: %s", e)
+
+        return {"sources_appended": 0, "rows_updated": 0, "error": str(e)}
+
+
+
+    by_cid = _exploration_row_by_campaign_id(rows)
+
+    sources_appended = 0
+
+    rows_updated = 0
+
+    for qrow in quality_rows:
+
+        cid = str(qrow.get("CampaignID") or "").strip()
+
+        sub = str(qrow.get("SUBID") or "").strip()
+
+        if not cid or not sub:
+
+            continue
+
+        row = by_cid.get(cid)
+
+        if not row:
+
+            continue
+
+        added = _append_subs_to_exploration_wl_row(row, [sub])
+
+        if not added:
+
+            continue
+
+        sources_appended += len(added)
+
+        rows_updated += 1
+
+        if not dry_run:
+
+            row["lastAction"] = "wl-from-sales"
+
+            row["logs"] = _append_logs_cell(
+
+                row.get("logs", ""),
+
+                "WL sync backfill: appended " + ", ".join(added) + " (QualityWL)",
+
+            )
+
+    return {"sources_appended": sources_appended, "rows_updated": rows_updated}
+
+
+
+
+
 def _backfill_exploration_wl_from_quality_appends(
 
     rows: List[Dict[str, Any]],
@@ -446,13 +551,7 @@ def _backfill_exploration_wl_from_quality_appends(
 
 ) -> Dict[str, Any]:
 
-    """
-
-    Ensure ``SKtrackExploration.wl`` includes subs newly appended to QualityWL.
-
-    Fixes cases where QualityWL rows were added but exploration ``wl`` was not updated.
-
-    """
+    """Backfill exploration ``wl`` for QualityWL rows appended in the current run."""
 
     appended = quality_wl_result.get("details") or []
 
@@ -508,6 +607,88 @@ def _backfill_exploration_wl_from_quality_appends(
 
 
 
+def _exploration_wl_patch_by_campaign_id(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
+
+    """Fields to merge onto a fresh exploration read before writing."""
+
+    out: Dict[str, Dict[str, str]] = {}
+
+    for row in rows:
+
+        cid = str(row.get("campaignId") or row.get("campId") or "").strip()
+
+        if not cid:
+
+            continue
+
+        out[cid] = {
+
+            "wl": str(row.get("wl") or ""),
+
+            "logs": str(row.get("logs") or ""),
+
+            "lastAction": str(row.get("lastAction") or ""),
+
+        }
+
+    return out
+
+
+
+
+
+def _write_exploration_wl_patches(sheet_id: str, patches: Dict[str, Dict[str, str]]) -> None:
+
+    """
+
+    Merge ``wl`` / ``logs`` / ``lastAction`` onto a fresh sheet read, then rewrite.
+
+    Avoids clobbering concurrent optimizer updates to other columns and reduces races
+
+    where an optimizer write after our read would otherwise drop ``wl`` changes.
+
+    """
+
+    if not patches:
+
+        return
+
+    gd.append_missing_headers_row1(sheet_id, TAB_EXPLORATION, HEADERS_EXPLORATION)
+
+    fresh = gd.read_sheet_withID(sheet_id, TAB_EXPLORATION)
+
+    changed = False
+
+    for row in fresh:
+
+        cid = str(row.get("campaignId") or row.get("campId") or "").strip()
+
+        patch = patches.get(cid)
+
+        if not patch:
+
+            continue
+
+        for key, value in patch.items():
+
+            if str(row.get(key) or "") != str(value or ""):
+
+                row[key] = value
+
+                changed = True
+
+    if not changed:
+
+        return
+
+    normalized = [_normalize_exploration_sheet_row(r) for r in fresh]
+
+    gd.create_or_update_sheet_from_dicts_withId(sheet_id, TAB_EXPLORATION, normalized)
+
+
+
+
+
 def collect_sk_sale_sources_by_brand_geo(
 
     *,
@@ -528,6 +709,30 @@ def collect_sk_sale_sources_by_brand_geo(
 
     """
 
+    detailed = collect_sk_sale_sources_detailed(lookback_days=lookback_days, client=client)
+
+    return {key: [sub for sub, _ in pairs] for key, pairs in detailed.items()}
+
+
+
+
+
+def collect_sk_sale_sources_detailed(
+
+    *,
+
+    lookback_days: Optional[int] = None,
+
+    client: Optional[KeitaroClient] = None,
+
+) -> Dict[Tuple[str, str], List[Tuple[str, str]]]:
+
+    """
+
+    Map ``(norm_brand, geo)`` -> ordered ``(sub_id_5, sub_id_6)`` pairs (first-seen order).
+
+    """
+
     days = max(1, int(lookback_days or SK_EXPLORATION_WL_LOOKBACK_DAYS))
 
     c = client or KeitaroClient()
@@ -538,7 +743,7 @@ def collect_sk_sale_sources_by_brand_geo(
 
 
 
-    order: Dict[Tuple[str, str], Dict[str, int]] = defaultdict(dict)
+    order: Dict[Tuple[str, str], Dict[str, Tuple[int, str]]] = defaultdict(dict)
 
     seq = 0
 
@@ -564,7 +769,9 @@ def collect_sk_sale_sources_by_brand_geo(
 
                 sub5 = str(row.get("sub_id_5") or "").strip()
 
-                parsed = parse_sk_sub_id_6(str(row.get("sub_id_6") or ""))
+                sub6 = str(row.get("sub_id_6") or "").strip()
+
+                parsed = parse_sk_sub_id_6(sub6)
 
                 if not sub5 or not parsed:
 
@@ -574,7 +781,7 @@ def collect_sk_sale_sources_by_brand_geo(
 
                 if sub5 not in order[key]:
 
-                    order[key][sub5] = seq
+                    order[key][sub5] = (seq, sub6)
 
                     seq += 1
 
@@ -584,11 +791,17 @@ def collect_sk_sale_sources_by_brand_geo(
 
 
 
-    out: Dict[Tuple[str, str], List[str]] = {}
+    out: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
 
     for key, subs in order.items():
 
-        out[key] = [s for s, _ in sorted(subs.items(), key=lambda kv: kv[1])]
+        out[key] = [
+
+            (sub, sub6)
+
+            for sub, (_, sub6) in sorted(subs.items(), key=lambda kv: kv[1][0])
+
+        ]
 
     return out
 
@@ -770,7 +983,7 @@ def sync_exploration_wl_from_keitaro_sales(
 
 
 
-    sales_by_key = collect_sk_sale_sources_by_brand_geo(
+    sales_by_key = collect_sk_sale_sources_detailed(
 
         lookback_days=days,
 
@@ -798,7 +1011,7 @@ def sync_exploration_wl_from_keitaro_sales(
 
 
 
-    for key, sale_subs in sorted(sales_by_key.items()):
+    for key, sale_pairs in sorted(sales_by_key.items()):
 
         row = idx.get(key)
 
@@ -812,7 +1025,7 @@ def sync_exploration_wl_from_keitaro_sales(
 
                     "geo": key[1],
 
-                    "sale_sources": len(sale_subs),
+                    "sale_sources": len(sale_pairs),
 
                 }
 
@@ -826,7 +1039,7 @@ def sync_exploration_wl_from_keitaro_sales(
 
         wl_set = set(wl)
 
-        sale_subs_norm = [str(s).strip() for s in sale_subs if str(s).strip()]
+        sale_subs_norm = [str(s).strip() for s, _ in sale_pairs if str(s).strip()]
 
         to_add = [s for s in sale_subs_norm if s not in wl_set]
 
@@ -834,13 +1047,7 @@ def sync_exploration_wl_from_keitaro_sales(
 
         cname = str(row.get("campaignName") or row.get("campName") or "").strip()
 
-        wl_label = _quality_wl_label(str(row.get("brand") or ""), str(row.get("geo") or ""), cname)
-
-        for sub in sale_subs:
-
-            if sub and cid_raw:
-
-                quality_wl_candidates.append((cid_raw, sub, wl_label))
+        sub6_by_sub = {str(s).strip(): str(s6).strip() for s, s6 in sale_pairs if str(s).strip()}
 
         cid_int = 0
 
@@ -885,6 +1092,28 @@ def sync_exploration_wl_from_keitaro_sales(
         if not to_add and not to_reactivate:
 
             continue
+
+
+
+        for sub in sale_subs_norm:
+
+            if sub and cid_raw:
+
+                sub6 = sub6_by_sub.get(sub, "")
+
+                wl_label = _quality_wl_label_from_sub_id_6(
+
+                    sub6,
+
+                    str(row.get("brand") or ""),
+
+                    str(row.get("geo") or ""),
+
+                    cname,
+
+                )
+
+                quality_wl_candidates.append((cid_raw, sub, wl_label))
 
 
 
@@ -1040,7 +1269,25 @@ def sync_exploration_wl_from_keitaro_sales(
 
 
 
-    backfill = _backfill_exploration_wl_from_quality_appends(rows, quality_wl_result, dry_run=dry_run)
+    backfill_new = _backfill_exploration_wl_from_quality_appends(rows, quality_wl_result, dry_run=dry_run)
+
+    backfill_tab = _backfill_exploration_wl_from_quality_tab(rows, dry_run=dry_run)
+
+    backfill = {
+
+        "new_rows": backfill_new,
+
+        "quality_tab": backfill_tab,
+
+        "sources_appended": int(backfill_new.get("sources_appended") or 0)
+
+        + int(backfill_tab.get("sources_appended") or 0),
+
+        "rows_updated": int(backfill_new.get("rows_updated") or 0)
+
+        + int(backfill_tab.get("rows_updated") or 0),
+
+    }
 
     if int(backfill.get("sources_appended") or 0) > 0:
 
@@ -1052,7 +1299,7 @@ def sync_exploration_wl_from_keitaro_sales(
 
     if changed and not dry_run:
 
-        gd.create_or_update_sheet_from_dicts_withId(sheet_id, TAB_EXPLORATION, rows)
+        _write_exploration_wl_patches(sheet_id, _exploration_wl_patch_by_campaign_id(rows))
 
 
 
@@ -1138,7 +1385,8 @@ def normalize_exploration_wl_format(*, dry_run: bool = False) -> Dict[str, Any]:
                 changed = True
 
     if changed and not dry_run:
-        gd.create_or_update_sheet_from_dicts_withId(sheet_id, TAB_EXPLORATION, rows)
+        normalized = [_normalize_exploration_sheet_row(r) for r in rows]
+        gd.create_or_update_sheet_from_dicts_withId(sheet_id, TAB_EXPLORATION, normalized)
 
     return {"dry_run": dry_run, "rows_fixed": fixed, "exploration_rows": len(rows)}
 
