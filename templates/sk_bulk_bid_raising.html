@@ -1,0 +1,38 @@
+{% extends "sk_console_base.html" %}
+{% from "macros/page_header.html" import tool_header %}
+{% block title %}SourceKnowledge · Bulk bid raising{% endblock %}
+{% block tool_body %}
+{{ tool_header("Bulk bid raising", "Raise campaign CPC from BulkBidRaising sheet; cap bid factors on boosted sources (bidFactor > 1).", "sk-console", "dry-run | apply") }}
+
+<div class="sk-inner-card">
+  <p class="muted" style="margin:0 0 12px;">
+    Input tab <code>BulkBidRaising</code> on the
+    {% if sk_tools_sheet_id %}
+    <a href="https://docs.google.com/spreadsheets/d/{{ sk_tools_sheet_id }}/edit" target="_blank" rel="noopener">SK tools workbook</a>
+    {% else %}
+    SK tools workbook
+    {% endif %}
+    — columns: <code>campaignId</code>, <code>newCampaignBid</code>, <code>maxBidPerSource</code>.
+  </p>
+  <form method="post" action="{{ url_for('ui_sk_bulk_bid_raising') }}">
+    <div style="margin:8px 0;">
+      <label for="tab">Sheet tab</label><br>
+      <input type="text" id="tab" name="tab" value="{{ request.form.get('tab', 'BulkBidRaising') }}" required>
+    </div>
+    <div style="margin:8px 0;">
+      <label for="mode">Mode</label><br>
+      <select id="mode" name="mode">
+        <option value="dry-run" {% if request.form.get('mode', 'dry-run') != 'apply' %}selected{% endif %}>Dry run (preview only)</option>
+        <option value="apply" {% if request.form.get('mode') == 'apply' %}selected{% endif %}>Apply (PUT campaign CPC + cap bid factors)</option>
+      </select>
+    </div>
+    <button type="submit">Run</button>
+  </form>
+  {% if run_result %}
+    <hr style="border-color:#374151;margin:16px 0;">
+    <div>Status: <strong>{{ run_result.status }}</strong> (exit {{ run_result.exit_code }})</div>
+    <div class="muted">tab={{ run_result.tab }}, mode={{ run_result.mode }}</div>
+    <pre class="log-pre">{{ run_result.log or "(No output)" }}</pre>
+  {% endif %}
+</div>
+{% endblock %}

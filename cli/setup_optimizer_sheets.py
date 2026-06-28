@@ -108,6 +108,13 @@ def main() -> None:
             print("SK tools workbook: ensured buying-efficiency audit tabs.")
         except Exception as e:
             print(f"SK tools efficiency audit tabs: {e}")
+        try:
+            from integrations.sk_bulk_bid_raising import ensure_bulk_bid_raising_sheet
+
+            ensure_bulk_bid_raising_sheet(tools_id)
+            print("SK tools workbook: ensured tab 'BulkBidRaising'.")
+        except Exception as e:
+            print(f"SK tools BulkBidRaising tab: {e}")
 
     print("Done.")
 

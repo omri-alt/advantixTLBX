@@ -1367,6 +1367,42 @@ def ui_sk_bulk_open():
     )
 
 
+@app.route("/sk/bulk-bid-raising", methods=["GET", "POST"])
+def ui_sk_bulk_bid_raising():
+    """Raise SK campaign bids from BulkBidRaising sheet; cap bid factors on boosted sources."""
+    run_result = None
+    if request.method == "POST":
+        tab = (request.form.get("tab") or "BulkBidRaising").strip()
+        mode = (request.form.get("mode") or "dry-run").strip().lower()
+        apply = mode == "apply"
+        script = ROOT_DIR / "sk_bulk_bid_raising.py"
+        args = [
+            sys.executable,
+            str(script),
+            "--tab",
+            tab,
+            "--apply" if apply else "--dry-run",
+        ]
+        proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
+        output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
+        run_result = {
+            "status": "success" if proc.returncode == 0 else "failed",
+            "exit_code": proc.returncode,
+            "log": output[-20000:],
+            "tab": tab,
+            "mode": "apply" if apply else "dry-run",
+        }
+        _cache_clear("sk:")
+
+    ctx = _sk_optimizer_sheet_link_context()
+    return render_template(
+        "sk_bulk_bid_raising.html",
+        active_page="bulk-bid-raising",
+        run_result=run_result,
+        **ctx,
+    )
+
+
 @app.route("/kelkoo/late-sales", methods=["GET", "POST"])
 def ui_kelkoo_late_sales():
     late_sales_result: dict[str, Any] | None = None

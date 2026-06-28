@@ -310,6 +310,10 @@
       <h3>Bulk opener</h3>
       <span class="tile-meta">Create campaigns from sheet tab · optional SKtrackExploration rows</span>
     </a>
+    <a class="tile" href="{{ url_for('ui_sk_bulk_bid_raising') }}">
+      <h3>Bulk bid raising</h3>
+      <span class="tile-meta">BulkBidRaising sheet → raise CPC · cap bidFactor &gt; 1 sources</span>
+    </a>
     {% if sk_optimizer_sheet_id %}
     <a class="tile" href="https://docs.google.com/spreadsheets/d/{{ sk_optimizer_sheet_id }}/edit{% if sk_optimizer_expl_gid %}#gid={{ sk_optimizer_expl_gid }}{% endif %}" target="_blank" rel="noopener">
       <h3>SKtrackExploration</h3>
