@@ -63,3 +63,22 @@ def nipuhim_child_campaign_id_for_account(
     feed_prefix = ACCOUNT_TO_FEED_PREFIX[int(account)]
     cid = nipuhim_child_campaign_id(feed_key, state_path=state_path)
     return cid, feed_key, feed_prefix
+
+
+def blend_child_campaign_id(
+    feed_key: str,
+    *,
+    state: Optional[Dict[str, Any]] = None,
+    state_path: Optional[str] = None,
+) -> int:
+    """Return Keitaro campaign id for ``blend_{feed_key}`` hub child (e.g. BLEND-feed1)."""
+    state = state if state is not None else load_hub_state(state_path)
+    key = f"blend_{feed_key.strip().lower()}"
+    child = (state.get("child_campaigns") or {}).get(key) or {}
+    cid = child.get("id")
+    if cid is None:
+        raise ValueError(
+            f"No Blend child campaign for feed {feed_key!r} in hub state "
+            f"({KEITARO_HUB_STATE_PATH}). Run keitaro_hub_campaign_bootstrap.py --apply first."
+        )
+    return int(cid)

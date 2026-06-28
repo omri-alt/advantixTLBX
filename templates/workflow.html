@@ -100,6 +100,14 @@
     <p class="muted" style="margin:6px 0 0;font-size:12px;">Traffic still goes to HrQBXp until cutover next week. Step 6b fills NIPUHIM-feed* for validation.</p>
 
     <div style="height: 12px;"></div>
+    <label for="daily_blend_v2">Blend v2 sync → BLEND-feed* (step 7c)</label><br>
+    <select id="daily_blend_v2" name="daily_blend_v2" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+      <option value="on" selected>On (default — hub children; legacy Blend campaign still synced in 7b)</option>
+      <option value="off">Off (legacy Blend only)</option>
+      <option value="force">Force on (even if BLEND_HUB_V2_ENABLED=0)</option>
+    </select>
+
+    <div style="height: 12px;"></div>
     <label for="daily_blend_sync">Blend sheet → Keitaro sync (step 7b)</label><br>
     <select id="daily_blend_sync" name="daily_blend_sync" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
       <option value="on" selected>On (default)</option>

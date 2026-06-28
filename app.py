@@ -488,6 +488,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             {"label": "Default (no args)", "value": ""},
             {"label": "Skip Keitaro (legacy + v2)", "value": "--skip-keitaro"},
             {"label": "Skip Nipuhim v2 only", "value": "--skip-nipuhim-v2"},
+            {"label": "Skip Blend v2 only", "value": "--skip-blend-v2"},
             {"label": "Feed1 traffic only", "value": "--feed1-traffic-only"},
             {"label": "Skip Blend sync to Keitaro", "value": "--skip-blend-sync"},
             {"label": "UK+FR offers rerun (merge geos)", "value": "--geo uk,fr"},
@@ -516,6 +517,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             {"label": "Default (no args)", "value": ""},
             {"label": "Skip Keitaro (legacy + v2)", "value": "--skip-keitaro"},
             {"label": "Skip Nipuhim v2 only", "value": "--skip-nipuhim-v2"},
+            {"label": "Skip Blend v2 only", "value": "--skip-blend-v2"},
             {"label": "Feed1 traffic only", "value": "--feed1-traffic-only"},
             {"label": "Offers + Keitaro only (fast)", "value": "--offers-and-keitaro-only --geo uk"},
             {"label": "Date only (example)", "value": "--date 2026-03-08"},
@@ -2273,6 +2275,15 @@ def ui_workflow(workflow_key: str):
                 extra_args = f"--skip-nipuhim-v2 {extra_args}".strip()
             elif nipuhim_v2_mode == "force":
                 extra_args = f"--nipuhim-v2 {extra_args}".strip()
+
+            blend_v2_mode = (request.form.get("daily_blend_v2") or "on").strip().lower()
+            extra_args = re.sub(r"--skip-blend-v2\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--blend-v2\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = " ".join(extra_args.split())
+            if blend_v2_mode == "off":
+                extra_args = f"--skip-blend-v2 {extra_args}".strip()
+            elif blend_v2_mode == "force":
+                extra_args = f"--blend-v2 {extra_args}".strip()
 
             # Normalize merchant override flags; dropdown mode controls become source of truth.
             extra_args = re.sub(r"--merchant-override\s+\S+", "", extra_args, flags=re.IGNORECASE)

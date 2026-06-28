@@ -262,6 +262,8 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
     workflow_dry_run = "--dry-run" in argv
     nipuhim_v2 = "--nipuhim-v2" in argv
     skip_nipuhim_v2 = "--skip-nipuhim-v2" in argv
+    blend_v2 = "--blend-v2" in argv
+    skip_blend_v2 = "--skip-blend-v2" in argv
     merchant_overrides, implied_geos_manual = _collect_merchant_overrides(argv)
     merchant_auto_overrides, implied_geos_auto = _collect_merchant_auto_overrides(argv)
     merchant_skip_replaces = _collect_merchant_skip_replaces(argv)
@@ -320,6 +322,8 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
         "workflow_dry_run": workflow_dry_run,
         "nipuhim_v2": nipuhim_v2,
         "skip_nipuhim_v2": skip_nipuhim_v2,
+        "blend_v2": blend_v2,
+        "skip_blend_v2": skip_blend_v2,
     }
 
 BLEND_DAILY_MAX_NEW_ROWS = BLEND_POPULATE_MAX_ADD
@@ -408,6 +412,8 @@ def run_blend_daily_steps(
     skip_blend: bool,
     skip_blend_sync: bool,
     skip_blend_prune: bool = False,
+    blend_v2_enabled: bool = False,
+    only_geo: str | None = None,
 ) -> None:
     if skip_blend:
         return
@@ -445,6 +451,9 @@ def run_blend_daily_steps(
     if not run_blend_sync_from_sheet():
         print("   Blend Keitaro sync failed.")
         sys.exit(1)
+    if blend_v2_enabled:
+        if not run_blend_v2_keitaro_sync(only_geo=only_geo):
+            sys.exit(1)
     print()
 
 
@@ -567,6 +576,41 @@ def nipuhim_blend_v2_enabled(argv: list[str] | None = None) -> bool:
         if "--nipuhim-v2" in argv:
             return True
     return bool(NIPUHIM_BLEND_V2_ENABLED)
+
+
+def blend_hub_v2_enabled(argv: list[str] | None = None, pa: dict | None = None) -> bool:
+    """True when Blend v2 (BLEND-feed* hub children) should run after legacy blend_sync."""
+    from config import BLEND_HUB_V2_ENABLED
+
+    if argv:
+        if "--skip-blend-v2" in argv:
+            return False
+        if "--blend-v2" in argv:
+            return True
+    if pa:
+        if pa.get("skip_blend_v2"):
+            return False
+        if pa.get("blend_v2"):
+            return True
+    return bool(BLEND_HUB_V2_ENABLED)
+
+
+def run_blend_v2_keitaro_sync(
+    *,
+    only_geo: str | None = None,
+) -> bool:
+    """Sync Blend sheet rows into BLEND-feed* hub child campaigns."""
+    from integrations.blend_v2_sync import run_blend_v2_sync
+
+    print("7c. Blend v2 sync -> BLEND-feed* campaigns (device flows, clickCap weights) ...")
+    service = get_sheets_service()
+    ok = run_blend_v2_sync(service, only_geo=only_geo)
+    if ok:
+        print("   Blend v2 sync complete.")
+    else:
+        print("   Blend v2 sync had failures.")
+    print()
+    return ok
 
 
 def run_update_offers_from_sheet_v2(
@@ -833,6 +877,8 @@ def run_pla_offers_keitaro_blend_tail(
     postback_report_date: str,
     skip_blend_prune: bool = False,
     nipuhim_v2_enabled: bool = False,
+    blend_v2_enabled: bool = False,
+    blend_only_geo: str | None = None,
 ) -> None:
     """Steps 3–6 (optional 4b) and optional 7: merchant selection → PLA → Keitaro → Blend."""
     offers_1 = f"{date_str}_offers_1"
@@ -1035,6 +1081,8 @@ def run_pla_offers_keitaro_blend_tail(
                 skip_blend=skip_blend,
                 skip_blend_sync=skip_blend_sync,
                 skip_blend_prune=skip_blend_prune,
+                blend_v2_enabled=blend_v2_enabled,
+                only_geo=blend_only_geo,
             )
         if run_daily_conversion_postbacks:
             run_optional_daily_conversion_postbacks(postback_report_date)
@@ -1050,6 +1098,8 @@ def run_pla_offers_keitaro_blend_tail(
                 skip_blend=skip_blend,
                 skip_blend_sync=skip_blend_sync,
                 skip_blend_prune=skip_blend_prune,
+                blend_v2_enabled=blend_v2_enabled,
+                only_geo=blend_only_geo,
             )
         print("Done. No offers to sync.")
         if run_daily_conversion_postbacks:
@@ -1083,6 +1133,8 @@ def run_pla_offers_keitaro_blend_tail(
                 skip_blend=skip_blend,
                 skip_blend_sync=skip_blend_sync,
                 skip_blend_prune=skip_blend_prune,
+                blend_v2_enabled=blend_v2_enabled,
+                only_geo=blend_only_geo,
             )
         print("Done. Feed1 traffic only synced to Keitaro.")
         if run_daily_conversion_postbacks:
@@ -1119,6 +1171,8 @@ def run_pla_offers_keitaro_blend_tail(
             skip_blend=skip_blend,
             skip_blend_sync=skip_blend_sync,
             skip_blend_prune=skip_blend_prune,
+            blend_v2_enabled=blend_v2_enabled,
+            only_geo=blend_only_geo,
         )
     done_msg = "Done. Feeds synced to Keitaro (feed1+feed2+feed5)." if use_feed5 else "Done. Both feeds synced to Keitaro."
     print(done_msg)
@@ -1280,6 +1334,8 @@ def main() -> None:
             postback_report_date=postback_report_date,
             skip_blend_prune=skip_blend_prune,
             nipuhim_v2_enabled=nipuhim_blend_v2_enabled(argv),
+            blend_v2_enabled=blend_hub_v2_enabled(argv),
+            blend_only_geo=next(iter(partial_geos)) if len(partial_geos) == 1 else None,
         )
         _run_post_pla_automation_tail(service, pa)
         return
@@ -1412,6 +1468,8 @@ def main() -> None:
         postback_report_date=postback_report_date,
         skip_blend_prune=skip_blend_prune,
         nipuhim_v2_enabled=nipuhim_blend_v2_enabled(argv),
+        blend_v2_enabled=blend_hub_v2_enabled(argv),
+        blend_only_geo=next(iter(partial_geos)) if len(partial_geos) == 1 else None,
     )
     _run_post_pla_automation_tail(service, pa)
 

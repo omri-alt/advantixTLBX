@@ -21,9 +21,10 @@ from assistance import (
     find_campaign_by_alias_or_name,
     get_campaigns_data,
     parse_blend_stream_geo_channel,
-    set_flow_offers_weighted,
+    set_flow_offers_weighted_keep_zeros,
 )
 from config import (
+    KEITARO_HUB_ACTIVE_FEEDS,
     KEITARO_HUB_BLEND_PCT,
     KEITARO_HUB_CAMPAIGN_ID,
     KEITARO_HUB_NIPUHIM_PCT,
@@ -285,18 +286,39 @@ def ensure_child_campaigns(
     return state, logs
 
 
+def hub_active_feed_keys() -> frozenset[str]:
+    """Feed keys that receive non-zero hub traffic (from ``KEITARO_HUB_ACTIVE_FEEDS``)."""
+    active = frozenset(k for k in KEITARO_HUB_ACTIVE_FEEDS if k in HUB_FEED_KEYS)
+    if not active:
+        raise ValueError(
+            f"KEITARO_HUB_ACTIVE_FEEDS has no valid keys; expected subset of {HUB_FEED_KEYS}"
+        )
+    return active
+
+
+def hub_feed_weights() -> Dict[str, int]:
+    """Per-feed weight numerators; inactive feeds are 0 (still attached on hub at share 0)."""
+    active = hub_active_feed_keys()
+    return {fk: (DEFAULT_FEED_WEIGHTS[fk] if fk in active else 0) for fk in HUB_FEED_KEYS}
+
+
 def _hub_offer_weights() -> Dict[str, float]:
     type_weights = {
         "blend": max(0, int(KEITARO_HUB_BLEND_PCT)),
         "nipuhim": max(0, int(KEITARO_HUB_NIPUHIM_PCT)),
     }
     type_total = sum(type_weights.values()) or 100
-    feed_total = sum(DEFAULT_FEED_WEIGHTS.values()) or 100
+    feed_weights = hub_feed_weights()
+    feed_total = sum(feed_weights.values()) or 0
     out: Dict[str, float] = {}
     for hub_type in HUB_TYPES:
         type_frac = type_weights[hub_type] / type_total
         for feed_key in HUB_FEED_KEYS:
-            feed_frac = DEFAULT_FEED_WEIGHTS[feed_key] / feed_total
+            fw = feed_weights[feed_key]
+            if fw <= 0 or feed_total <= 0:
+                out[hub_offer_name(hub_type, feed_key)] = 0.0
+                continue
+            feed_frac = fw / feed_total
             out[hub_offer_name(hub_type, feed_key)] = type_frac * feed_frac * 100.0
     return out
 
@@ -491,24 +513,36 @@ def wire_hub_streams(
     offer_state: Dict[str, Any] = dict(state.get("hub_offers") or {})
     weights_by_name = _hub_offer_weights()
     offer_id_to_weight: Dict[int, float] = {}
+    zero_offer_ids: List[int] = []
     for offer_name, meta in offer_state.items():
         oid = meta.get("id")
         if oid is None:
             continue
-        offer_id_to_weight[int(oid)] = weights_by_name.get(offer_name, 1.0)
+        w = weights_by_name.get(offer_name, 0.0)
+        if w > 0:
+            offer_id_to_weight[int(oid)] = w
+        else:
+            zero_offer_ids.append(int(oid))
 
-    if dry_run and not offer_id_to_weight:
+    if dry_run and not offer_id_to_weight and not zero_offer_ids:
         streams = _hub_device_streams(client, hub_id)
         logs: List[str] = []
         logs.append(
-            f"hub streams: would attach 12 hub offers per geo stream "
+            f"hub streams: would attach {len(offer_id_to_weight)} weighted + "
+            f"{len(zero_offer_ids)} zero-share hub offers per geo stream "
             f"({len(streams)} streams on campaign {hub_id})"
         )
         state["hub_campaign_id"] = hub_id
+        state["active_feeds"] = sorted(hub_active_feed_keys())
         return state, logs
 
-    if not offer_id_to_weight:
+    if not offer_id_to_weight and not zero_offer_ids:
         raise ValueError("hub_offers missing — run ensure_hub_offers first")
+    if not offer_id_to_weight:
+        raise ValueError(
+            "No hub offers with positive weight — check KEITARO_HUB_ACTIVE_FEEDS "
+            f"(active: {sorted(hub_active_feed_keys())})"
+        )
 
     logs: List[str] = []
     streams = _hub_device_streams(client, hub_id)
@@ -523,18 +557,50 @@ def wire_hub_streams(
         old_count = len(stream.get("offers") or [])
         if dry_run:
             logs.append(
-                f"hub stream {sname} (id={sid}): would attach {len(offer_id_to_weight)} "
-                f"hub offers (replacing {old_count})"
+                f"hub stream {sname} (id={sid}): would attach {len(offer_id_to_weight)} weighted + "
+                f"{len(zero_offer_ids)} zero-share offers (replacing {old_count})"
             )
             continue
-        set_flow_offers_weighted(int(sid), offer_id_to_weight)
+        set_flow_offers_weighted_keep_zeros(
+            int(sid), offer_id_to_weight, zero_offer_ids=zero_offer_ids
+        )
         logs.append(
-            f"hub stream {sname} (id={sid}): attached {len(offer_id_to_weight)} hub offers "
-            f"(replaced {old_count})"
+            f"hub stream {sname} (id={sid}): attached {len(offer_id_to_weight)} weighted + "
+            f"{len(zero_offer_ids)} zero-share hub offers (replaced {old_count})"
         )
 
     state["hub_campaign_id"] = hub_id
+    state["active_feeds"] = sorted(hub_active_feed_keys())
     return state, logs
+
+
+def run_hub_rewire_weights(
+    *,
+    dry_run: bool = True,
+    hub_campaign_id: Optional[int] = None,
+    state_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Re-apply hub stream weights only (no child/offer creation)."""
+    client = KeitaroClient()
+    state = load_hub_state(state_path)
+    state["hub_campaign_id"] = int(
+        hub_campaign_id or state.get("hub_campaign_id") or KEITARO_HUB_CAMPAIGN_ID
+    )
+    state, logs = wire_hub_streams(
+        dry_run=dry_run,
+        client=client,
+        state=state,
+        hub_campaign_id=state["hub_campaign_id"],
+    )
+    if not dry_run:
+        save_hub_state(state, state_path)
+    return {
+        "dry_run": dry_run,
+        "hub_campaign_id": state["hub_campaign_id"],
+        "active_feeds": sorted(hub_active_feed_keys()),
+        "weights": _hub_offer_weights(),
+        "logs": logs,
+    }
 
 
 def run_hub_bootstrap(
@@ -580,13 +646,20 @@ def run_hub_bootstrap(
         "hub_campaign_id": state["hub_campaign_id"],
         "child_campaigns": state.get("child_campaigns") or {},
         "hub_offers": state.get("hub_offers") or {},
+        "active_feeds": sorted(hub_active_feed_keys()),
         "weights": _hub_offer_weights(),
         "logs": all_logs,
     }
 
 
 def format_weights_table(weights: Dict[str, float]) -> str:
-    lines = ["Hub offer weights (% of traffic):"]
+    active = sorted(hub_active_feed_keys())
+    lines = [
+        "Hub offer weights (% of traffic):",
+        f"  Active feeds: {', '.join(active)}",
+    ]
     for name in sorted(weights.keys()):
-        lines.append(f"  {name}: {weights[name]:.2f}%")
+        w = weights[name]
+        tag = "" if w > 0 else " (zero — inactive feed)"
+        lines.append(f"  {name}: {w:.2f}%{tag}")
     return "\n".join(lines)

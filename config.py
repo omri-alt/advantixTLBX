@@ -71,6 +71,15 @@ KEITARO_CAMPAIGN_ALIAS = (os.getenv("KEITARO_CAMPAIGN_ALIAS") or "HrQBXp").strip
 KEITARO_HUB_CAMPAIGN_ID = int((os.getenv("KEITARO_HUB_CAMPAIGN_ID") or "94").strip() or "94")
 KEITARO_HUB_BLEND_PCT = int((os.getenv("KEITARO_HUB_BLEND_PCT") or "50").strip() or "50")
 KEITARO_HUB_NIPUHIM_PCT = int((os.getenv("KEITARO_HUB_NIPUHIM_PCT") or "50").strip() or "50")
+# Comma list of feed keys that receive hub traffic (others stay attached at share 0).
+# Default: Kelkoo trio only until adexa/yadore/shopnomix are wired in daily sync.
+KEITARO_HUB_ACTIVE_FEEDS = tuple(
+    x.strip().lower()
+    for x in (
+        os.getenv("KEITARO_HUB_ACTIVE_FEEDS") or "kelkoo1,kelkoo2,kelkoo5"
+    ).split(",")
+    if x.strip()
+)
 KEITARO_HUB_STATE_PATH = (
     os.getenv("KEITARO_HUB_STATE_PATH") or "data/keitaro_hub_state.json"
 ).strip()
@@ -81,6 +90,10 @@ KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID = int(
 # When enabled, daily v2 (and legacy with flag) also sync offers into NIPUHIM-feed* hub children.
 NIPUHIM_BLEND_V2_ENABLED = str(
     os.getenv("NIPUHIM_BLEND_V2_ENABLED") or "1"
+).strip().lower() in ("1", "true", "yes", "on")
+# When enabled, blend_sync also populates BLEND-feed* hub children (legacy Blend campaign unchanged).
+BLEND_HUB_V2_ENABLED = str(
+    os.getenv("BLEND_HUB_V2_ENABLED") or "1"
 ).strip().lower() in ("1", "true", "yes", "on")
 
 # Keitaro PHP admin bulk (POST /admin/?bulk): object names to try for removing offers.

@@ -1,4 +1,9 @@
 {
+  "active_feeds": [
+    "kelkoo1",
+    "kelkoo2",
+    "kelkoo5"
+  ],
   "child_campaigns": {
     "blend_adexa": {
       "alias": "blendAdexa",
@@ -166,5 +171,5 @@
       "id": 7142
     }
   },
-  "updated_at": "2026-06-25T08:47:50+00:00"
+  "updated_at": "2026-06-28T10:36:42+00:00"
 }

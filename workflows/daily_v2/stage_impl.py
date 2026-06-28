@@ -510,11 +510,21 @@ def stage_keitaro_sync_nipuhim_v2(ctx: RunContext) -> int:
 def stage_blend(ctx: RunContext) -> int:
     rdw = _import_daily()
     pa = ctx.pa
+    only_geo = None
+    og = pa.get("only_geos")
+    if og and len(og) == 1:
+        only_geo = next(iter(og))
+    else:
+        pg = pa.get("partial_geos")
+        if pg and len(pg) == 1:
+            only_geo = next(iter(pg))
     rdw.run_blend_daily_steps(
         skip_keitaro=bool(pa.get("skip_keitaro")),
         skip_blend=False,
         skip_blend_sync=bool(pa.get("skip_blend_sync")),
         skip_blend_prune=bool(pa.get("skip_blend_prune")),
+        blend_v2_enabled=rdw.blend_hub_v2_enabled(pa=pa),
+        only_geo=only_geo,
     )
     return 0
 
