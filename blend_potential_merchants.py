@@ -110,6 +110,7 @@ def _potential_header_with_device() -> List[str]:
         "merchantId",
         "merchant",
         "domain",
+        "monUrl",
         "geo_origin",
         "leads",
         "sales",
@@ -293,6 +294,7 @@ def run_potential_adexa(
 ) -> None:
     from integrations.adexa import (
         AdexaClientError,
+        adexa_actionable_monetized,
         fetch_shopping_search_stats,
         get_merchants,
         infer_merchant_url_from_adexa_name,
@@ -323,12 +325,14 @@ def run_potential_adexa(
             agg[key]["url"] = stat_url
 
     url_by_geo_mid: Dict[Tuple[str, str], str] = {}
+    merchants_by_geo: Dict[str, List[Dict[str, Any]]] = {}
     geos_needed = sorted({k[0] for k in agg})
     for geo in geos_needed:
         try:
             merchants = get_merchants(geo)
         except AdexaClientError:
             merchants = []
+        merchants_by_geo[geo] = merchants
         for m in merchants:
             if not isinstance(m, dict):
                 continue
@@ -359,25 +363,37 @@ def run_potential_adexa(
             if domain:
                 inferred += 1
         tier = "Flex"
+        homepage = ""
         if not domain:
             monetization = "no_merchant_url"
         else:
             checked += 1
             url_norm = domain if domain.lower().startswith("http") else f"https://{domain.lstrip('/')}"
+            homepage = url_norm
             domain = url_norm
             try:
                 from integrations.adexa import normalize_adexa_golink_url
 
-                res = merchant_monetization_check(url_norm, geo, merchant_id=mid)
-                if res.get("found") and res.get("mode") == "smartlink":
-                    monetization = "monetized_adexa_smartlink"
-                    golink = str(res.get("smartlink_url") or "").strip()
-                    if golink:
-                        domain = normalize_adexa_golink_url(golink) or golink
-                elif res.get("found"):
-                    monetization = "monetized_adexa"
+                res = merchant_monetization_check(
+                    url_norm,
+                    geo,
+                    merchant_id=mid,
+                    merchants=merchants_by_geo.get(geo),
+                )
+                if adexa_actionable_monetized(res):
+                    mode = str(res.get("mode") or "")
+                    if mode in ("smartlink", "links+smartlink"):
+                        monetization = "monetized_adexa_smartlink"
+                        golink = str(res.get("smartlink_url") or "").strip()
+                        if golink:
+                            domain = normalize_adexa_golink_url(golink) or golink
+                    else:
+                        monetization = "monetized_adexa"
                 else:
-                    monetization = f"not_monetized_adexa:{res.get('note', '')}"
+                    note = str(res.get("note") or "not_monetized")
+                    if note == "smartlink_goffers_by_merchant_id":
+                        note = "unverified_synthetic_golink"
+                    monetization = f"not_monetized_adexa:{note}"
             except AdexaClientError as e:
                 monetization = f"not_monetized_adexa:{e}"
         is_monetized = monetization.startswith("monetized")
@@ -388,6 +404,7 @@ def run_potential_adexa(
                 mid,
                 name,
                 domain,
+                homepage,
                 geo,
                 str(leads),
                 str(sales),
@@ -399,8 +416,8 @@ def run_potential_adexa(
         )
 
     def sort_key(r: List[str]) -> Tuple[float, int, int]:
-        cr_num = float(r[6].replace("%", "")) if len(r) > 6 and str(r[6]).endswith("%") else 0.0
-        return (-cr_num, -int(r[5]), -int(r[4]))
+        cr_num = float(r[7].replace("%", "")) if len(r) > 7 and str(r[7]).endswith("%") else 0.0
+        return (-cr_num, -int(r[6]), -int(r[5]))
 
     rows_out.sort(key=sort_key)
     out = [header] + rows_out
@@ -534,6 +551,7 @@ def run_potential_yadore(
                 mid,
                 name,
                 domain,
+                domain,
                 geo,
                 str(leads),
                 str(sales),
@@ -545,8 +563,8 @@ def run_potential_yadore(
         )
 
     def sort_key_y(r: List[str]) -> Tuple[float, int, int]:
-        cr_num = float(r[6].replace("%", "")) if len(r) > 6 and str(r[6]).endswith("%") else 0.0
-        return (-cr_num, -int(r[5]), -int(r[4]))
+        cr_num = float(r[7].replace("%", "")) if len(r) > 7 and str(r[7]).endswith("%") else 0.0
+        return (-cr_num, -int(r[6]), -int(r[5]))
 
     rows_out.sort(key=sort_key_y)
     out = [header] + rows_out
@@ -682,6 +700,7 @@ def main() -> None:
                 mid,
                 merchant,
                 domain,
+                domain,
                 geo_origin,
                 str(leads),
                 str(sales),
@@ -694,8 +713,8 @@ def main() -> None:
 
     # Sort by CR desc, then sales desc, then leads desc
     def sort_key(r: List[str]):
-        cr_num = float(r[6].replace("%", "")) if r[6].endswith("%") else 0.0
-        return (-cr_num, -int(r[5]), -int(r[4]))
+        cr_num = float(r[7].replace("%", "")) if len(r) > 7 and r[7].endswith("%") else 0.0
+        return (-cr_num, -int(r[6]), -int(r[5]))
 
     rows_out.sort(key=sort_key)
     out = [header] + rows_out

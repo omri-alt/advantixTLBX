@@ -3,7 +3,7 @@
 Monetization checker (Kelkoo feed1/2/5, Yadore feed3, Adexa feed4, Shopnomix feed6) driven by Google Sheets.
 
 Spreadsheet: 1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0
-Input sheet: sourceToCheck (columns: url, geo)
+Input sheet: sourceToCheck (columns: url, geo; optional merchant_id / merchantId for Adexa)
 Output sheet: Matches
 
 For each (url, geo):
@@ -99,7 +99,7 @@ def ensure_sheet(service, title: str, header: List[str]) -> None:
     ).execute()
 
 
-def read_source_rows(service) -> List[Tuple[str, str]]:
+def read_source_rows(service) -> List[Tuple[str, str, str]]:
     quoted = INPUT_SHEET.replace("'", "''")
     result = service.values().get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A:Z").execute()
     rows = result.get("values") or []
@@ -108,25 +108,32 @@ def read_source_rows(service) -> List[Tuple[str, str]]:
     header = [str(c or "").strip().lower() for c in rows[0]]
     idx_url = header.index("url") if "url" in header else 0
     idx_geo = header.index("geo") if "geo" in header else 1
+    idx_mid = -1
+    for name in ("merchant_id", "merchantid", "adexa_merchant_id"):
+        if name in header:
+            idx_mid = header.index(name)
+            break
 
-    out: List[Tuple[str, str]] = []
+    out: List[Tuple[str, str, str]] = []
     seen = set()
     for row in rows[1:]:
         url = (row[idx_url] if idx_url < len(row) else "") or ""
         geo = (row[idx_geo] if idx_geo < len(row) else "") or ""
+        mid = (row[idx_mid] if idx_mid >= 0 and idx_mid < len(row) else "") or ""
         url = str(url).strip()
         geo = str(geo).strip().lower()[:2]
+        mid = str(mid).strip()
         if not url or not geo:
             continue
-        key = (url, geo)
+        key = (url, geo, mid)
         if key in seen:
             continue
         seen.add(key)
-        out.append(key)
+        out.append((url, geo, mid))
     return out
 
 
-def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
+def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]:
     """Run all feed checks for one row in parallel (same network time ≈ one slowest call)."""
     url = normalize_merchant_homepage_url(url) or (url or "").strip()
 
@@ -159,7 +166,10 @@ def _run_row_checks(url: str, geo: str) -> Dict[str, Any]:
 
     def _ax() -> Dict[str, Any]:
         try:
-            return adexa_merchant_check(url, geo)
+            kwargs: Dict[str, Any] = {}
+            if (merchant_id or "").strip():
+                kwargs["merchant_id"] = str(merchant_id).strip()
+            return adexa_merchant_check(url, geo, **kwargs)
         except AdexaClientError as e:
             return {"found": False, "note": str(e)[:200], "mode": "none"}
 
@@ -238,6 +248,7 @@ def main() -> None:
         "timestamp_utc",
         "url",
         "geo",
+        "merchant_id",
         "yadore_monetization",
         "yadore_nc_found",
         "yadore_c_found",
@@ -277,9 +288,9 @@ def main() -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     out_rows = [header]
     total = len(rows)
-    for idx, (url, geo) in enumerate(rows, start=1):
-        print(f"[{idx}/{total}] {geo} {url[:60]}...")
-        r = _run_row_checks(url, geo)
+    for idx, (url, geo, merchant_id) in enumerate(rows, start=1):
+        print(f"[{idx}/{total}] {geo} {url[:60]}..." + (f" mid={merchant_id}" if merchant_id else ""))
+        r = _run_row_checks(url, geo, merchant_id)
         k1 = r["k1"]
         k2 = r["k2"]
         k5 = r.get("k5") or {"found": False, "estimatedCpc": ""}
@@ -318,6 +329,7 @@ def main() -> None:
                 ts,
                 url,
                 geo,
+                merchant_id,
                 y_class,
                 str(y_nc_found),
                 str(y_c_found),

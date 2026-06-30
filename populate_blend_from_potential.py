@@ -144,7 +144,14 @@ def _column_a1(col_idx: int) -> str:
     return letters
 
 
-def _offer_url_from_potential_row(feed: str, monet: str, domain: str, geo: str) -> str:
+def _offer_url_from_potential_row(
+    feed: str,
+    monet: str,
+    domain: str,
+    geo: str,
+    *,
+    merchant_id: str = "",
+) -> str:
     offer_url = domain
     if feed == "adexa" and monet == "monetized_adexa_smartlink":
         from integrations.adexa import (
@@ -158,7 +165,8 @@ def _offer_url_from_potential_row(feed: str, monet: str, domain: str, geo: str) 
         else:
             probe = domain if domain.lower().startswith("http") else f"https://{domain.lstrip('/')}"
             try:
-                ax = merchant_monetization_check(probe, geo)
+                mid = str(merchant_id or "").strip() or None
+                ax = merchant_monetization_check(probe, geo, merchant_id=mid)
                 golink = str(ax.get("smartlink_url") or "").strip()
                 if ax.get("mode") == "smartlink" and golink:
                     offer_url = normalize_adexa_golink_url(golink) or golink
@@ -274,7 +282,9 @@ def restore_blend_rows_from_potential(
             stats["skipped_not_monetized"] += 1
             continue
 
-        new_url = _offer_url_from_potential_row(feed, pot["monet"], pot["domain"], geo)
+        new_url = _offer_url_from_potential_row(
+            feed, pot["monet"], pot["domain"], geo, merchant_id=mid
+        )
         cur_url = str(row[i_url] if i_url < len(row) else "").strip()
         cap_str = str(int(default_cap) if default_cap == int(default_cap) else default_cap)
 
@@ -417,7 +427,7 @@ def _populate_feed(service, feed: str, args: argparse.Namespace) -> None:
             dup_rows += 1
             continue
 
-        offer_url = _offer_url_from_potential_row(feed, monet, domain, geo)
+        offer_url = _offer_url_from_potential_row(feed, monet, domain, geo, merchant_id=mid)
 
         new_row = [""] * max(len(blend_header), len(header_blend))
         # Fill known columns

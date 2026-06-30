@@ -587,6 +587,36 @@ def merchant_monetization_check(
     return out
 
 
+def adexa_actionable_monetized(res: Dict[str, Any]) -> bool:
+    """
+    True when Adexa feed4 traffic can be monetized.
+
+    Accepts:
+    - LinksMerchant homepage redirect (``links_found``).
+    - GetMerchant Goffers golink (``smartlink_found`` + ``smartlink_url``), including
+      lookup by ``merchant_id`` from shopping stats — often more reliable than URL
+      host match when the stats merchant id maps to a real GetMerchant row.
+
+    Rejects:
+    - Synthetic Goffers URL when the merchant is absent from GetMerchant
+      (``note=smartlink_goffers_by_merchant_id``).
+    """
+    if not res.get("found"):
+        return False
+    if str(res.get("note") or "") == "smartlink_goffers_by_merchant_id":
+        return False
+    if res.get("links_found"):
+        return True
+    if res.get("smartlink_found") and str(res.get("smartlink_url") or "").strip():
+        return True
+    return False
+
+
+def adexa_verified_monetized(res: Dict[str, Any]) -> bool:
+    """Alias for :func:`adexa_actionable_monetized`."""
+    return adexa_actionable_monetized(res)
+
+
 def links_merchant_check(
     merchant_url: str,
     country_iso2: str,
