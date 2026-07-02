@@ -83,6 +83,10 @@ KEITARO_HUB_ACTIVE_FEEDS = tuple(
 KEITARO_HUB_STATE_PATH = (
     os.getenv("KEITARO_HUB_STATE_PATH") or "data/keitaro_hub_state.json"
 ).strip()
+# Outer shell for hub offer URLs (bought traffic → campaign 94 → child campaigns).
+KEITARO_HUB_RAIN_SHELL = (
+    os.getenv("KEITARO_HUB_RAIN_SHELL") or "https://shopli.city/raini?rain="
+).strip()
 # Nipuhim template for hub children: country flows + static product URLs (not KL-Main dynamic oadest).
 KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID = int(
     (os.getenv("KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID") or "1").strip() or "1"
@@ -94,6 +98,10 @@ NIPUHIM_BLEND_V2_ENABLED = str(
 # When enabled, blend_sync also populates BLEND-feed* hub children (legacy Blend campaign unchanged).
 BLEND_HUB_V2_ENABLED = str(
     os.getenv("BLEND_HUB_V2_ENABLED") or "1"
+).strip().lower() in ("1", "true", "yes", "on")
+# After Blend + Nipuhim v2 sync, rewire hub campaign 94 stream weights from click caps.
+KEITARO_HUB_REWIRE_ENABLED = str(
+    os.getenv("KEITARO_HUB_REWIRE_ENABLED") or "1"
 ).strip().lower() in ("1", "true", "yes", "on")
 
 # Keitaro PHP admin bulk (POST /admin/?bulk): object names to try for removing offers.

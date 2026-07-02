@@ -4,6 +4,11 @@
     "kelkoo2",
     "kelkoo5"
   ],
+  "blend_feed_caps": {
+    "adexa": 1450.0,
+    "kelkoo5": 150.0,
+    "yadore": 1450.0
+  },
   "child_campaigns": {
     "blend_adexa": {
       "alias": "blendAdexa",
@@ -100,76 +105,94 @@
   "hub_offers": {
     "hub_blend_adexa": {
       "child_campaign_id": 100,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/blendAdexa?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "adexa",
       "hub_type": "blend",
       "id": 7135
     },
     "hub_blend_kelkoo1": {
       "child_campaign_id": 97,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/blendFeed1?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "kelkoo1",
       "hub_type": "blend",
       "id": 7132
     },
     "hub_blend_kelkoo2": {
       "child_campaign_id": 98,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/blendFeed2?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "kelkoo2",
       "hub_type": "blend",
       "id": 7133
     },
     "hub_blend_kelkoo5": {
       "child_campaign_id": 99,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/blendFeed5?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "kelkoo5",
       "hub_type": "blend",
       "id": 7134
     },
     "hub_blend_shopnomix": {
       "child_campaign_id": 102,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/blendShopnomix?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "shopnomix",
       "hub_type": "blend",
       "id": 7137
     },
     "hub_blend_yadore": {
       "child_campaign_id": 101,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/blendYadore?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "yadore",
       "hub_type": "blend",
       "id": 7136
     },
     "hub_nipuhim_adexa": {
       "child_campaign_id": 107,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/nipuhAdexa?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "adexa",
       "hub_type": "nipuhim",
       "id": 7141
     },
     "hub_nipuhim_kelkoo1": {
       "child_campaign_id": 104,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/nipuhFeed1?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "kelkoo1",
       "hub_type": "nipuhim",
       "id": 7138
     },
     "hub_nipuhim_kelkoo2": {
       "child_campaign_id": 105,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/nipuhFeed2?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "kelkoo2",
       "hub_type": "nipuhim",
       "id": 7139
     },
     "hub_nipuhim_kelkoo5": {
       "child_campaign_id": 106,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/nipuhFeed5?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "kelkoo5",
       "hub_type": "nipuhim",
       "id": 7140
     },
     "hub_nipuhim_shopnomix": {
       "child_campaign_id": 109,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/nipuhShopnomix?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "shopnomix",
       "hub_type": "nipuhim",
       "id": 7143
     },
     "hub_nipuhim_yadore": {
       "child_campaign_id": 108,
+      "click_url": "https://shopli.city/raini?rain=https://trck.shopli.city/nipuhYadore?keyword={keyword}&cost={adv_price}&external_id={clickid}&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}&sub_id_13={ctrl_pm_key}&sub_id_15=domain",
       "feed_key": "yadore",
       "hub_type": "nipuhim",
       "id": 7142
     }
   },
-  "updated_at": "2026-06-28T10:36:42+00:00"
+  "nipuhim_feed_caps": {
+    "kelkoo1": 162.0,
+    "kelkoo2": 140.0,
+    "kelkoo5": 200.0
+  },
+  "updated_at": "2026-07-02T08:02:50+00:00",
+  "weight_source": "click_caps"
 }

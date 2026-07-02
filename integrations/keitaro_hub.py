@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,6 +28,7 @@ from config import (
     KEITARO_HUB_BLEND_PCT,
     KEITARO_HUB_CAMPAIGN_ID,
     KEITARO_HUB_NIPUHIM_PCT,
+    KEITARO_HUB_RAIN_SHELL,
     KEITARO_HUB_STATE_PATH,
     KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID,
 )
@@ -302,7 +303,82 @@ def hub_feed_weights() -> Dict[str, int]:
     return {fk: (DEFAULT_FEED_WEIGHTS[fk] if fk in active else 0) for fk in HUB_FEED_KEYS}
 
 
-def _hub_offer_weights() -> Dict[str, float]:
+HUB_CHILD_CAMPAIGN_URL_MACROS = (
+    "keyword={keyword}&cost={adv_price}&external_id={clickid}"
+    "&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}"
+    "&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}"
+    "&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}"
+    "&sub_id_13={ctrl_pm_key}&sub_id_15=domain"
+)
+
+_HUB_RAIN_PREFIX = "https://shopli.city/raini?rain="
+
+
+def wrap_hub_child_click_url(inner_url: str) -> str:
+    """
+    Wrap child campaign click URL for traffic sources (SK/ZP/EC pattern).
+
+    Inner URL keeps Keitaro macros unencoded, e.g.
+    ``https://shopli.city/raini?rain=https://trck.shopli.city/alias?external_id={clickid}...``
+    """
+    inner = (inner_url or "").strip()
+    if not inner:
+        raise ValueError("empty inner click url")
+    shell = (KEITARO_HUB_RAIN_SHELL or _HUB_RAIN_PREFIX).strip()
+    if inner.startswith(shell) or inner.lower().startswith(_HUB_RAIN_PREFIX.lower()):
+        return inner
+    return f"{shell}{inner}"
+
+
+def child_campaign_click_url(
+    client: KeitaroClient,
+    campaign_id: int,
+    *,
+    alias: Optional[str] = None,
+    domain: Optional[str] = None,
+) -> str:
+    """Hub offer URL: child campaign tracker link with standard passthrough macros."""
+    if not alias or not domain:
+        camp = client.get_campaign(int(campaign_id))
+        domain = (camp.get("domain") or "").strip().rstrip("/")
+        alias = (camp.get("alias") or alias or "").strip()
+    if not domain or not alias:
+        raise ValueError(f"Campaign {campaign_id} missing tracker domain or alias")
+    return f"{domain}/{alias}?{HUB_CHILD_CAMPAIGN_URL_MACROS}"
+
+
+def hub_offer_click_url(
+    client: KeitaroClient,
+    campaign_id: int,
+    *,
+    alias: Optional[str] = None,
+    domain: Optional[str] = None,
+) -> str:
+    """Hub campaign 94 offer URL: raini shell + child campaign tracker link."""
+    inner = child_campaign_click_url(client, campaign_id, alias=alias, domain=domain)
+    return wrap_hub_child_click_url(inner)
+
+
+def _hub_offer_needs_url_update(current_url: str, expected_wrapped_url: str) -> bool:
+    """Hub offers must store the raini-wrapped URL exactly (traffic source approval)."""
+    return (current_url or "").strip() != (expected_wrapped_url or "").strip()
+
+
+def _hub_campaign_link_offer_body(
+    client: KeitaroClient,
+    child_campaign_id: int,
+    *,
+    alias: Optional[str] = None,
+) -> Dict[str, Any]:
+    click_url = hub_offer_click_url(client, int(child_campaign_id), alias=alias)
+    return {
+        "action_type": "campaign",
+        "action_options": {"campaign_id": int(child_campaign_id)},
+        "action_payload": click_url,
+    }
+
+
+def _hub_offer_weights_legacy() -> Dict[str, float]:
     type_weights = {
         "blend": max(0, int(KEITARO_HUB_BLEND_PCT)),
         "nipuhim": max(0, int(KEITARO_HUB_NIPUHIM_PCT)),
@@ -323,16 +399,88 @@ def _hub_offer_weights() -> Dict[str, float]:
     return out
 
 
+@dataclass
+class HubWeightContext:
+    weights: Dict[str, float]
+    blend_feed_caps: Dict[str, float] = field(default_factory=dict)
+    nipuhim_feed_caps: Dict[str, float] = field(default_factory=dict)
+    source: str = "legacy"
+    logs: List[str] = field(default_factory=list)
+
+
+def resolve_hub_weight_context(
+    *,
+    date_str: Optional[str] = None,
+    nipuhim_max_offers_per_geo: int = 60,
+    use_click_caps: bool = True,
+    sheets_service: Any = None,
+) -> HubWeightContext:
+    """Hub stream weights from sheet click caps, else legacy fixed ratios."""
+    logs: List[str] = []
+    if not use_click_caps:
+        logs.append("Hub weights: legacy fixed ratios (click caps disabled)")
+        return HubWeightContext(weights=_hub_offer_weights_legacy(), source="legacy", logs=logs)
+
+    from integrations.hub_click_cap_weights import (
+        blend_feed_click_caps,
+        hub_offer_weights_from_caps,
+        nipuhim_feed_offer_slots,
+    )
+
+    blend_caps, blend_logs = blend_feed_click_caps(sheets_service=sheets_service)
+    nipuhim_caps, nipuhim_logs = nipuhim_feed_offer_slots(
+        date_str=date_str,
+        max_offers_per_geo=nipuhim_max_offers_per_geo,
+    )
+    logs.extend(blend_logs)
+    logs.extend(nipuhim_logs)
+
+    active = hub_active_feed_keys()
+    weights = hub_offer_weights_from_caps(
+        blend_caps,
+        nipuhim_caps,
+        active_feeds=active,
+        hub_types=HUB_TYPES,
+    )
+    if weights:
+        blend_sum = sum(blend_caps.get(fk, 0) for fk in active)
+        nipuhim_sum = sum(nipuhim_caps.get(fk, 0) for fk in active)
+        logs.append(
+            f"Hub weights: click-cap based "
+            f"(blend total={blend_sum:g}, nipuhim slots={nipuhim_sum:g})"
+        )
+        return HubWeightContext(
+            weights=weights,
+            blend_feed_caps=blend_caps,
+            nipuhim_feed_caps=nipuhim_caps,
+            source="click_caps",
+            logs=logs,
+        )
+
+    logs.append("Hub weights: no click-cap data — using legacy fixed ratios")
+    return HubWeightContext(
+        weights=_hub_offer_weights_legacy(),
+        blend_feed_caps=blend_caps,
+        nipuhim_feed_caps=nipuhim_caps,
+        source="legacy",
+        logs=logs,
+    )
+
+
+def _hub_offer_weights() -> Dict[str, float]:
+    return resolve_hub_weight_context().weights
+
+
 def _create_campaign_link_offer(
     client: KeitaroClient,
     name: str,
     campaign_id: int,
+    *,
+    alias: Optional[str] = None,
 ) -> Dict[str, Any]:
     payload = {
         "name": name,
         "offer_type": "external",
-        "action_type": "campaign",
-        "action_options": {"campaign_id": int(campaign_id)},
         "affiliate_network_id": 0,
         "group_id": 0,
         "state": "active",
@@ -342,6 +490,7 @@ def _create_campaign_link_offer(
         "payout_auto": True,
         "payout_upsell": True,
     }
+    payload.update(_hub_campaign_link_offer_body(client, int(campaign_id), alias=alias))
     return client.create_offer(payload)
 
 
@@ -376,61 +525,107 @@ def ensure_hub_offers(
                 continue
             raise ValueError(f"Missing child campaign id for {key}")
         child_id = int(child["id"])
+        child_alias = (child.get("alias") or spec.alias or "").strip() or None
+        expected_url = hub_offer_click_url(
+            client, child_id, alias=child_alias
+        )
         saved = offer_state.get(offer_name) or {}
         if saved.get("id"):
             oid = int(saved["id"])
-            if int(saved.get("child_campaign_id") or 0) != child_id:
+            repoint = int(saved.get("child_campaign_id") or 0) != child_id
+            current = offers_by_name.get(offer_name) or {}
+            current_url = (current.get("action_payload") or "").strip()
+            needs_url = _hub_offer_needs_url_update(current_url, expected_url)
+            if repoint or needs_url:
+                if dry_run:
+                    if repoint:
+                        logs.append(
+                            f"hub offer {offer_name}: would repoint id={oid} "
+                            f"from campaign {saved.get('child_campaign_id')} -> {child_id}"
+                        )
+                    else:
+                        logs.append(
+                            f"hub offer {offer_name}: would set click URL on id={oid} "
+                            f"({expected_url})"
+                        )
+                else:
+                    client.update_offer(
+                        oid,
+                        _hub_campaign_link_offer_body(
+                            client, child_id, alias=child_alias
+                        ),
+                    )
+                    if repoint:
+                        logs.append(
+                            f"hub offer {offer_name}: repointed id={oid} -> campaign {child_id} "
+                            f"({expected_url})"
+                        )
+                    else:
+                        logs.append(
+                            f"hub offer {offer_name}: set click URL id={oid} ({expected_url})"
+                        )
+            else:
+                logs.append(f"hub offer {offer_name}: reuse id={oid}")
+            offer_state[offer_name] = {
+                "id": oid,
+                "child_campaign_id": child_id,
+                "click_url": expected_url,
+                "hub_type": spec.hub_type,
+                "feed_key": spec.feed_key,
+            }
+            continue
+        existing = offers_by_name.get(offer_name)
+        if existing and existing.get("id"):
+            oid = int(existing["id"])
+            current_url = (existing.get("action_payload") or "").strip()
+            if _hub_offer_needs_url_update(current_url, expected_url):
                 if dry_run:
                     logs.append(
-                        f"hub offer {offer_name}: would repoint id={oid} "
-                        f"from campaign {saved.get('child_campaign_id')} -> {child_id}"
+                        f"hub offer {offer_name}: would set click URL on id={oid} "
+                        f"({expected_url})"
                     )
                 else:
                     client.update_offer(
                         oid,
-                        {
-                            "action_type": "campaign",
-                            "action_options": {"campaign_id": child_id},
-                        },
+                        _hub_campaign_link_offer_body(
+                            client, child_id, alias=child_alias
+                        ),
                     )
                     logs.append(
-                        f"hub offer {offer_name}: repointed id={oid} -> campaign {child_id}"
+                        f"hub offer {offer_name}: set click URL id={oid} ({expected_url})"
                     )
-                offer_state[offer_name] = {
-                    "id": oid,
-                    "child_campaign_id": child_id,
-                    "hub_type": spec.hub_type,
-                    "feed_key": spec.feed_key,
-                }
             else:
-                logs.append(f"hub offer {offer_name}: reuse id={oid}")
-            continue
-        existing = offers_by_name.get(offer_name)
-        if existing and existing.get("id"):
+                logs.append(f"hub offer {offer_name}: found id={oid}")
             offer_state[offer_name] = {
-                "id": int(existing["id"]),
-                "child_campaign_id": int(child["id"]),
+                "id": oid,
+                "child_campaign_id": child_id,
+                "click_url": expected_url,
                 "hub_type": spec.hub_type,
                 "feed_key": spec.feed_key,
             }
-            logs.append(f"hub offer {offer_name}: found id={existing['id']}")
             continue
         if dry_run:
             logs.append(
                 f"hub offer {offer_name}: would create -> child campaign id={child['id']}"
             )
             continue
-        created = _create_campaign_link_offer(client, offer_name, int(child["id"]))
+        created = _create_campaign_link_offer(
+            client, offer_name, int(child["id"]), alias=child_alias
+        )
         oid = created.get("id")
         if oid is None:
             raise KeitaroClientError(f"Create hub offer {offer_name} failed: {created}")
         offer_state[offer_name] = {
             "id": int(oid),
             "child_campaign_id": int(child["id"]),
+            "click_url": expected_url,
             "hub_type": spec.hub_type,
             "feed_key": spec.feed_key,
         }
-        logs.append(f"hub offer {offer_name}: created id={oid} -> campaign {child['id']}")
+        logs.append(
+            f"hub offer {offer_name}: created id={oid} -> campaign {child['id']} "
+            f"({expected_url})"
+        )
 
     state["hub_offers"] = offer_state
     return state, logs
@@ -502,6 +697,10 @@ def wire_hub_streams(
     client: Optional[KeitaroClient] = None,
     state: Optional[Dict[str, Any]] = None,
     hub_campaign_id: Optional[int] = None,
+    date_str: Optional[str] = None,
+    nipuhim_max_offers_per_geo: int = 60,
+    use_click_caps: bool = True,
+    weight_context: Optional[HubWeightContext] = None,
 ) -> Tuple[Dict[str, Any], List[str]]:
     """
     Attach hub campaign-link offers to every geo desktop/mobile stream on the hub campaign.
@@ -511,7 +710,13 @@ def wire_hub_streams(
     state = dict(state or load_hub_state())
     hub_id = int(hub_campaign_id or state.get("hub_campaign_id") or KEITARO_HUB_CAMPAIGN_ID)
     offer_state: Dict[str, Any] = dict(state.get("hub_offers") or {})
-    weights_by_name = _hub_offer_weights()
+    wctx = weight_context or resolve_hub_weight_context(
+        date_str=date_str,
+        nipuhim_max_offers_per_geo=nipuhim_max_offers_per_geo,
+        use_click_caps=use_click_caps,
+    )
+    weights_by_name = wctx.weights
+    logs: List[str] = list(wctx.logs)
     offer_id_to_weight: Dict[int, float] = {}
     zero_offer_ids: List[int] = []
     for offer_name, meta in offer_state.items():
@@ -526,7 +731,6 @@ def wire_hub_streams(
 
     if dry_run and not offer_id_to_weight and not zero_offer_ids:
         streams = _hub_device_streams(client, hub_id)
-        logs: List[str] = []
         logs.append(
             f"hub streams: would attach {len(offer_id_to_weight)} weighted + "
             f"{len(zero_offer_ids)} zero-share hub offers per geo stream "
@@ -534,6 +738,9 @@ def wire_hub_streams(
         )
         state["hub_campaign_id"] = hub_id
         state["active_feeds"] = sorted(hub_active_feed_keys())
+        state["weight_source"] = wctx.source
+        state["blend_feed_caps"] = wctx.blend_feed_caps
+        state["nipuhim_feed_caps"] = wctx.nipuhim_feed_caps
         return state, logs
 
     if not offer_id_to_weight and not zero_offer_ids:
@@ -544,7 +751,6 @@ def wire_hub_streams(
             f"(active: {sorted(hub_active_feed_keys())})"
         )
 
-    logs: List[str] = []
     streams = _hub_device_streams(client, hub_id)
     if not streams:
         raise ValueError(f"Hub campaign {hub_id} has no geo desktop/mobile streams")
@@ -571,7 +777,28 @@ def wire_hub_streams(
 
     state["hub_campaign_id"] = hub_id
     state["active_feeds"] = sorted(hub_active_feed_keys())
+    state["weight_source"] = wctx.source
+    state["blend_feed_caps"] = wctx.blend_feed_caps
+    state["nipuhim_feed_caps"] = wctx.nipuhim_feed_caps
     return state, logs
+
+
+def run_hub_repair_offer_urls(
+    *,
+    dry_run: bool = True,
+    state_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Ensure hub campaign-link offers have raini-wrapped child campaign click URLs in action_payload."""
+    client = KeitaroClient()
+    state = load_hub_state(state_path)
+    state, logs = ensure_hub_offers(dry_run=dry_run, client=client, state=state)
+    if not dry_run:
+        save_hub_state(state, state_path)
+    return {
+        "dry_run": dry_run,
+        "hub_offers": state.get("hub_offers") or {},
+        "logs": logs,
+    }
 
 
 def run_hub_rewire_weights(
@@ -579,6 +806,9 @@ def run_hub_rewire_weights(
     dry_run: bool = True,
     hub_campaign_id: Optional[int] = None,
     state_path: Optional[str] = None,
+    date_str: Optional[str] = None,
+    nipuhim_max_offers_per_geo: int = 60,
+    use_click_caps: bool = True,
 ) -> Dict[str, Any]:
     """Re-apply hub stream weights only (no child/offer creation)."""
     client = KeitaroClient()
@@ -586,11 +816,17 @@ def run_hub_rewire_weights(
     state["hub_campaign_id"] = int(
         hub_campaign_id or state.get("hub_campaign_id") or KEITARO_HUB_CAMPAIGN_ID
     )
+    wctx = resolve_hub_weight_context(
+        date_str=date_str,
+        nipuhim_max_offers_per_geo=nipuhim_max_offers_per_geo,
+        use_click_caps=use_click_caps,
+    )
     state, logs = wire_hub_streams(
         dry_run=dry_run,
         client=client,
         state=state,
         hub_campaign_id=state["hub_campaign_id"],
+        weight_context=wctx,
     )
     if not dry_run:
         save_hub_state(state, state_path)
@@ -598,7 +834,10 @@ def run_hub_rewire_weights(
         "dry_run": dry_run,
         "hub_campaign_id": state["hub_campaign_id"],
         "active_feeds": sorted(hub_active_feed_keys()),
-        "weights": _hub_offer_weights(),
+        "weights": wctx.weights,
+        "weight_source": wctx.source,
+        "blend_feed_caps": wctx.blend_feed_caps,
+        "nipuhim_feed_caps": wctx.nipuhim_feed_caps,
         "logs": logs,
     }
 
@@ -609,6 +848,9 @@ def run_hub_bootstrap(
     skip_child_streams: bool = False,
     hub_campaign_id: Optional[int] = None,
     state_path: Optional[str] = None,
+    date_str: Optional[str] = None,
+    nipuhim_max_offers_per_geo: int = 60,
+    use_click_caps: bool = True,
 ) -> Dict[str, Any]:
     """Full bootstrap: children -> hub offers -> optional child streams -> wire hub."""
     client = KeitaroClient()
@@ -617,6 +859,11 @@ def run_hub_bootstrap(
         hub_campaign_id or state.get("hub_campaign_id") or KEITARO_HUB_CAMPAIGN_ID
     )
     all_logs: List[str] = []
+    wctx = resolve_hub_weight_context(
+        date_str=date_str,
+        nipuhim_max_offers_per_geo=nipuhim_max_offers_per_geo,
+        use_click_caps=use_click_caps,
+    )
 
     state, logs = ensure_child_campaigns(dry_run=dry_run, client=client, state=state)
     all_logs.extend(logs)
@@ -635,6 +882,7 @@ def run_hub_bootstrap(
         client=client,
         state=state,
         hub_campaign_id=state["hub_campaign_id"],
+        weight_context=wctx,
     )
     all_logs.extend(logs)
 
@@ -647,17 +895,22 @@ def run_hub_bootstrap(
         "child_campaigns": state.get("child_campaigns") or {},
         "hub_offers": state.get("hub_offers") or {},
         "active_feeds": sorted(hub_active_feed_keys()),
-        "weights": _hub_offer_weights(),
+        "weights": wctx.weights,
+        "weight_source": wctx.source,
+        "blend_feed_caps": wctx.blend_feed_caps,
+        "nipuhim_feed_caps": wctx.nipuhim_feed_caps,
         "logs": all_logs,
     }
 
 
-def format_weights_table(weights: Dict[str, float]) -> str:
+def format_weights_table(weights: Dict[str, float], *, source: str = "") -> str:
     active = sorted(hub_active_feed_keys())
     lines = [
         "Hub offer weights (% of traffic):",
         f"  Active feeds: {', '.join(active)}",
     ]
+    if source:
+        lines.append(f"  Source: {source}")
     for name in sorted(weights.keys()):
         w = weights[name]
         tag = "" if w > 0 else " (zero — inactive feed)"
