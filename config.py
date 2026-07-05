@@ -712,6 +712,7 @@ YADORE_DEFAULT_DETAIL_MARKETS = [
     "nl",
     "be",
     "au",
+    "ca",
     "us",
     "es",
     "at",
