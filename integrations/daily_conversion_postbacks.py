@@ -620,11 +620,9 @@ def _yadore_conversion_to_sale(conv: Dict[str, Any]) -> Optional[Tuple[str, str,
 
 def _yadore_conversion_sales_for_date(report_date: str) -> List[Tuple[str, str, str, str]]:
     """All conversion/detail sales on ``report_date`` (per configured markets)."""
-    from integrations.yadore import YadoreClientError, fetch_conversion_detail_clicks
+    from integrations.yadore import YadoreClientError, fetch_conversion_detail_clicks, yadore_conversion_detail_markets
 
-    mkts = [m for m in (YADORE_REPORT_DETAIL_MARKETS or []) if str(m).strip()]
-    if not mkts:
-        mkts = ["fr", "de", "uk", "us"]
+    mkts = yadore_conversion_detail_markets()
     out: List[Tuple[str, str, str, str]] = []
     for mkt in mkts:
         for conv in fetch_conversion_detail_clicks(report_date, markets=[mkt]):

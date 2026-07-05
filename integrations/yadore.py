@@ -12,7 +12,14 @@ from urllib.parse import quote
 
 import requests
 
-from config import BLEND_YADORE_OFFER_USE_SUB_MACROS, YADORE_API_KEY, YADORE_IS_COUPONING, YADORE_PROJECT_ID
+from config import (
+    BLEND_YADORE_OFFER_USE_SUB_MACROS,
+    YADORE_API_KEY,
+    YADORE_DEFAULT_DETAIL_MARKETS,
+    YADORE_IS_COUPONING,
+    YADORE_PROJECT_ID,
+    YADORE_REPORT_DETAIL_MARKETS,
+)
 from integrations.monetization_geo import geo_for_yadore
 
 logger = logging.getLogger(__name__)
@@ -27,6 +34,18 @@ class YadoreClientError(Exception):
         self.status_code = status_code
         self.response_body = response_body
         super().__init__(message)
+
+
+def yadore_conversion_detail_markets() -> List[str]:
+    """Markets for ``/v2/conversion/detail`` when env ``YADORE_REPORT_DETAIL_MARKETS`` is empty."""
+    seen: set[str] = set()
+    out: List[str] = []
+    for m in list(YADORE_REPORT_DETAIL_MARKETS or []) + list(YADORE_DEFAULT_DETAIL_MARKETS or []):
+        g = geo_for_yadore(str(m or "").strip())[:2].lower()
+        if len(g) == 2 and g not in seen:
+            seen.add(g)
+            out.append(g)
+    return out
 
 
 def deeplink(

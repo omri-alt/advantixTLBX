@@ -283,17 +283,10 @@ def fetch_adexa_mtd_sales(
 
 
 def _yadore_mtd_markets() -> List[str]:
-    """Markets for conversion/detail (configured list + common account markets)."""
-    from config import YADORE_REPORT_DETAIL_MARKETS
+    """Markets for conversion/detail (configured list + account defaults)."""
+    from integrations.yadore import yadore_conversion_detail_markets
 
-    seen: set[str] = set()
-    out: List[str] = []
-    for m in list(YADORE_REPORT_DETAIL_MARKETS or []) + ["fr", "de", "uk", "us"]:
-        g = (m or "").strip().lower()[:2]
-        if len(g) == 2 and g not in seen:
-            seen.add(g)
-            out.append(g)
-    return out
+    return yadore_conversion_detail_markets()
 
 
 def fetch_yadore_mtd_sales(

@@ -703,6 +703,21 @@ if not _yad_rd_m:
     _yad_rd_m = (_read_env_fallback("YADORE_REPORT_DETAIL_MARKETS") or "").strip()
 YADORE_REPORT_DETAIL_MARKETS = [x.strip().lower() for x in _yad_rd_m.split(",") if x.strip()]
 
+# When YADORE_REPORT_DETAIL_MARKETS is unset, conversion/detail sales scans use this list
+# (EU core + AU/BE/AT/ES where account traffic commonly converts).
+YADORE_DEFAULT_DETAIL_MARKETS = [
+    "de",
+    "fr",
+    "uk",
+    "nl",
+    "be",
+    "au",
+    "us",
+    "es",
+    "at",
+    "it",
+]
+
 # Adexa (feed4) — site ID + API key (GetMerchant, feeds). Names from .env:
 #   ADEXA_SITE_ID or AdexSiteID | ADEXA_API_KEY or KeyAdex or KEY_ADEX
 ADEXA_SITE_ID = (os.getenv("ADEXA_SITE_ID") or os.getenv("AdexSiteID") or "").strip()
