@@ -69,6 +69,29 @@ class KeitaroClient:
         """Some builds use ?batch instead of ?bulk for the same command array."""
         return f"{self._tracker_origin()}/admin/?batch"
 
+    @classmethod
+    def _mark_admin_bulk_rejected(cls) -> None:
+        if not cls._admin_bulk_api_key_rejected:
+            cls._admin_bulk_api_key_rejected = True
+            logger.warning(
+                "Keitaro /admin/?bulk|batch auth failed — Api-Key is not accepted there "
+                "(browser session only). Skipping admin bulk for the rest of this run."
+            )
+
+    @classmethod
+    def _bulk_response_auth_rejected(cls, data: Any) -> bool:
+        """True when bulk JSON reports 401 (HTTP may still be 200)."""
+        if not isinstance(data, list):
+            return False
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            sc = item.get("statusCode")
+            if sc == 401 or sc == "401":
+                cls._mark_admin_bulk_rejected()
+                return True
+        return False
+
     @staticmethod
     def _bulk_http_ok(data: Any) -> bool:
         """Heuristic: bulk JSON response should not report per-command failure."""
@@ -166,12 +189,7 @@ class KeitaroClient:
                             continue
                         if not resp.ok:
                             if resp.status_code == 401:
-                                if not KeitaroClient._admin_bulk_api_key_rejected:
-                                    KeitaroClient._admin_bulk_api_key_rejected = True
-                                    logger.warning(
-                                        "Keitaro /admin/?bulk|batch returned 401 — Api-Key is not accepted there "
-                                        "(browser session only). Skipping admin bulk for the rest of this run."
-                                    )
+                                self._mark_admin_bulk_rejected()
                                 return False
                             logger.warning(
                                 "Keitaro admin %s offer %s: HTTP %s",
@@ -189,6 +207,8 @@ class KeitaroClient:
                                 label,
                             )
                             return True
+                        if self._bulk_response_auth_rejected(data):
+                            return False
                         if self._bulk_http_ok(data):
                             logger.info("Keitaro removed offer %s via admin %s", oid, label)
                             return True
@@ -356,6 +376,16 @@ class KeitaroClient:
         data = resp.json()
         return data if isinstance(data, dict) else {"raw": data}
 
+    def delete_stream(self, stream_id: int) -> None:
+        sid = int(stream_id)
+        url = self._api_path(f"streams/{sid}")
+        try:
+            resp = self._session.delete(url, timeout=30)
+        except requests.RequestException as e:
+            raise KeitaroClientError(str(e)) from e
+        if not resp.ok:
+            raise KeitaroClientError(f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text)
+
     def get_offers(self) -> list:
         url = self._api_path("offers")
         try:
@@ -419,11 +449,21 @@ class KeitaroClient:
         Different Keitaro / nginx setups expose different endpoints; some return 404
         for DELETE .../offers/{id} even when PUT streams works.
 
-        Tries, in order: PHP admin /admin/?bulk (offers.delete, …), DELETE offer,
+        Tries, in order: admin_api ``update_offer`` soft-delete (``state: deleted``),
+        PHP admin /admin/?bulk (often browser-session only), DELETE offer,
         POST archive, DELETE archive.
-        Returns True if any call succeeds (2xx).
+        Returns True if any call succeeds (2xx) or the offer is already gone (404).
         """
         oid = int(offer_id)
+        try:
+            self.update_offer(oid, {"state": "deleted"})
+            logger.info("Keitaro soft-deleted offer %s via admin_api update_offer", oid)
+            return True
+        except KeitaroClientError as e:
+            if e.status_code == 404:
+                logger.info("Keitaro offer %s not found (already removed)", oid)
+                return True
+            logger.debug("Keitaro update_offer state=deleted %s: %s", oid, e)
         if self._remove_offer_via_admin_bulk(oid):
             return True
         attempts: List[Tuple[str, Callable[[], Any]]] = [
@@ -449,6 +489,9 @@ class KeitaroClient:
                 continue
             if resp.ok:
                 logger.info("Keitaro removed offer %s via %s", oid, label)
+                return True
+            if resp.status_code == 404:
+                logger.info("Keitaro offer %s already removed (%s 404)", oid, label)
                 return True
             last = (resp.status_code, (resp.text or "")[:300])
             logger.warning("Keitaro %s offer %s: HTTP %s", label, oid, resp.status_code)

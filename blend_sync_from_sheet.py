@@ -504,6 +504,8 @@ def _delete_rows_from_blend_sheet(service, row_numbers_1based: List[int]) -> Non
             groups.append((start, prev))
             start = prev = rn
     groups.append((start, prev))
+    # Delete from bottom row upward so indices stay valid within one batchUpdate.
+    groups.sort(key=lambda g: g[0], reverse=True)
 
     requests = []
     for first_rn, last_rn in groups:

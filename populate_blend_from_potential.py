@@ -120,6 +120,43 @@ def ensure_blend_headers(service) -> List[str]:
     return header
 
 
+def ensure_blend_sheet_rows(service, min_row_count: int) -> None:
+    """Grow the Blend tab grid so values().update/append can reach ``min_row_count`` rows."""
+    need = max(1, int(min_row_count))
+    meta = service.get(
+        spreadsheetId=BLEND_SPREADSHEET_ID,
+        fields="sheets(properties(sheetId,title,gridProperties(rowCount)))",
+    ).execute()
+    sheet_id: Optional[int] = None
+    current = 0
+    for s in meta.get("sheets") or []:
+        props = s.get("properties") or {}
+        if props.get("title") == BLEND_SHEET:
+            sheet_id = props.get("sheetId")
+            current = int((props.get("gridProperties") or {}).get("rowCount") or 0)
+            break
+    if sheet_id is None:
+        raise RuntimeError(f"Could not find sheetId for {BLEND_SHEET!r}")
+    if current >= need:
+        return
+    extra = need - current
+    service.batchUpdate(
+        spreadsheetId=BLEND_SPREADSHEET_ID,
+        body={
+            "requests": [
+                {
+                    "appendDimension": {
+                        "sheetId": int(sheet_id),
+                        "dimension": "ROWS",
+                        "length": int(extra),
+                    }
+                }
+            ]
+        },
+    ).execute()
+    print(f"Expanded Blend sheet grid by {extra} row(s) ({current} -> {need}).")
+
+
 def _parse_click_cap(v: Any) -> Optional[float]:
     if v is None:
         return None
@@ -346,8 +383,8 @@ def _reorder_potential_body_rows(
     return head + tail
 
 
-def _populate_feed(service, feed: str, args: argparse.Namespace) -> None:
-    potential_sheet = POTENTIAL_SHEET_BY_FEED[feed]
+def _populate_feed(service, feed_key: str, args: argparse.Namespace) -> None:
+    potential_sheet = POTENTIAL_SHEET_BY_FEED[feed_key]
 
     header_blend = ensure_blend_headers(service)
     blend_vals = read_values(service, BLEND_SHEET)
@@ -400,9 +437,9 @@ def _populate_feed(service, feed: str, args: argparse.Namespace) -> None:
         for row in blend_vals[1:]:
             geo = geo_for_blend(str(row[b_i("geo")] if b_i("geo") >= 0 and b_i("geo") < len(row) else ""))
             mid = str(row[b_i("merchantid")] if b_i("merchantid") >= 0 and b_i("merchantid") < len(row) else "").strip()
-            feed = str(row[b_i("feed")] if b_i("feed") >= 0 and b_i("feed") < len(row) else "").strip().lower()
-            if geo and mid and feed:
-                existing.add((geo, mid, feed))
+            existing_feed = str(row[b_i("feed")] if b_i("feed") >= 0 and b_i("feed") < len(row) else "").strip().lower()
+            if geo and mid and existing_feed:
+                existing.add((geo, mid, existing_feed))
 
     # Build all new rows (then cap by max_add) so we can report how many were left out.
     candidates: List[List[Any]] = []
@@ -422,12 +459,12 @@ def _populate_feed(service, feed: str, args: argparse.Namespace) -> None:
         if not geo or not mid or not domain:
             continue
         eligible_rows += 1
-        key = (geo, mid, feed)
+        key = (geo, mid, feed_key)
         if key in existing:
             dup_rows += 1
             continue
 
-        offer_url = _offer_url_from_potential_row(feed, monet, domain, geo, merchant_id=mid)
+        offer_url = _offer_url_from_potential_row(feed_key, monet, domain, geo, merchant_id=mid)
 
         new_row = [""] * max(len(blend_header), len(header_blend))
         # Fill known columns
@@ -437,7 +474,7 @@ def _populate_feed(service, feed: str, args: argparse.Namespace) -> None:
         new_row[b_i("geo")] = geo
         new_row[b_i("merchantid")] = mid
         new_row[b_i("auto")] = "v"
-        new_row[b_i("feed")] = feed
+        new_row[b_i("feed")] = feed_key
         if i_mode >= 0 and i_mode < len(row):
             mode = normalize_device_mode(str(row[i_mode] or ""))
         else:
@@ -468,7 +505,7 @@ def _populate_feed(service, feed: str, args: argparse.Namespace) -> None:
         return
 
     print(
-        f"populate_blend_from_potential summary (feed={feed}): "
+        f"populate_blend_from_potential summary (feed={feed_key}): "
         f"potential rows={total_potential}, monetized={monetized_rows}, "
         f"eligible={eligible_rows}, duplicates_skipped={dup_rows}, "
         f"new_merchants_ready={len(candidates)}, added={len(to_append)}, "
@@ -476,6 +513,8 @@ def _populate_feed(service, feed: str, args: argparse.Namespace) -> None:
     )
     quoted = BLEND_SHEET.replace("'", "''")
     start_row = (len(blend_vals) + 1) if blend_vals else 2
+    end_row = start_row + len(to_append) - 1
+    ensure_blend_sheet_rows(service, end_row)
     range_a1 = f"'{quoted}'!A{start_row}"
     service.values().update(
         spreadsheetId=BLEND_SPREADSHEET_ID,
@@ -483,7 +522,7 @@ def _populate_feed(service, feed: str, args: argparse.Namespace) -> None:
         valueInputOption="RAW",
         body={"values": to_append},
     ).execute()
-    print(f"Added {len(to_append)} rows from {potential_sheet} to Blend (feed={feed}).")
+    print(f"Added {len(to_append)} rows from {potential_sheet} to Blend (feed={feed_key}).")
 
 
 def _run_restore(service, feed: str, args: argparse.Namespace) -> None:

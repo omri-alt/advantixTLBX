@@ -600,31 +600,35 @@ def compute_eligible_late_sales(
 def apply_yadore_saleour_backlog(
     *,
     dry_run: bool = False,
+    start_date: Optional[date] = None,
     end_date: Optional[date] = None,
 ) -> Dict[str, Any]:
     """
     Send ``SaleOur`` postbacks (``payout=0``) for Yadore sales missing from Keitaro.
 
-    Default range: month start through **yesterday** (UTC). Late-conversion window stops at
-    day-before-yesterday; this catch-up includes yesterday for ``SaleOur`` daily alignment.
+    Default range: month start through **yesterday** (UTC). Override with ``start_date`` /
+    ``end_date`` (inclusive). Late-conversion window stops at day-before-yesterday; this
+    catch-up includes yesterday for ``SaleOur`` daily alignment.
     """
+    from config import DAILY_CONVERSION_POSTBACK_SALE_STATUS
     from integrations.daily_conversion_postbacks import build_daily_postback_url
     from integrations.keitaro_conversions import collect_sale_postback_keys, has_matching_sale_postback
 
     month_start, _hi_date, yesterday, month_key = late_sale_date_window()
     today = datetime.now(timezone.utc).date()
+    start = start_date or month_start
     end = end_date or yesterday
 
-    rows = _dedupe_sale_rows(fetch_yadore_mtd_sales(month_start=month_start, hi_date=end))
+    rows = _dedupe_sale_rows(fetch_yadore_mtd_sales(month_start=start, hi_date=end))
     try:
-        keys = collect_sale_postback_keys(date_from=month_start, date_to=today)
+        keys = collect_sale_postback_keys(date_from=start, date_to=today)
     except Exception as e:
         return {"ok": False, "error": f"Keitaro log: {e}", "eligible": 0}
 
     to_send: List[SaleRow] = []
     skipped = 0
     for r in rows:
-        if has_matching_sale_postback(r.sub_id, "0", keys):
+        if has_matching_sale_postback(r.sub_id, r.sale_value_usd, keys):
             skipped += 1
             continue
         to_send.append(r)
@@ -640,25 +644,121 @@ def apply_yadore_saleour_backlog(
 
     postbacks_ok = 0
     postbacks_fail = 0
+    failures: List[Dict[str, Any]] = []
     if not dry_run and urls:
-        for u in urls:
+        for r, u in zip(to_send, urls):
             pr = send_postback_gets([u])[0]
             code = pr.get("http_status")
             if code is not None and 200 <= int(code) < 400 and not pr.get("http_error"):
                 postbacks_ok += 1
             else:
                 postbacks_fail += 1
+                failures.append(
+                    {
+                        "sub_id": r.sub_id,
+                        "sale_date": r.sale_date,
+                        "http_status": code,
+                        "error": pr.get("http_error"),
+                        "url": u,
+                    }
+                )
 
     return {
         "ok": dry_run or postbacks_fail == 0,
         "mode": "dry-run" if dry_run else "apply",
         "month_key": month_key,
-        "sale_window": f"{month_start.isoformat()} .. {end.isoformat()}",
+        "sale_window": f"{start.isoformat()} .. {end.isoformat()}",
         "yadore_sales_found": len(rows),
         "skipped_keitaro": skipped,
         "eligible": len(to_send),
         "postbacks_ok": postbacks_ok if not dry_run else None,
         "postbacks_fail": postbacks_fail if not dry_run else None,
+        "failures": failures if not dry_run else [],
+        "sample_urls": urls[:5],
+    }
+
+
+def apply_yadore_saleour_missing_rows(
+    missing: List[Dict[str, Any]],
+    *,
+    dry_run: bool = False,
+    keitaro_from: Optional[date] = None,
+) -> Dict[str, Any]:
+    """
+    Send ``SaleOur`` for a precomputed missing list (e.g. from ``yadore_sales_keitaro_diff``).
+
+    Re-checks Keitaro dedup before each send so a stale diff report does not double-fire.
+    """
+    from config import DAILY_CONVERSION_POSTBACK_SALE_STATUS
+    from integrations.daily_conversion_postbacks import build_daily_postback_url
+    from integrations.keitaro_conversions import (
+        collect_sale_postback_keys,
+        has_matching_sale_postback,
+        normalize_payout,
+    )
+
+    today = datetime.now(timezone.utc).date()
+    k_from = keitaro_from or today.replace(day=1)
+    try:
+        keys = collect_sale_postback_keys(date_from=k_from, date_to=today)
+    except Exception as e:
+        return {"ok": False, "error": f"Keitaro log: {e}", "eligible": 0}
+
+    to_send: List[Dict[str, Any]] = []
+    skipped = 0
+    for row in missing:
+        if not isinstance(row, dict):
+            continue
+        sid = str(row.get("sub_id") or "").strip()
+        payout = str(row.get("payout") if row.get("payout") is not None else "0")
+        if not sid:
+            continue
+        if has_matching_sale_postback(sid, payout, keys):
+            skipped += 1
+            continue
+        to_send.append(row)
+
+    sale_status = (DAILY_CONVERSION_POSTBACK_SALE_STATUS or "SaleOur").strip()
+    urls = [
+        build_daily_postback_url(
+            subid=str(r["sub_id"]),
+            payout=normalize_payout(str(r.get("payout") or "0")),
+            status=sale_status,
+        )
+        for r in to_send
+    ]
+
+    postbacks_ok = 0
+    postbacks_fail = 0
+    failures: List[Dict[str, Any]] = []
+    if not dry_run and urls:
+        for r, u in zip(to_send, urls):
+            pr = send_postback_gets([u])[0]
+            code = pr.get("http_status")
+            if code is not None and 200 <= int(code) < 400 and not pr.get("http_error"):
+                postbacks_ok += 1
+            else:
+                postbacks_fail += 1
+                failures.append(
+                    {
+                        "sub_id": r.get("sub_id"),
+                        "sale_date": r.get("sale_date"),
+                        "http_status": code,
+                        "error": pr.get("http_error"),
+                        "url": u,
+                    }
+                )
+
+    return {
+        "ok": dry_run or postbacks_fail == 0,
+        "mode": "dry-run" if dry_run else "apply",
+        "keitaro_dedup_from": k_from.isoformat(),
+        "input_rows": len(missing),
+        "skipped_keitaro": skipped,
+        "eligible": len(to_send),
+        "postbacks_ok": postbacks_ok if not dry_run else None,
+        "postbacks_fail": postbacks_fail if not dry_run else None,
+        "failures": failures if not dry_run else [],
         "sample_urls": urls[:5],
     }
 
