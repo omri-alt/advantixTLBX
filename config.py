@@ -80,6 +80,13 @@ KEITARO_HUB_ACTIVE_FEEDS = tuple(
     ).split(",")
     if x.strip()
 )
+# Hub routing types on campaign 94: ``nipuhim`` only during traffic-source approval rollout;
+# later ``blend,nipuhim`` restores 50/50-style split across child campaign families.
+KEITARO_HUB_TYPES = tuple(
+    x.strip().lower()
+    for x in (os.getenv("KEITARO_HUB_TYPES") or "nipuhim").split(",")
+    if x.strip()
+)
 KEITARO_HUB_STATE_PATH = (
     os.getenv("KEITARO_HUB_STATE_PATH") or "data/keitaro_hub_state.json"
 ).strip()

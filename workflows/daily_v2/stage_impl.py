@@ -523,9 +523,32 @@ def stage_blend(ctx: RunContext) -> int:
         skip_blend=False,
         skip_blend_sync=bool(pa.get("skip_blend_sync")),
         skip_blend_prune=bool(pa.get("skip_blend_prune")),
-        blend_v2_enabled=rdw.blend_hub_v2_enabled(pa=pa),
+        blend_v2_enabled=False,
         only_geo=only_geo,
     )
+    return 0
+
+
+def stage_blend_v2(ctx: RunContext) -> int:
+    rdw = _import_daily()
+    pa = ctx.pa
+    only_geo = None
+    og = pa.get("only_geos")
+    if og and len(og) == 1:
+        only_geo = next(iter(og))
+    else:
+        pg = pa.get("partial_geos")
+        if pg and len(pg) == 1:
+            only_geo = next(iter(pg))
+    if not rdw.run_blend_v2_keitaro_sync(only_geo=only_geo):
+        return 1
+    return 0
+
+
+def stage_hub_rewire(ctx: RunContext) -> int:
+    rdw = _import_daily()
+    if not rdw.run_hub_rewire_daily_step(ctx.date_str):
+        return 1
     return 0
 
 
@@ -560,6 +583,8 @@ STAGE_HANDLERS: Dict[str, Callable[[RunContext], int]] = {
     "keitaro_sync": stage_keitaro_sync,
     "keitaro_sync_nipuhim_v2": stage_keitaro_sync_nipuhim_v2,
     "blend": stage_blend,
+    "blend_v2": stage_blend_v2,
+    "hub_rewire": stage_hub_rewire,
     "late_sales": stage_late_sales,
     "conversion_postbacks": stage_conversion_postbacks,
 }

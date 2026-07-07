@@ -51,6 +51,27 @@ def _skip_full_download(ctx: RunContext) -> bool:
     return _skip_offers_only(ctx)
 
 
+def _skip_hub_rewire(ctx: RunContext) -> bool:
+    if _skip_keitaro(ctx):
+        return True
+    if ctx.pa.get("skip_hub_rewire"):
+        return True
+    from config import KEITARO_HUB_REWIRE_ENABLED
+
+    return not bool(KEITARO_HUB_REWIRE_ENABLED)
+
+
+def _skip_blend_v2(ctx: RunContext) -> bool:
+    if _skip_blend(ctx):
+        return True
+    rdw = __import__("run_daily_workflow", fromlist=["blend_hub_v2_enabled"])
+    if not rdw.blend_hub_v2_enabled(pa=ctx.pa):
+        return True
+    if ctx.pa.get("skip_blend_v2"):
+        return True
+    return False
+
+
 STAGES: tuple[StageDef, ...] = (
     StageDef("monthly_log", "0a - Monthly log (yesterday)", ()),
     StageDef("blend_potential", "0b - Blend potential sheets", (), skip_if=_skip_offers_only),
@@ -86,10 +107,24 @@ STAGES: tuple[StageDef, ...] = (
         fatal=True,
     ),
     StageDef(
+        "hub_rewire",
+        "7d - Hub campaign 94 (nipuhim kelkoo feeds)",
+        ("keitaro_sync_nipuhim_v2",),
+        skip_if=_skip_hub_rewire,
+        fatal=True,
+    ),
+    StageDef(
         "blend",
         "7 - Blend populate + sync",
         ("combined_offers",),
         skip_if=_skip_blend,
+        fatal=True,
+    ),
+    StageDef(
+        "blend_v2",
+        "7c - Blend v2 sync (BLEND-feed*)",
+        ("blend",),
+        skip_if=_skip_blend_v2,
         fatal=True,
     ),
     StageDef(

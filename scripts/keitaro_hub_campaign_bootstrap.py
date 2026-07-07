@@ -27,7 +27,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import KEITARO_API_KEY, KEITARO_BASE_URL, KEITARO_HUB_ACTIVE_FEEDS, KEITARO_HUB_CAMPAIGN_ID
+from config import (
+    KEITARO_API_KEY,
+    KEITARO_BASE_URL,
+    KEITARO_HUB_ACTIVE_FEEDS,
+    KEITARO_HUB_CAMPAIGN_ID,
+    KEITARO_HUB_TYPES,
+)
 from integrations.keitaro import KeitaroClientError
 from integrations.keitaro_hub import (
     format_weights_table,
@@ -95,6 +101,7 @@ def main() -> int:
 
     dry_run = not args.apply
     print(f"Keitaro hub bootstrap — hub campaign id={args.hub_campaign_id}")
+    print(f"Hub types: {', '.join(KEITARO_HUB_TYPES)}")
     print(f"Active feeds: {', '.join(KEITARO_HUB_ACTIVE_FEEDS)}")
     print(f"Mode: {'DRY-RUN' if dry_run else 'APPLY'}"
           f"{' (rewire weights only)' if args.rewire_only else ''}"
@@ -133,6 +140,7 @@ def main() -> int:
     print(format_weights_table(
         result.get("weights") or {},
         source=str(result.get("weight_source") or ""),
+        weights_by_geo=result.get("weights_by_geo") or None,
     ))
     print()
     if dry_run:

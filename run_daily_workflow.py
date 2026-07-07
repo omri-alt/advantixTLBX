@@ -264,6 +264,7 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
     skip_nipuhim_v2 = "--skip-nipuhim-v2" in argv
     blend_v2 = "--blend-v2" in argv
     skip_blend_v2 = "--skip-blend-v2" in argv
+    skip_hub_rewire = "--skip-hub-rewire" in argv
     merchant_overrides, implied_geos_manual = _collect_merchant_overrides(argv)
     merchant_auto_overrides, implied_geos_auto = _collect_merchant_auto_overrides(argv)
     merchant_skip_replaces = _collect_merchant_skip_replaces(argv)
@@ -324,6 +325,7 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
         "skip_nipuhim_v2": skip_nipuhim_v2,
         "blend_v2": blend_v2,
         "skip_blend_v2": skip_blend_v2,
+        "skip_hub_rewire": skip_hub_rewire,
     }
 
 BLEND_DAILY_MAX_NEW_ROWS = BLEND_POPULATE_MAX_ADD
@@ -440,17 +442,14 @@ def run_blend_daily_steps(
     else:
         print("   7a½. Skipping Blend prune (--skip-blend-prune).")
     if skip_keitaro:
-        print("   7b. Skipping Blend Keitaro sync (--skip-keitaro).")
-        print()
-        return
-    if skip_blend_sync:
-        print("   7b. Skipping Blend Keitaro sync (--skip-blend-sync).")
-        print()
-        return
-    print("   7b. blend_sync_from_sheet (prune auto='v' non-monetized + Keitaro) ...")
-    if not run_blend_sync_from_sheet():
-        print("   Blend Keitaro sync failed.")
-        sys.exit(1)
+        print("   7b. Skipping legacy Blend Keitaro sync (--skip-keitaro).")
+    elif skip_blend_sync:
+        print("   7b. Skipping legacy Blend Keitaro sync (--skip-blend-sync).")
+    else:
+        print("   7b. blend_sync_from_sheet (prune auto='v' non-monetized + Keitaro) ...")
+        if not run_blend_sync_from_sheet():
+            print("   Blend Keitaro sync failed.")
+            sys.exit(1)
     if blend_v2_enabled:
         if not run_blend_v2_keitaro_sync(only_geo=only_geo):
             sys.exit(1)
@@ -576,6 +575,65 @@ def nipuhim_blend_v2_enabled(argv: list[str] | None = None) -> bool:
         if "--nipuhim-v2" in argv:
             return True
     return bool(NIPUHIM_BLEND_V2_ENABLED)
+
+
+def hub_rewire_enabled(argv: list[str] | None = None, pa: dict | None = None) -> bool:
+    """True when daily workflow should rewire hub campaign 94 weights from click caps."""
+    from config import KEITARO_HUB_REWIRE_ENABLED
+
+    if argv and "--skip-hub-rewire" in argv:
+        return False
+    if pa and pa.get("skip_hub_rewire"):
+        return False
+    return bool(KEITARO_HUB_REWIRE_ENABLED)
+
+
+def run_hub_rewire_daily_step(date_str: str) -> bool:
+    """Re-apply hub campaign 94 offer weights from today's Nipuhim offers tabs (per-geo equal split)."""
+    from config import KEITARO_API_KEY, KEITARO_BASE_URL
+    from integrations.keitaro_hub import format_weights_table, run_hub_rewire_weights
+
+    if not (KEITARO_BASE_URL and KEITARO_API_KEY):
+        print("7d. Hub rewire skipped (Keitaro not configured).")
+        print()
+        return True
+
+    print("7d. Hub campaign 94 — rewire per-geo nipuhim weights from today's offers tabs ...")
+    try:
+        result = run_hub_rewire_weights(
+            dry_run=False,
+            date_str=date_str,
+            nipuhim_max_offers_per_geo=KEITARO_SYNC_MAX_OFFERS_PER_GEO,
+        )
+    except Exception as e:
+        print(f"   Hub rewire failed: {e}")
+        return False
+
+    for line in result.get("logs") or []:
+        print(f"   {line}")
+    print()
+    for line in format_weights_table(
+        result.get("weights") or {},
+        source=str(result.get("weight_source") or ""),
+        weights_by_geo=result.get("weights_by_geo") or None,
+    ).splitlines():
+        print(f"   {line}")
+    print()
+    return True
+
+
+def maybe_run_hub_campaign_rewire(
+    date_str: str,
+    *,
+    skip_keitaro: bool = False,
+    skip_hub_rewire: bool = False,
+) -> None:
+    if skip_keitaro or skip_hub_rewire:
+        return
+    if not hub_rewire_enabled():
+        return
+    if not run_hub_rewire_daily_step(date_str):
+        sys.exit(1)
 
 
 def blend_hub_v2_enabled(argv: list[str] | None = None, pa: dict | None = None) -> bool:
@@ -879,6 +937,7 @@ def run_pla_offers_keitaro_blend_tail(
     nipuhim_v2_enabled: bool = False,
     blend_v2_enabled: bool = False,
     blend_only_geo: str | None = None,
+    skip_hub_rewire: bool = False,
 ) -> None:
     """Steps 3–6 (optional 4b) and optional 7: merchant selection → PLA → Keitaro → Blend."""
     offers_1 = f"{date_str}_offers_1"
@@ -1101,6 +1160,9 @@ def run_pla_offers_keitaro_blend_tail(
                 blend_v2_enabled=blend_v2_enabled,
                 only_geo=blend_only_geo,
             )
+        maybe_run_hub_campaign_rewire(
+            date_str, skip_keitaro=False, skip_hub_rewire=skip_hub_rewire
+        )
         print("Done. No offers to sync.")
         if run_daily_conversion_postbacks:
             run_optional_daily_conversion_postbacks(postback_report_date)
@@ -1126,6 +1188,9 @@ def run_pla_offers_keitaro_blend_tail(
                 feed1_traffic_only=True,
             ):
                 sys.exit(1)
+        maybe_run_hub_campaign_rewire(
+            date_str, skip_keitaro=False, skip_hub_rewire=skip_hub_rewire
+        )
         print()
         if run_blend_steps:
             run_blend_daily_steps(
@@ -1164,6 +1229,9 @@ def run_pla_offers_keitaro_blend_tail(
         ):
             sys.exit(1)
 
+    maybe_run_hub_campaign_rewire(
+        date_str, skip_keitaro=False, skip_hub_rewire=skip_hub_rewire
+    )
     print()
     if run_blend_steps:
         run_blend_daily_steps(
@@ -1336,6 +1404,7 @@ def main() -> None:
             nipuhim_v2_enabled=nipuhim_blend_v2_enabled(argv),
             blend_v2_enabled=blend_hub_v2_enabled(argv),
             blend_only_geo=next(iter(partial_geos)) if len(partial_geos) == 1 else None,
+            skip_hub_rewire=bool(pa.get("skip_hub_rewire")),
         )
         _run_post_pla_automation_tail(service, pa)
         return
@@ -1470,6 +1539,7 @@ def main() -> None:
         nipuhim_v2_enabled=nipuhim_blend_v2_enabled(argv),
         blend_v2_enabled=blend_hub_v2_enabled(argv),
         blend_only_geo=next(iter(partial_geos)) if len(partial_geos) == 1 else None,
+        skip_hub_rewire=bool(pa.get("skip_hub_rewire")),
     )
     _run_post_pla_automation_tail(service, pa)
 

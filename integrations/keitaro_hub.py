@@ -30,6 +30,7 @@ from config import (
     KEITARO_HUB_NIPUHIM_PCT,
     KEITARO_HUB_RAIN_SHELL,
     KEITARO_HUB_STATE_PATH,
+    KEITARO_HUB_TYPES,
     KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID,
 )
 from integrations.keitaro import KeitaroClient, KeitaroClientError
@@ -297,6 +298,21 @@ def hub_active_feed_keys() -> frozenset[str]:
     return active
 
 
+def configured_hub_types() -> Tuple[str, ...]:
+    """Child campaign families wired on hub campaign 94 (``blend``, ``nipuhim``, or both)."""
+    valid = frozenset(HUB_TYPES)
+    out = tuple(t for t in KEITARO_HUB_TYPES if t in valid)
+    if not out:
+        raise ValueError(
+            f"KEITARO_HUB_TYPES has no valid entries; expected subset of {HUB_TYPES}"
+        )
+    return out
+
+
+def _spec_on_hub(spec: ChildCampaignSpec) -> bool:
+    return spec.hub_type in configured_hub_types() and spec.feed_key in hub_active_feed_keys()
+
+
 def hub_feed_weights() -> Dict[str, int]:
     """Per-feed weight numerators; inactive feeds are 0 (still attached on hub at share 0)."""
     active = hub_active_feed_keys()
@@ -378,17 +394,30 @@ def _hub_campaign_link_offer_body(
     }
 
 
+def _nipuhim_equal_global_weights() -> Dict[str, float]:
+    """Fallback hub weights: equal share across active Kelkoo feeds (e.g. 33.33% × 3)."""
+    active = sorted(hub_active_feed_keys())
+    if not active:
+        return {}
+    share = 100.0 / len(active)
+    return {hub_offer_name("nipuhim", fk): share for fk in active}
+
+
 def _hub_offer_weights_legacy() -> Dict[str, float]:
+    hub_types = configured_hub_types()
+    if hub_types == ("nipuhim",):
+        return _nipuhim_equal_global_weights()
+
     type_weights = {
-        "blend": max(0, int(KEITARO_HUB_BLEND_PCT)),
-        "nipuhim": max(0, int(KEITARO_HUB_NIPUHIM_PCT)),
+        "blend": max(0, int(KEITARO_HUB_BLEND_PCT)) if "blend" in hub_types else 0,
+        "nipuhim": max(0, int(KEITARO_HUB_NIPUHIM_PCT)) if "nipuhim" in hub_types else 0,
     }
     type_total = sum(type_weights.values()) or 100
     feed_weights = hub_feed_weights()
     feed_total = sum(feed_weights.values()) or 0
     out: Dict[str, float] = {}
-    for hub_type in HUB_TYPES:
-        type_frac = type_weights[hub_type] / type_total
+    for hub_type in hub_types:
+        type_frac = type_weights.get(hub_type, 0) / type_total
         for feed_key in HUB_FEED_KEYS:
             fw = feed_weights[feed_key]
             if fw <= 0 or feed_total <= 0:
@@ -404,6 +433,8 @@ class HubWeightContext:
     weights: Dict[str, float]
     blend_feed_caps: Dict[str, float] = field(default_factory=dict)
     nipuhim_feed_caps: Dict[str, float] = field(default_factory=dict)
+    weights_by_geo: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    nipuhim_feed_geos: Dict[str, frozenset[str]] = field(default_factory=dict)
     source: str = "legacy"
     logs: List[str] = field(default_factory=list)
 
@@ -423,7 +454,9 @@ def resolve_hub_weight_context(
 
     from integrations.hub_click_cap_weights import (
         blend_feed_click_caps,
+        hub_nipuhim_equal_weights_per_geo,
         hub_offer_weights_from_caps,
+        nipuhim_feed_active_geos,
         nipuhim_feed_offer_slots,
     )
 
@@ -436,11 +469,48 @@ def resolve_hub_weight_context(
     logs.extend(nipuhim_logs)
 
     active = hub_active_feed_keys()
+    hub_types = configured_hub_types()
+
+    if hub_types == ("nipuhim",):
+        feed_geos, geo_logs = nipuhim_feed_active_geos(
+            date_str=date_str,
+            max_offers_per_geo=nipuhim_max_offers_per_geo,
+        )
+        logs.extend(geo_logs)
+        weights_by_geo, geo_weight_logs = hub_nipuhim_equal_weights_per_geo(
+            feed_geos,
+            active_feeds=active,
+        )
+        logs.extend(geo_weight_logs)
+        if weights_by_geo:
+            logs.append(
+                f"Hub weights: per-geo equal split across feeds with offers "
+                f"({len(weights_by_geo)} geo(s))"
+            )
+            return HubWeightContext(
+                weights=_nipuhim_equal_global_weights(),
+                blend_feed_caps=blend_caps,
+                nipuhim_feed_caps=nipuhim_caps,
+                weights_by_geo=weights_by_geo,
+                nipuhim_feed_geos=feed_geos,
+                source="per_geo_equal",
+                logs=logs,
+            )
+        logs.append("Hub weights: no per-geo offer data — equal 33% global fallback")
+        return HubWeightContext(
+            weights=_nipuhim_equal_global_weights(),
+            blend_feed_caps=blend_caps,
+            nipuhim_feed_caps=nipuhim_caps,
+            nipuhim_feed_geos=feed_geos,
+            source="equal_global_fallback",
+            logs=logs,
+        )
+
     weights = hub_offer_weights_from_caps(
         blend_caps,
         nipuhim_caps,
         active_feeds=active,
-        hub_types=HUB_TYPES,
+        hub_types=hub_types,
     )
     if weights:
         blend_sum = sum(blend_caps.get(fk, 0) for fk in active)
@@ -512,6 +582,8 @@ def ensure_hub_offers(
     logs: List[str] = []
 
     for spec in CHILD_SPECS:
+        if not _spec_on_hub(spec):
+            continue
         key = _child_key(spec.hub_type, spec.feed_key)
         offer_name = hub_offer_name(spec.hub_type, spec.feed_key)
         child = child_state.get(key)
@@ -691,6 +763,32 @@ def ensure_hub_child_device_streams(
     return logs, geos_channels
 
 
+def _stream_hub_offer_weights(
+    offer_state: Dict[str, Any],
+    weights_by_offer_name: Dict[str, float],
+    *,
+    hub_types: Tuple[str, ...],
+    active_feeds: frozenset[str],
+) -> Tuple[Dict[int, float], List[int]]:
+    """Map hub offer names → Keitaro offer ids with positive or zero stream share."""
+    offer_id_to_weight: Dict[int, float] = {}
+    zero_offer_ids: List[int] = []
+    for offer_name, meta in offer_state.items():
+        if str(meta.get("hub_type") or "") not in hub_types:
+            continue
+        if str(meta.get("feed_key") or "") not in active_feeds:
+            continue
+        oid = meta.get("id")
+        if oid is None:
+            continue
+        w = float(weights_by_offer_name.get(offer_name, 0.0))
+        if w > 0:
+            offer_id_to_weight[int(oid)] = w
+        else:
+            zero_offer_ids.append(int(oid))
+    return offer_id_to_weight, zero_offer_ids
+
+
 def wire_hub_streams(
     *,
     dry_run: bool = True,
@@ -715,71 +813,121 @@ def wire_hub_streams(
         nipuhim_max_offers_per_geo=nipuhim_max_offers_per_geo,
         use_click_caps=use_click_caps,
     )
-    weights_by_name = wctx.weights
     logs: List[str] = list(wctx.logs)
-    offer_id_to_weight: Dict[int, float] = {}
-    zero_offer_ids: List[int] = []
-    for offer_name, meta in offer_state.items():
-        oid = meta.get("id")
-        if oid is None:
-            continue
-        w = weights_by_name.get(offer_name, 0.0)
-        if w > 0:
-            offer_id_to_weight[int(oid)] = w
-        else:
-            zero_offer_ids.append(int(oid))
+    hub_types = configured_hub_types()
+    active_feeds = hub_active_feed_keys()
+    per_geo = wctx.weights_by_geo or {}
+    use_per_geo = bool(per_geo) and hub_types == ("nipuhim",)
 
-    if dry_run and not offer_id_to_weight and not zero_offer_ids:
-        streams = _hub_device_streams(client, hub_id)
-        logs.append(
-            f"hub streams: would attach {len(offer_id_to_weight)} weighted + "
-            f"{len(zero_offer_ids)} zero-share hub offers per geo stream "
-            f"({len(streams)} streams on campaign {hub_id})"
+    if not use_per_geo:
+        weights_by_name = wctx.weights
+        offer_id_to_weight, zero_offer_ids = _stream_hub_offer_weights(
+            offer_state,
+            weights_by_name,
+            hub_types=hub_types,
+            active_feeds=active_feeds,
         )
-        state["hub_campaign_id"] = hub_id
-        state["active_feeds"] = sorted(hub_active_feed_keys())
-        state["weight_source"] = wctx.source
-        state["blend_feed_caps"] = wctx.blend_feed_caps
-        state["nipuhim_feed_caps"] = wctx.nipuhim_feed_caps
-        return state, logs
-
-    if not offer_id_to_weight and not zero_offer_ids:
-        raise ValueError("hub_offers missing — run ensure_hub_offers first")
-    if not offer_id_to_weight:
-        raise ValueError(
-            "No hub offers with positive weight — check KEITARO_HUB_ACTIVE_FEEDS "
-            f"(active: {sorted(hub_active_feed_keys())})"
-        )
-
-    streams = _hub_device_streams(client, hub_id)
-    if not streams:
-        raise ValueError(f"Hub campaign {hub_id} has no geo desktop/mobile streams")
-
-    for stream in streams:
-        sid = stream.get("id")
-        sname = stream.get("name") or ""
-        if sid is None:
-            continue
-        old_count = len(stream.get("offers") or [])
-        if dry_run:
+        if dry_run and not offer_id_to_weight and not zero_offer_ids:
+            streams = _hub_device_streams(client, hub_id)
             logs.append(
-                f"hub stream {sname} (id={sid}): would attach {len(offer_id_to_weight)} weighted + "
-                f"{len(zero_offer_ids)} zero-share offers (replacing {old_count})"
+                f"hub streams: would attach {len(offer_id_to_weight)} weighted + "
+                f"{len(zero_offer_ids)} zero-share hub offers per geo stream "
+                f"({len(streams)} streams on campaign {hub_id})"
             )
-            continue
-        set_flow_offers_weighted_keep_zeros(
-            int(sid), offer_id_to_weight, zero_offer_ids=zero_offer_ids
-        )
-        logs.append(
-            f"hub stream {sname} (id={sid}): attached {len(offer_id_to_weight)} weighted + "
-            f"{len(zero_offer_ids)} zero-share hub offers (replaced {old_count})"
-        )
+            state["hub_campaign_id"] = hub_id
+            state["active_feeds"] = sorted(hub_active_feed_keys())
+            state["hub_types"] = list(configured_hub_types())
+            state["weight_source"] = wctx.source
+            state["blend_feed_caps"] = wctx.blend_feed_caps
+            state["nipuhim_feed_caps"] = wctx.nipuhim_feed_caps
+            state["nipuhim_feed_geos"] = {
+                fk: sorted(geos) for fk, geos in (wctx.nipuhim_feed_geos or {}).items()
+            }
+            return state, logs
+
+        if not offer_id_to_weight and not zero_offer_ids:
+            raise ValueError("hub_offers missing — run ensure_hub_offers first")
+        if not offer_id_to_weight:
+            raise ValueError(
+                "No hub offers with positive weight — check KEITARO_HUB_ACTIVE_FEEDS "
+                f"(active: {sorted(hub_active_feed_keys())})"
+            )
+
+        streams = _hub_device_streams(client, hub_id)
+        if not streams:
+            raise ValueError(f"Hub campaign {hub_id} has no geo desktop/mobile streams")
+
+        for stream in streams:
+            sid = stream.get("id")
+            sname = stream.get("name") or ""
+            if sid is None:
+                continue
+            old_count = len(stream.get("offers") or [])
+            if dry_run:
+                logs.append(
+                    f"hub stream {sname} (id={sid}): would attach {len(offer_id_to_weight)} weighted + "
+                    f"{len(zero_offer_ids)} zero-share offers (replacing {old_count})"
+                )
+                continue
+            set_flow_offers_weighted_keep_zeros(
+                int(sid), offer_id_to_weight, zero_offer_ids=zero_offer_ids
+            )
+            logs.append(
+                f"hub stream {sname} (id={sid}): attached {len(offer_id_to_weight)} weighted + "
+                f"{len(zero_offer_ids)} zero-share hub offers (replaced {old_count})"
+            )
+    else:
+        streams = _hub_device_streams(client, hub_id)
+        if not streams:
+            raise ValueError(f"Hub campaign {hub_id} has no geo desktop/mobile streams")
+
+        zero_template = {hub_offer_name("nipuhim", fk): 0.0 for fk in sorted(active_feeds)}
+        for stream in streams:
+            sid = stream.get("id")
+            sname = stream.get("name") or ""
+            if sid is None:
+                continue
+            geo, _channel = parse_blend_stream_geo_channel(sname)
+            weights_by_name = per_geo.get(geo or "", zero_template)
+            offer_id_to_weight, zero_offer_ids = _stream_hub_offer_weights(
+                offer_state,
+                weights_by_name,
+                hub_types=hub_types,
+                active_feeds=active_feeds,
+            )
+            old_count = len(stream.get("offers") or [])
+            if dry_run:
+                active_parts = [
+                    f"{n.split('_')[-1]}={weights_by_name.get(n, 0):.1f}%"
+                    for n in sorted(weights_by_name)
+                    if weights_by_name.get(n, 0) > 0
+                ]
+                logs.append(
+                    f"hub stream {sname} (id={sid}): would attach "
+                    f"{len(offer_id_to_weight)} weighted + {len(zero_offer_ids)} zero-share "
+                    f"({', '.join(active_parts) or 'no feeds for geo'})"
+                )
+                continue
+            if not offer_id_to_weight and not zero_offer_ids:
+                logs.append(f"hub stream {sname} (id={sid}): skip (no hub offers in state)")
+                continue
+            set_flow_offers_weighted_keep_zeros(
+                int(sid), offer_id_to_weight, zero_offer_ids=zero_offer_ids
+            )
+            logs.append(
+                f"hub stream {sname} (id={sid}): attached {len(offer_id_to_weight)} weighted + "
+                f"{len(zero_offer_ids)} zero-share hub offers (replaced {old_count})"
+            )
 
     state["hub_campaign_id"] = hub_id
     state["active_feeds"] = sorted(hub_active_feed_keys())
+    state["hub_types"] = list(configured_hub_types())
     state["weight_source"] = wctx.source
     state["blend_feed_caps"] = wctx.blend_feed_caps
     state["nipuhim_feed_caps"] = wctx.nipuhim_feed_caps
+    state["nipuhim_feed_geos"] = {
+        fk: sorted(geos) for fk, geos in (wctx.nipuhim_feed_geos or {}).items()
+    }
     return state, logs
 
 
@@ -835,6 +983,10 @@ def run_hub_rewire_weights(
         "hub_campaign_id": state["hub_campaign_id"],
         "active_feeds": sorted(hub_active_feed_keys()),
         "weights": wctx.weights,
+        "weights_by_geo": wctx.weights_by_geo,
+        "nipuhim_feed_geos": {
+            fk: sorted(geos) for fk, geos in (wctx.nipuhim_feed_geos or {}).items()
+        },
         "weight_source": wctx.source,
         "blend_feed_caps": wctx.blend_feed_caps,
         "nipuhim_feed_caps": wctx.nipuhim_feed_caps,
@@ -896,6 +1048,10 @@ def run_hub_bootstrap(
         "hub_offers": state.get("hub_offers") or {},
         "active_feeds": sorted(hub_active_feed_keys()),
         "weights": wctx.weights,
+        "weights_by_geo": wctx.weights_by_geo,
+        "nipuhim_feed_geos": {
+            fk: sorted(geos) for fk, geos in (wctx.nipuhim_feed_geos or {}).items()
+        },
         "weight_source": wctx.source,
         "blend_feed_caps": wctx.blend_feed_caps,
         "nipuhim_feed_caps": wctx.nipuhim_feed_caps,
@@ -903,16 +1059,32 @@ def run_hub_bootstrap(
     }
 
 
-def format_weights_table(weights: Dict[str, float], *, source: str = "") -> str:
+def format_weights_table(
+    weights: Dict[str, float],
+    *,
+    source: str = "",
+    weights_by_geo: Optional[Dict[str, Dict[str, float]]] = None,
+) -> str:
     active = sorted(hub_active_feed_keys())
     lines = [
         "Hub offer weights (% of traffic):",
+        f"  Hub types: {', '.join(configured_hub_types())}",
         f"  Active feeds: {', '.join(active)}",
     ]
     if source:
         lines.append(f"  Source: {source}")
-    for name in sorted(weights.keys()):
-        w = weights[name]
-        tag = "" if w > 0 else " (zero — inactive feed)"
-        lines.append(f"  {name}: {w:.2f}%{tag}")
+    if weights_by_geo:
+        lines.append("  Per-geo (equal split among feeds with offers today):")
+        for geo in sorted(weights_by_geo):
+            parts = [
+                f"{name.replace('hub_nipuhim_', '')}={weights_by_geo[geo][name]:.1f}%"
+                for name in sorted(weights_by_geo[geo])
+                if weights_by_geo[geo].get(name, 0) > 0
+            ]
+            lines.append(f"    {geo}: {', '.join(parts)}")
+    else:
+        for name in sorted(weights.keys()):
+            w = weights[name]
+            tag = "" if w > 0 else " (zero — inactive feed)"
+            lines.append(f"  {name}: {w:.2f}%{tag}")
     return "\n".join(lines)
