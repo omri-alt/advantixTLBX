@@ -66,7 +66,7 @@ def main() -> int:
     parser.add_argument(
         "--repair-offer-urls",
         action="store_true",
-        help="Only set hub offer action_payload to raini-wrapped child campaign click URLs.",
+        help="Only set hub offer action_payload to direct child campaign tracker URLs (double_meta).",
     )
     parser.add_argument(
         "--skip-child-streams",

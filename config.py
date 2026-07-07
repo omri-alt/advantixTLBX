@@ -94,6 +94,10 @@ KEITARO_HUB_STATE_PATH = (
 KEITARO_HUB_RAIN_SHELL = (
     os.getenv("KEITARO_HUB_RAIN_SHELL") or "https://shopli.city/raini?rain="
 ).strip()
+# Hub campaign-link offers on 94: direct child tracker URL + this action type (not raini-wrapped).
+KEITARO_HUB_OFFER_ACTION_TYPE = (
+    os.getenv("KEITARO_HUB_OFFER_ACTION_TYPE") or "double_meta"
+).strip()
 # Nipuhim template for hub children: country flows + static product URLs (not KL-Main dynamic oadest).
 KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID = int(
     (os.getenv("KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID") or "1").strip() or "1"

@@ -28,6 +28,7 @@ from config import (
     KEITARO_HUB_BLEND_PCT,
     KEITARO_HUB_CAMPAIGN_ID,
     KEITARO_HUB_NIPUHIM_PCT,
+    KEITARO_HUB_OFFER_ACTION_TYPE,
     KEITARO_HUB_RAIN_SHELL,
     KEITARO_HUB_STATE_PATH,
     KEITARO_HUB_TYPES,
@@ -363,6 +364,11 @@ def child_campaign_click_url(
     return f"{domain}/{alias}?{HUB_CHILD_CAMPAIGN_URL_MACROS}"
 
 
+def hub_offer_action_type() -> str:
+    """Keitaro offer action_type for hub → child campaign links (default ``double_meta``)."""
+    return (KEITARO_HUB_OFFER_ACTION_TYPE or "double_meta").strip() or "double_meta"
+
+
 def hub_offer_click_url(
     client: KeitaroClient,
     campaign_id: int,
@@ -370,14 +376,29 @@ def hub_offer_click_url(
     alias: Optional[str] = None,
     domain: Optional[str] = None,
 ) -> str:
-    """Hub campaign 94 offer URL: raini shell + child campaign tracker link."""
-    inner = child_campaign_click_url(client, campaign_id, alias=alias, domain=domain)
-    return wrap_hub_child_click_url(inner)
+    """Hub campaign 94 offer URL: direct child campaign tracker link (no shopli rain shell)."""
+    return child_campaign_click_url(client, campaign_id, alias=alias, domain=domain)
 
 
-def _hub_offer_needs_url_update(current_url: str, expected_wrapped_url: str) -> bool:
-    """Hub offers must store the raini-wrapped URL exactly (traffic source approval)."""
-    return (current_url or "").strip() != (expected_wrapped_url or "").strip()
+def _normalize_hub_offer_url(url: str) -> str:
+    """Compare hub offer URLs ignoring legacy raini wrapper."""
+    from assistance import strip_nipuhim_rain_shell
+
+    return strip_nipuhim_rain_shell((url or "").strip())
+
+
+def _hub_offer_needs_update(
+    current: Dict[str, Any],
+    expected_url: str,
+    *,
+    expected_action_type: Optional[str] = None,
+) -> bool:
+    """True when hub offer URL or action_type diverges from the v2 nipuhim shape."""
+    action_type = expected_action_type or hub_offer_action_type()
+    current_url = (current.get("action_payload") or "").strip()
+    if _normalize_hub_offer_url(current_url) != _normalize_hub_offer_url(expected_url):
+        return True
+    return (current.get("action_type") or "").strip() != action_type
 
 
 def _hub_campaign_link_offer_body(
@@ -388,7 +409,7 @@ def _hub_campaign_link_offer_body(
 ) -> Dict[str, Any]:
     click_url = hub_offer_click_url(client, int(child_campaign_id), alias=alias)
     return {
-        "action_type": "campaign",
+        "action_type": hub_offer_action_type(),
         "action_options": {"campaign_id": int(child_campaign_id)},
         "action_payload": click_url,
     }
@@ -606,9 +627,8 @@ def ensure_hub_offers(
             oid = int(saved["id"])
             repoint = int(saved.get("child_campaign_id") or 0) != child_id
             current = offers_by_name.get(offer_name) or {}
-            current_url = (current.get("action_payload") or "").strip()
-            needs_url = _hub_offer_needs_url_update(current_url, expected_url)
-            if repoint or needs_url:
+            needs_update = _hub_offer_needs_update(current, expected_url)
+            if repoint or needs_update:
                 if dry_run:
                     if repoint:
                         logs.append(
@@ -649,8 +669,7 @@ def ensure_hub_offers(
         existing = offers_by_name.get(offer_name)
         if existing and existing.get("id"):
             oid = int(existing["id"])
-            current_url = (existing.get("action_payload") or "").strip()
-            if _hub_offer_needs_url_update(current_url, expected_url):
+            if _hub_offer_needs_update(existing, expected_url):
                 if dry_run:
                     logs.append(
                         f"hub offer {offer_name}: would set click URL on id={oid} "
@@ -698,6 +717,86 @@ def ensure_hub_offers(
             f"hub offer {offer_name}: created id={oid} -> campaign {child['id']} "
             f"({expected_url})"
         )
+
+    state["hub_offers"] = offer_state
+    return state, logs
+
+
+def repair_all_hub_offer_urls(
+    *,
+    dry_run: bool = True,
+    client: Optional[KeitaroClient] = None,
+    state: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Set every hub_* offer (blend + nipuhim, on-hub or not) to direct child URL + double_meta.
+
+    ``ensure_hub_offers`` only touches offers wired on campaign 94 today; this repairs all
+    hub campaign-link offers that already exist so re-enabling blend feeds does not need manual fixes.
+    """
+    client = client or KeitaroClient()
+    state = dict(state or load_hub_state())
+    child_state = state.get("child_campaigns") or {}
+    offer_state: Dict[str, Any] = dict(state.get("hub_offers") or {})
+    offers_by_name = {(o.get("name") or "").strip(): o for o in client.get_offers()}
+    logs: List[str] = []
+
+    for spec in CHILD_SPECS:
+        key = _child_key(spec.hub_type, spec.feed_key)
+        offer_name = hub_offer_name(spec.hub_type, spec.feed_key)
+        child = child_state.get(key)
+        if not child or not child.get("id"):
+            logs.append(f"hub offer {offer_name}: no child campaign — skip")
+            continue
+
+        child_id = int(child["id"])
+        child_alias = (child.get("alias") or spec.alias or "").strip() or None
+        expected_url = hub_offer_click_url(client, child_id, alias=child_alias)
+
+        saved = offer_state.get(offer_name) or {}
+        oid = saved.get("id")
+        current = offers_by_name.get(offer_name) or {}
+        if not oid and current.get("id"):
+            oid = int(current["id"])
+        if not oid:
+            logs.append(f"hub offer {offer_name}: no Keitaro offer — skip")
+            continue
+        oid = int(oid)
+
+        if not current or int(current.get("id") or 0) != oid:
+            for o in client.get_offers():
+                if int(o.get("id") or 0) == oid:
+                    current = o
+                    break
+
+        on_hub = _spec_on_hub(spec)
+        tag = "" if on_hub else " (off-hub)"
+
+        if _hub_offer_needs_update(current, expected_url):
+            if dry_run:
+                logs.append(
+                    f"hub offer {offer_name}{tag}: would set id={oid} -> "
+                    f"{hub_offer_action_type()} + direct URL"
+                )
+            else:
+                client.update_offer(
+                    oid,
+                    _hub_campaign_link_offer_body(client, child_id, alias=child_alias),
+                )
+                logs.append(
+                    f"hub offer {offer_name}{tag}: set id={oid} -> "
+                    f"{hub_offer_action_type()} + direct URL"
+                )
+        else:
+            logs.append(f"hub offer {offer_name}{tag}: reuse id={oid}")
+
+        offer_state[offer_name] = {
+            "id": oid,
+            "child_campaign_id": child_id,
+            "click_url": expected_url,
+            "hub_type": spec.hub_type,
+            "feed_key": spec.feed_key,
+        }
 
     state["hub_offers"] = offer_state
     return state, logs
@@ -936,10 +1035,10 @@ def run_hub_repair_offer_urls(
     dry_run: bool = True,
     state_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Ensure hub campaign-link offers have raini-wrapped child campaign click URLs in action_payload."""
+    """Ensure all hub campaign-link offers use direct child tracker URLs (double_meta)."""
     client = KeitaroClient()
     state = load_hub_state(state_path)
-    state, logs = ensure_hub_offers(dry_run=dry_run, client=client, state=state)
+    state, logs = repair_all_hub_offer_urls(dry_run=dry_run, client=client, state=state)
     if not dry_run:
         save_hub_state(state, state_path)
     return {

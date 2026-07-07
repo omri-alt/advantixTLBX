@@ -336,6 +336,46 @@ def kelkoo_keitaro_action_payload(geo: str, merchant_url: str, feed_tag: str) ->
     return build_offer_action_payload(geo, merchant_url, account_id=acc, feed=1)
 
 
+NIPUHIM_RAINOTEST_SHELL = "https://shopli.city/rainotest?rain="
+
+
+def strip_nipuhim_rain_shell(url: str) -> str:
+    """Remove shopli rainotest/raini shell if present (idempotent)."""
+    u = (url or "").strip()
+    for prefix in (NIPUHIM_RAINOTEST_SHELL, "https://shopli.city/raini?rain="):
+        if u.startswith(prefix):
+            return u[len(prefix) :]
+    return u
+
+
+def build_nipuhim_v2_action_payload(
+    geo: str,
+    product_url: str,
+    account_id: Optional[str] = None,
+    feed: int = 1,
+) -> str:
+    """
+    Direct Kelkoo offer URL for NIPUHIM-feed* child campaigns (no shopli rain shell).
+
+    Legacy HrQBXp sync still uses ``build_offer_action_payload()`` with rainotest.
+    """
+    geo = (geo or "").strip().lower()[:2]
+    if feed == 5:
+        return build_nipuhim_feed5_action_payload(geo, product_url)
+    encoded = quote(product_url or "https://example.com/placeholder", safe="")
+    if feed == 2:
+        return (
+            "https://sidehustlerbaby.com/klk-merchant"
+            f"?geo={geo}&merchantUrl={encoded}&pub_click_id={{subid}}"
+        )
+    acc = (account_id or FEED1_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID).strip()
+    return (
+        f"https://{geo}-go.kelkoogroup.net/permanentLinkGo"
+        f"?country={geo}&id={acc}&merchantUrl={encoded}"
+        f"&publisherSubId=shoplicity&ctrl_ab={{var10}}&publisherClickId={{subid}}"
+    )
+
+
 def build_offer_action_payload(
     geo: str,
     product_url: str,

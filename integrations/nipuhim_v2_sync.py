@@ -10,8 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from assistance import (
-    build_nipuhim_feed5_action_payload,
-    build_offer_action_payload,
+    build_nipuhim_v2_action_payload,
     create_next_geo_offers,
     ensure_blend_device_stream,
     get_campaign_streams,
@@ -91,6 +90,19 @@ def sync_sheet_to_nipuhim_v2(
         f"Nipuhim v2 sync: sheet={sheet_name!r} account={account} "
         f"-> {feed_key} campaign_id={campaign_id} (device flows)"
     )
+
+    from integrations.nipuhim_stream_cleanup import (
+        cleanup_nipuhim_campaign_streams,
+        nipuhim_campaign_needs_stream_cleanup,
+    )
+
+    if nipuhim_campaign_needs_stream_cleanup(campaign_id):
+        print(f"  Cleaning legacy/fallback stream order on campaign {campaign_id} ...")
+        cleanup_logs, stats = cleanup_nipuhim_campaign_streams(
+            campaign_id, dry_run=False, label=feed_key
+        )
+        for line in cleanup_logs:
+            print(f"    {line}")
 
     try:
         by_geo, rows_by_geo = read_sheet_today_offers(sheet_name, max_per_geo=max_offers)
@@ -198,9 +210,9 @@ def sync_sheet_to_nipuhim_v2(
             offer = offers[i]
             link = store_links[i]
             if account == 5:
-                new_payload = build_nipuhim_feed5_action_payload(geo, link)
+                new_payload = build_nipuhim_v2_action_payload(geo, link, feed=5)
             else:
-                new_payload = build_offer_action_payload(
+                new_payload = build_nipuhim_v2_action_payload(
                     geo, link, account_id=kelkoo_account_id, feed=feed_num if feed_num != 5 else 1
                 )
             try:
