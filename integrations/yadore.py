@@ -274,12 +274,39 @@ def _yadore_host(s: str) -> str:
     return t.split("/")[0].split("?")[0]
 
 
+# Second-level ccTLD / compound public suffixes (co.uk, com.au, …).
+_YADORE_MULTI_PART_SUFFIXES = frozenset(
+    {
+        "co.uk",
+        "org.uk",
+        "ac.uk",
+        "gov.uk",
+        "com.au",
+        "net.au",
+        "org.au",
+        "co.nz",
+        "com.br",
+        "co.za",
+        "com.mx",
+        "co.jp",
+        "com.ar",
+        "com.tr",
+        "co.kr",
+        "com.sg",
+        "com.hk",
+    }
+)
+
+
 def _yadore_registrable_domain(host: str) -> str:
     h = _yadore_host(host)
     parts = h.split(".")
-    if len(parts) >= 2:
-        return ".".join(parts[-2:])
-    return h
+    if len(parts) < 2:
+        return h
+    suffix2 = ".".join(parts[-2:])
+    if suffix2 in _YADORE_MULTI_PART_SUFFIXES and len(parts) >= 3:
+        return ".".join(parts[-3:])
+    return suffix2
 
 
 def _catalog_host_match(probe_host: str, catalog_name: str) -> bool:
