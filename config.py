@@ -337,6 +337,29 @@ TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES = max(
     5, min(60, TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES)
 )
 
+# Trillion nightly close: pause campaigns whose Target_URL routes to Keitaro hub 94 (Domain alias).
+TRILLION_HUB_NIGHTLY_CLOSE_ENABLED = (
+    os.getenv("TRILLION_HUB_NIGHTLY_CLOSE_ENABLED", "1").strip().lower()
+    not in ("0", "false", "no", "off")
+)
+TRILLION_HUB_CLOSE_TZ = (os.getenv("TRILLION_HUB_CLOSE_TZ") or "Asia/Jerusalem").strip()
+_tr_hub_close_h = (os.getenv("TRILLION_HUB_CLOSE_HOUR") or "1").strip()
+_tr_hub_close_m = (os.getenv("TRILLION_HUB_CLOSE_MINUTE") or "0").strip()
+try:
+    TRILLION_HUB_CLOSE_HOUR = int(_tr_hub_close_h)
+except ValueError:
+    TRILLION_HUB_CLOSE_HOUR = 1
+try:
+    TRILLION_HUB_CLOSE_MINUTE = int(_tr_hub_close_m)
+except ValueError:
+    TRILLION_HUB_CLOSE_MINUTE = 0
+TRILLION_HUB_CLOSE_HOUR = max(0, min(23, TRILLION_HUB_CLOSE_HOUR))
+TRILLION_HUB_CLOSE_MINUTE = max(0, min(59, TRILLION_HUB_CLOSE_MINUTE))
+# Optional override; else resolved live from Keitaro campaign ``KEITARO_HUB_CAMPAIGN_ID`` (94).
+TRILLION_HUB_CLOSE_ALIAS = (os.getenv("TRILLION_HUB_CLOSE_ALIAS") or "").strip()
+# Optional comma folders (e.g. ``Blend``). Empty = any folder whose URL hits the hub alias.
+TRILLION_HUB_CLOSE_FOLDERS = (os.getenv("TRILLION_HUB_CLOSE_FOLDERS") or "").strip()
+
 BLEND_CPC_REFRESH_STATE_PATH = (
     os.getenv("BLEND_CPC_REFRESH_STATE_PATH") or "runtime/blend_cpc_refresh_state.json"
 ).strip()

@@ -149,6 +149,22 @@ def _run_close_blend_zp_scheduled() -> None:
     logger.warning("CloseBlendZpAuto not registered; skip Blend ZP close cron")
 
 
+def _run_close_nipuhim_tr_scheduled() -> None:
+    """Daily pause for Trillion campaigns routing to Keitaro hub campaign 94."""
+    from config import TRILLION_HUB_NIGHTLY_CLOSE_ENABLED
+
+    if not TRILLION_HUB_NIGHTLY_CLOSE_ENABLED:
+        logger.info("CloseNipuhimTrAuto skipped (TRILLION_HUB_NIGHTLY_CLOSE_ENABLED=0)")
+        return
+    _ensure_listeners()
+    for automation in _automation_listeners:
+        if automation.__class__.__name__ == "CloseNipuhimTrAuto":
+            logger.info("=== CloseNipuhimTrAuto daily cron (Trillion hub pause) ===")
+            automation._wrap_run("scheduler", automation._execute)
+            return
+    logger.warning("CloseNipuhimTrAuto not registered; skip Trillion hub close cron")
+
+
 def _run_effinity_mtd_postbacks_scheduled() -> None:
     """Daily Effinity MTD sales → Keitaro ``salecpa`` postbacks for missing conversions."""
     from config import EFFINITY_API_KEY, EFFINITY_SALES_SCHEDULER_ENABLED
@@ -306,6 +322,9 @@ def start_autoserver_scheduler() -> None:
         SK_EXPLORATION_WL_SYNC_MINUTE,
         SK_EXPLORATION_WL_SYNC_TZ,
         TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES,
+        TRILLION_HUB_CLOSE_HOUR,
+        TRILLION_HUB_CLOSE_MINUTE,
+        TRILLION_HUB_CLOSE_TZ,
         ZEROPARK_BLEND_CLOSE_HOUR,
         ZEROPARK_BLEND_CLOSE_MINUTE,
         ZEROPARK_BLEND_CLOSE_TZ,
@@ -321,6 +340,8 @@ def start_autoserver_scheduler() -> None:
         if name == "CloseNipuhimAuto":
             continue
         if name == "CloseBlendZpAuto":
+            continue
+        if name == "CloseNipuhimTrAuto":
             continue
         if name == "SKExplorationWlSyncAuto":
             continue
@@ -386,6 +407,27 @@ def start_autoserver_scheduler() -> None:
     try:
         from zoneinfo import ZoneInfo
 
+        tr_hub_close_tz = ZoneInfo(TRILLION_HUB_CLOSE_TZ or "Asia/Jerusalem")
+    except Exception:
+        logger.warning("Invalid TRILLION_HUB_CLOSE_TZ %r; using Asia/Jerusalem", TRILLION_HUB_CLOSE_TZ)
+        from zoneinfo import ZoneInfo
+
+        tr_hub_close_tz = ZoneInfo("Asia/Jerusalem")
+    _scheduler.add_job(
+        _run_close_nipuhim_tr_scheduled,
+        trigger="cron",
+        hour=int(TRILLION_HUB_CLOSE_HOUR),
+        minute=int(TRILLION_HUB_CLOSE_MINUTE),
+        timezone=tr_hub_close_tz,
+        id="trillion_close_hub_campaign",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
+    try:
+        from zoneinfo import ZoneInfo
+
         sk_wl_tz = ZoneInfo(SK_EXPLORATION_WL_SYNC_TZ or "UTC")
     except Exception:
         logger.warning("Invalid SK_EXPLORATION_WL_SYNC_TZ %r; using UTC", SK_EXPLORATION_WL_SYNC_TZ)
@@ -440,6 +482,7 @@ def start_autoserver_scheduler() -> None:
             if automation.__class__.__name__ in (
                 "CloseNipuhimAuto",
                 "CloseBlendZpAuto",
+                "CloseNipuhimTrAuto",
                 "SKExplorationWlSyncAuto",
             ):
                 continue
@@ -458,6 +501,7 @@ def start_autoserver_scheduler() -> None:
             "BlendTrCapGuard every %d minutes; "
             "Zeropark close at %02d:%02d %s; "
             "Zeropark Blend close at %02d:%02d %s; "
+            "Trillion hub close at %02d:%02d %s; "
             "SK WL sync at %02d:%02d %s; "
             "Effinity MTD postbacks at %02d:%02d %s)"
         ),
@@ -469,6 +513,9 @@ def start_autoserver_scheduler() -> None:
         int(ZEROPARK_BLEND_CLOSE_HOUR),
         int(ZEROPARK_BLEND_CLOSE_MINUTE),
         ZEROPARK_BLEND_CLOSE_TZ,
+        int(TRILLION_HUB_CLOSE_HOUR),
+        int(TRILLION_HUB_CLOSE_MINUTE),
+        TRILLION_HUB_CLOSE_TZ,
         int(SK_EXPLORATION_WL_SYNC_HOUR_LOCAL),
         int(SK_EXPLORATION_WL_SYNC_MINUTE),
         SK_EXPLORATION_WL_SYNC_TZ,
