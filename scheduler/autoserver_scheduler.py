@@ -322,6 +322,7 @@ def start_autoserver_scheduler() -> None:
         SK_EXPLORATION_WL_SYNC_MINUTE,
         SK_EXPLORATION_WL_SYNC_TZ,
         TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES,
+        DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES,
         TRILLION_HUB_CLOSE_HOUR,
         TRILLION_HUB_CLOSE_MINUTE,
         TRILLION_HUB_CLOSE_TZ,
@@ -349,6 +350,14 @@ def start_autoserver_scheduler() -> None:
         job_id = f"autoserver_hourly_{name}"
         if name == "BlendTrCapGuard":
             interval_m = int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES)
+            trigger_kwargs = (
+                {"minute": 0}
+                if interval_m >= 60
+                else {"minute": f"*/{interval_m}"}
+            )
+            job_id = f"autoserver_interval_{name}"
+        if name == "DomainDemandRefresh":
+            interval_m = int(DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES)
             trigger_kwargs = (
                 {"minute": 0}
                 if interval_m >= 60

@@ -72,6 +72,32 @@ def _skip_blend_v2(ctx: RunContext) -> bool:
     return False
 
 
+def _skip_domain_demand(ctx: RunContext) -> bool:
+    if _skip_keitaro(ctx):
+        return True
+    from config import DOMAIN_DEMAND_ENABLED
+
+    return not DOMAIN_DEMAND_ENABLED
+
+
+def _skip_hub_blend_child_flows(ctx: RunContext) -> bool:
+    if _skip_keitaro(ctx):
+        return True
+    from config import KEITARO_HUB_BLEND_DOMAIN_ENABLED
+
+    return not KEITARO_HUB_BLEND_DOMAIN_ENABLED
+
+
+def _skip_trillion_activate(ctx: RunContext) -> bool:
+    if _skip_keitaro(ctx):
+        return True
+    from config import DOMAIN_DEMAND_ENABLED, DOMAIN_TRILLION_GUARD_ENABLED, KEYTR
+
+    if not DOMAIN_DEMAND_ENABLED or not DOMAIN_TRILLION_GUARD_ENABLED:
+        return True
+    return not bool(KEYTR)
+
+
 STAGES: tuple[StageDef, ...] = (
     StageDef("monthly_log", "0a - Monthly log (yesterday)", ()),
     StageDef("blend_potential", "0b - Blend potential sheets", (), skip_if=_skip_offers_only),
@@ -126,6 +152,27 @@ STAGES: tuple[StageDef, ...] = (
         ("blend",),
         skip_if=_skip_blend_v2,
         fatal=True,
+    ),
+    StageDef(
+        "domain_demand",
+        "7e - Domain demand bill (hub 94)",
+        ("hub_rewire", "blend_v2"),
+        skip_if=_skip_domain_demand,
+        fatal=False,
+    ),
+    StageDef(
+        "hub_blend_child_flows",
+        "7f - Hub blend routing (sub_id_15 on child flows)",
+        ("blend_v2", "domain_demand"),
+        skip_if=_skip_hub_blend_child_flows,
+        fatal=False,
+    ),
+    StageDef(
+        "trillion_activate",
+        "7g - Trillion activate (domain demand segments)",
+        ("domain_demand", "hub_blend_child_flows"),
+        skip_if=_skip_trillion_activate,
+        fatal=False,
     ),
     StageDef(
         "late_sales",

@@ -552,6 +552,27 @@ def stage_hub_rewire(ctx: RunContext) -> int:
     return 0
 
 
+def stage_domain_demand(ctx: RunContext) -> int:
+    rdw = _import_daily()
+    if not rdw.run_domain_demand_daily_step(ctx.date_str):
+        return 1
+    return 0
+
+
+def stage_hub_blend_child_flows(ctx: RunContext) -> int:
+    rdw = _import_daily()
+    if not rdw.run_hub_blend_child_flows_daily_step(ctx.date_str):
+        return 1
+    return 0
+
+
+def stage_trillion_activate(ctx: RunContext) -> int:
+    rdw = _import_daily()
+    if not rdw.run_trillion_activate_daily_step(ctx.date_str):
+        return 1
+    return 0
+
+
 def stage_late_sales(ctx: RunContext) -> int:
     rdw = _import_daily()
     service = rdw.get_sheets_service()
@@ -585,6 +606,9 @@ STAGE_HANDLERS: Dict[str, Callable[[RunContext], int]] = {
     "blend": stage_blend,
     "blend_v2": stage_blend_v2,
     "hub_rewire": stage_hub_rewire,
+    "domain_demand": stage_domain_demand,
+    "hub_blend_child_flows": stage_hub_blend_child_flows,
+    "trillion_activate": stage_trillion_activate,
     "late_sales": stage_late_sales,
     "conversion_postbacks": stage_conversion_postbacks,
 }

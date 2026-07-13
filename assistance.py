@@ -845,6 +845,171 @@ def set_flow_offers_weighted_keep_zeros(
     return client.update_stream(stream_id, {"offers": offers})
 
 
+def hub_domain_traffic_filter_spec() -> Dict[str, Any]:
+    """Literal ``sub_id_15=domain`` tag set by hub campaign 94 on child campaign links."""
+    from config import KEITARO_HUB_BLEND_TRAFFIC_SUB, KEITARO_HUB_BLEND_TRAFFIC_VALUE
+
+    sub = (KEITARO_HUB_BLEND_TRAFFIC_SUB or "sub_id_15").strip()
+    val = (KEITARO_HUB_BLEND_TRAFFIC_VALUE or "domain").strip()
+    return {"name": sub, "mode": "accept", "payload": [val]}
+
+
+def domain_blend_stream_name(geo: str, channel: str) -> str:
+    """Dedicated blend-domain flow on Quality campaigns: ``fr_desktop_domain``."""
+    return f"{blend_device_stream_name(geo, channel)}_domain"
+
+
+def domain_blend_filter_specs(geo_code: str, channel: str) -> List[Dict[str, Any]]:
+    """Country + device + hub domain traffic tag (for child campaigns fed from campaign 94)."""
+    specs = list(_blend_filter_specs(geo_code, channel))
+    specs.append(hub_domain_traffic_filter_spec())
+    return specs
+
+
+def _assign_domain_filter_ids(
+    specs: List[Dict[str, Any]],
+    current_filters: List[Dict[str, Any]],
+    channel: str,
+) -> List[Dict[str, Any]]:
+    """Attach filter ids from an existing stream when refreshing domain blend flows."""
+    from config import KEITARO_HUB_BLEND_TRAFFIC_SUB
+
+    sub_name = (KEITARO_HUB_BLEND_TRAFFIC_SUB or "sub_id_15").strip().lower()
+    out = _assign_blend_filter_ids(specs, current_filters, channel)
+    domain_spec = next((s for s in specs if (s.get("name") or "").lower() == sub_name), None)
+    if not domain_spec:
+        return out
+    domain_id: Optional[int] = None
+    for f in current_filters or []:
+        if (f.get("name") or "").strip().lower() == sub_name and f.get("id") is not None:
+            domain_id = int(f["id"])
+            break
+    if domain_id is not None:
+        for row in out:
+            if (row.get("name") or "").strip().lower() == sub_name:
+                row["id"] = domain_id
+    return out
+
+
+def set_hub_child_domain_flow_filters(
+    stream_id: int,
+    geo: str,
+    channel: str,
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Ensure country + device + ``sub_id_15=domain`` on a hub-fed child campaign flow."""
+    client = KeitaroClient(base_url=base_url, api_key=api_key)
+    geo_code = _geo_for_api(geo)
+    if not geo_code:
+        raise ValueError(f"Invalid country code {geo!r}")
+    resp = client._session.get(client._api_path(f"streams/{int(stream_id)}"), timeout=30)
+    if not resp.ok:
+        raise KeitaroClientError(
+            f"Keitaro API error: {resp.status_code}", resp.status_code, resp.text
+        )
+    current = resp.json() if resp.content else {}
+    specs = domain_blend_filter_specs(geo_code, channel)
+    filters = _assign_domain_filter_ids(specs, current.get("filters") or [], channel)
+    return client.update_stream(int(stream_id), {"filters": filters})
+
+
+def ensure_domain_blend_stream(
+    campaign_id: int,
+    geo: str,
+    channel: str,
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    skip_if_exists: bool = True,
+) -> Dict[str, Any]:
+    """
+    ``{geo}_{channel}_domain`` flow for Quality campaigns (blend hub traffic only).
+
+    Existing ``{geo}_{channel}`` flows on those campaigns stay for direct quality traffic.
+    """
+    client = KeitaroClient(base_url=base_url, api_key=api_key)
+    flow_name = domain_blend_stream_name(geo, channel)
+    if skip_if_exists:
+        name_lower = flow_name.lower()
+        for s in client.get_streams(int(campaign_id)):
+            if (s.get("name") or "").strip().lower() == name_lower:
+                out = dict(s)
+                out["_skipped"] = True
+                sid = out.get("id")
+                if sid is not None:
+                    set_hub_child_domain_flow_filters(
+                        int(sid), geo, channel, base_url=base_url, api_key=api_key
+                    )
+                return out
+    geo_code = _geo_for_api(geo)
+    if not geo_code:
+        raise ValueError(f"Invalid country code {geo!r}")
+    filters = domain_blend_filter_specs(geo_code, channel)
+    payload = {
+        "campaign_id": int(campaign_id),
+        "type": "regular",
+        "name": flow_name,
+        "schema": "landings",
+        "action_type": "http",
+        "state": "active",
+        "weight": 100,
+        "filter_or": False,
+        "collect_clicks": True,
+        "offer_selection": "before_click",
+        "filters": filters,
+        "offers": [],
+    }
+    return client.create_stream(payload)
+
+
+def refresh_hub_child_domain_filters(
+    campaign_id: int,
+    *,
+    only_geo: Optional[str] = None,
+    include_domain_suffix_streams: bool = False,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Tuple[int, List[str]]:
+    """
+    Add ``sub_id_15=domain`` to hub-fed child flows.
+
+    By default updates ``{geo}_desktop`` / ``{geo}_mobile`` (BLEND-feed* / NIPUHIM-feed*).
+    Set ``include_domain_suffix_streams`` for Quality campaigns' ``*_domain`` flows too.
+    """
+    updated = 0
+    errors: List[str] = []
+    geo_filter = (only_geo or "").strip().lower()[:2] or None
+    try:
+        streams = get_campaign_streams(int(campaign_id), base_url=base_url, api_key=api_key)
+    except Exception as e:
+        return 0, [f"get_streams: {e}"]
+    for s in streams:
+        name = (s.get("name") or "").strip()
+        geo, channel = parse_blend_stream_geo_channel(name)
+        if not geo or channel not in ("desktop", "mobile"):
+            continue
+        is_domain_stream = name.lower().endswith("_domain")
+        if is_domain_stream and not include_domain_suffix_streams:
+            continue
+        if not is_domain_stream and include_domain_suffix_streams:
+            continue
+        if geo_filter and geo != geo_filter:
+            continue
+        sid = s.get("id")
+        if sid is None:
+            continue
+        try:
+            set_hub_child_domain_flow_filters(
+                int(sid), geo, channel, base_url=base_url, api_key=api_key
+            )
+            updated += 1
+        except KeitaroClientError as e:
+            errors.append(f"{name} stream_id={sid}: {e}")
+    return updated, errors
+
+
 def blend_device_stream_name(geo: str, channel: str) -> str:
     """Keitaro flow name for Blend device split: ``de_desktop``, ``de_mobile``."""
     g = normalize_geo(geo)
@@ -881,7 +1046,12 @@ def parse_blend_stream_geo_channel(flow_name: str) -> Tuple[Optional[str], Optio
     if not name:
         return None, None
     lower = name.lower()
-    for suffix, channel in (("_desktop", "desktop"), ("_mobile", "mobile")):
+    for suffix, channel in (
+        ("_desktop_domain", "desktop"),
+        ("_mobile_domain", "mobile"),
+        ("_desktop", "desktop"),
+        ("_mobile", "mobile"),
+    ):
         if lower.endswith(suffix):
             base = lower[: -len(suffix)]
             if base and (not SUPPORTED_GEOS or base in SUPPORTED_GEOS):

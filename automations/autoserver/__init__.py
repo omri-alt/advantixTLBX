@@ -78,6 +78,11 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
         "label": "Keitaro feed balance checkmon (notes only)",
         "schedule": "Every 2 hours (even hours)",
     },
+    {
+        "class_name": "DomainDemandRefresh",
+        "label": "Domain-demand guard (weights + Trillion pause)",
+        "schedule": "Every 30 minutes (DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES)",
+    },
 ]
 
 
@@ -87,6 +92,7 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.close_blend_zp import CloseBlendZpAuto
     from automations.autoserver.close_nipuhim import CloseNipuhimAuto
     from automations.autoserver.close_nipuhim_tr import CloseNipuhimTrAuto
+    from automations.autoserver.domain_demand_refresh import DomainDemandRefresh
     from automations.autoserver.keitaro_feed_balance_checkmon import KeitaroFeedBalanceCheckmon
     from automations.autoserver.klfix_optimize import KLFIXoptimize
     from automations.autoserver.klwl import KLWL
@@ -111,3 +117,4 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     register_func(BlendTrCapGuard())
     register_func(NipuhimUnmonRepair())
     register_func(KeitaroFeedBalanceCheckmon())
+    register_func(DomainDemandRefresh())

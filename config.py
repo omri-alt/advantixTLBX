@@ -114,6 +114,13 @@ BLEND_HUB_V2_ENABLED = str(
 KEITARO_HUB_REWIRE_ENABLED = str(
     os.getenv("KEITARO_HUB_REWIRE_ENABLED") or "1"
 ).strip().lower() in ("1", "true", "yes", "on")
+# Child campaigns fed from hub 94: flows must match ``sub_id_15=domain`` (set on hub offer URLs).
+KEITARO_HUB_BLEND_DOMAIN_ENABLED = str(
+    os.getenv("KEITARO_HUB_BLEND_DOMAIN_ENABLED") or "1"
+).strip().lower() in ("1", "true", "yes", "on")
+KEITARO_HUB_BLEND_TRAFFIC_SUB = (os.getenv("KEITARO_HUB_BLEND_TRAFFIC_SUB") or "sub_id_15").strip()
+KEITARO_HUB_BLEND_TRAFFIC_VALUE = (os.getenv("KEITARO_HUB_BLEND_TRAFFIC_VALUE") or "domain").strip()
+KEITARO_QUALITY_CAMPAIGN_GROUP = (os.getenv("KEITARO_QUALITY_CAMPAIGN_GROUP") or "Quality").strip()
 
 # Keitaro PHP admin bulk (POST /admin/?bulk): object names to try for removing offers.
 # - offers.update: postData {"id": N, "state": "deleted"} (soft-delete; matches UI response).
@@ -359,6 +366,43 @@ TRILLION_HUB_CLOSE_MINUTE = max(0, min(59, TRILLION_HUB_CLOSE_MINUTE))
 TRILLION_HUB_CLOSE_ALIAS = (os.getenv("TRILLION_HUB_CLOSE_ALIAS") or "").strip()
 # Optional comma folders (e.g. ``Blend``). Empty = any folder whose URL hits the hub alias.
 TRILLION_HUB_CLOSE_FOLDERS = (os.getenv("TRILLION_HUB_CLOSE_FOLDERS") or "").strip()
+
+# Domain-demand workbook: daily click bill for hub campaign 94 (Nipuhim + Blend).
+DOMAIN_DEMAND_SHEET_ID = (
+    os.getenv("DOMAIN_DEMAND_SHEET_ID") or "1RzC8f7MSzq0YexMceEFTtiCdbU1Bxoa3ApyGxLZBzvA"
+).strip()
+DOMAIN_DEMAND_ENABLED = (
+    os.getenv("DOMAIN_DEMAND_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+)
+DOMAIN_DEMAND_SUMMARY_TAB = (os.getenv("DOMAIN_DEMAND_SUMMARY_TAB") or "summary").strip()
+DOMAIN_DEMAND_BILL_TAB = (os.getenv("DOMAIN_DEMAND_BILL_TAB") or "bill").strip()
+DOMAIN_DEMAND_SUMMARY_BY_GEO_TAB = (
+    os.getenv("DOMAIN_DEMAND_SUMMARY_BY_GEO_TAB") or "summary_by_geo"
+).strip()
+try:
+    DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO = int(
+        (os.getenv("DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO") or "500").strip()
+    )
+except ValueError:
+    DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO = 500
+DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO = max(0, DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO)
+try:
+    DOMAIN_DEMAND_TRILLION_PAUSE_FILL_PCT = float(
+        (os.getenv("DOMAIN_DEMAND_TRILLION_PAUSE_FILL_PCT") or "98").strip()
+    )
+except ValueError:
+    DOMAIN_DEMAND_TRILLION_PAUSE_FILL_PCT = 98.0
+DOMAIN_DEMAND_TRILLION_PAUSE_FILL_PCT = max(50.0, min(100.0, DOMAIN_DEMAND_TRILLION_PAUSE_FILL_PCT))
+try:
+    DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES = int(
+        (os.getenv("DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES") or "30").strip()
+    )
+except ValueError:
+    DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES = 30
+DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES = max(10, min(120, DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES))
+DOMAIN_TRILLION_GUARD_ENABLED = (
+    os.getenv("DOMAIN_TRILLION_GUARD_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+)
 
 BLEND_CPC_REFRESH_STATE_PATH = (
     os.getenv("BLEND_CPC_REFRESH_STATE_PATH") or "runtime/blend_cpc_refresh_state.json"

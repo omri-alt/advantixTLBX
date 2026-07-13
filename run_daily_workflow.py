@@ -622,6 +622,138 @@ def run_hub_rewire_daily_step(date_str: str) -> bool:
     return True
 
 
+def run_hub_blend_child_flows_daily_step(date_str: str) -> bool:
+    """Wire blend on hub 94 + domain-tagged flows on child campaigns."""
+    from config import KEITARO_API_KEY, KEITARO_BASE_URL, KEITARO_HUB_BLEND_DOMAIN_ENABLED
+
+    if not KEITARO_HUB_BLEND_DOMAIN_ENABLED:
+        print("7f. Hub blend child flows skipped (KEITARO_HUB_BLEND_DOMAIN_ENABLED=0).")
+        print()
+        return True
+    if not (KEITARO_BASE_URL and KEITARO_API_KEY):
+        print("7f. Hub blend child flows skipped (Keitaro not configured).")
+        print()
+        return True
+
+    from integrations.hub_blend_child_flows import run_hub_blend_child_flows
+
+    print("7f. Hub blend routing — campaign 94 blend offers + child sub_id_15=domain flows ...")
+    try:
+        result = run_hub_blend_child_flows(
+            date_str=date_str,
+            nipuhim_max_offers_per_geo=KEITARO_SYNC_MAX_OFFERS_PER_GEO,
+            dry_run=False,
+        )
+    except Exception as e:
+        print(f"   Hub blend child flows failed: {e}")
+        return False
+
+    for line in result.get("logs") or []:
+        print(f"   {line}")
+    print(
+        f"   pool_blend_rows={result.get('pool_blend_rows')} "
+        f"quality_merchants={result.get('quality_merchants')} status={result.get('status')}"
+    )
+    print()
+    return result.get("status") == "ok"
+
+
+def run_trillion_activate_daily_step(date_str: str) -> bool:
+    """Resume Trillion campaigns for geo×device segments that still need domain clicks today."""
+    from config import (
+        DOMAIN_DEMAND_ENABLED,
+        DOMAIN_TRILLION_GUARD_ENABLED,
+        KEYTR,
+        KEITARO_API_KEY,
+        KEITARO_BASE_URL,
+    )
+
+    if not DOMAIN_DEMAND_ENABLED or not DOMAIN_TRILLION_GUARD_ENABLED:
+        print("7g. Trillion activate skipped (DOMAIN_DEMAND or DOMAIN_TRILLION_GUARD disabled).")
+        print()
+        return True
+    if not KEYTR:
+        print("7g. Trillion activate skipped (KEYTR not configured).")
+        print()
+        return True
+    if not (KEITARO_BASE_URL and KEITARO_API_KEY):
+        print("7g. Trillion activate skipped (Keitaro not configured).")
+        print()
+        return True
+
+    from integrations.domain_demand_guard import run_trillion_activate_for_demand
+    from integrations.domain_demand import build_domain_demand_payload
+
+    print("7g. Trillion activate — resume segments with remaining domain demand ...")
+    try:
+        payload = build_domain_demand_payload(
+            date_str=date_str,
+            rebuild_demand=False,
+            reason="daily_workflow",
+        )
+        result = run_trillion_activate_for_demand(
+            dry_run=False,
+            reason="daily_workflow",
+            segments=payload.get("summary_by_geo"),
+        )
+    except Exception as e:
+        print(f"   Trillion activate failed: {e}")
+        return False
+
+    for action in result.get("actions") or []:
+        status = action.get("status")
+        if status in ("resumed", "would_resume", "already_active", "unmapped", "error"):
+            print(
+                f"   {action.get('geo')}/{action.get('device')} {action.get('campaign')}: {status}"
+            )
+    print(
+        f"   resumed={result.get('resumed')} segments_seen={result.get('segments_seen')} "
+        f"errors={len(result.get('errors') or [])}"
+    )
+    print()
+    return not result.get("errors")
+
+
+def run_domain_demand_daily_step(date_str: str) -> bool:
+    """Write domain-demand summary + bill for hub campaign 94."""
+    from config import DOMAIN_DEMAND_ENABLED, KEITARO_API_KEY, KEITARO_BASE_URL
+
+    if not DOMAIN_DEMAND_ENABLED:
+        print("7e. Domain demand skipped (DOMAIN_DEMAND_ENABLED=0).")
+        print()
+        return True
+    if not (KEITARO_BASE_URL and KEITARO_API_KEY):
+        print("7e. Domain demand skipped (Keitaro not configured).")
+        print()
+        return True
+
+    from integrations.domain_demand import sync_domain_demand
+
+    print("7e. Domain demand — build bill + refresh Keitaro delivered clicks ...")
+    try:
+        result = sync_domain_demand(
+            date_str=date_str,
+            max_offers_per_geo=KEITARO_SYNC_MAX_OFFERS_PER_GEO,
+            rebuild_demand=True,
+            dry_run=False,
+            reason="daily_workflow",
+        )
+    except Exception as e:
+        print(f"   Domain demand failed: {e}")
+        return False
+
+    for line in result.get("logs") or []:
+        print(f"   {line}")
+    write = result.get("write") or {}
+    print(
+        f"   Wrote {write.get('bill_rows', 0)} bill + {write.get('summary_rows', 0)} summary rows; "
+        f"demand={result.get('total_demand')} delivered={result.get('total_delivered_child_sum')} "
+        f"trillion={result.get('trillion_hint')}"
+    )
+    print()
+    return write.get("status") == "ok"
+
+
 def maybe_run_hub_campaign_rewire(
     date_str: str,
     *,
@@ -1163,6 +1295,9 @@ def run_pla_offers_keitaro_blend_tail(
         maybe_run_hub_campaign_rewire(
             date_str, skip_keitaro=False, skip_hub_rewire=skip_hub_rewire
         )
+        run_domain_demand_daily_step(date_str)
+        run_hub_blend_child_flows_daily_step(date_str)
+        run_trillion_activate_daily_step(date_str)
         print("Done. No offers to sync.")
         if run_daily_conversion_postbacks:
             run_optional_daily_conversion_postbacks(postback_report_date)
@@ -1201,6 +1336,9 @@ def run_pla_offers_keitaro_blend_tail(
                 blend_v2_enabled=blend_v2_enabled,
                 only_geo=blend_only_geo,
             )
+        run_domain_demand_daily_step(date_str)
+        run_hub_blend_child_flows_daily_step(date_str)
+        run_trillion_activate_daily_step(date_str)
         print("Done. Feed1 traffic only synced to Keitaro.")
         if run_daily_conversion_postbacks:
             run_optional_daily_conversion_postbacks(postback_report_date)
@@ -1242,6 +1380,9 @@ def run_pla_offers_keitaro_blend_tail(
             blend_v2_enabled=blend_v2_enabled,
             only_geo=blend_only_geo,
         )
+    run_domain_demand_daily_step(date_str)
+    run_hub_blend_child_flows_daily_step(date_str)
+    run_trillion_activate_daily_step(date_str)
     done_msg = "Done. Feeds synced to Keitaro (feed1+feed2+feed5)." if use_feed5 else "Done. Both feeds synced to Keitaro."
     print(done_msg)
     if run_daily_conversion_postbacks:

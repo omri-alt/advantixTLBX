@@ -139,6 +139,7 @@ class BlendRow:
     device_mode: str = DEVICE_MODE_LEGACY
     weight_desktop: float = 0.0
     weight_mobile: float = 0.0
+    quality_campaign: str = ""
 
     @property
     def offer_name(self) -> str:
@@ -264,6 +265,8 @@ def ensure_blend_sheet_headers(service) -> None:
     for col in ("device_mode", "weight_desktop", "weight_mobile", "cpc_desktop", "cpc_mobile"):
         if col not in header:
             header.append(col)
+    if "qualityCampaign" not in header:
+        header.append("qualityCampaign")
     service.values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=f"'{quoted}'!A1",
@@ -326,6 +329,7 @@ def read_blend_rows(service, only_geo: Optional[str] = None) -> List[BlendRow]:
                 device_mode=mode,
                 weight_desktop=w_d,
                 weight_mobile=w_m,
+                quality_campaign=get_cell(row, "qualityCampaign") if "qualitycampaign" in idx else "",
             )
         )
     return out
