@@ -39,6 +39,16 @@ class DomainDemandRefresh(BaseAutomation):
             pause_trillion=DOMAIN_TRILLION_GUARD_ENABLED,
             equalize_weights=DOMAIN_TRILLION_GUARD_ENABLED,
         )
+        # If morning bill was wiped / missing, rebuild demand once then re-run guard.
+        if result.get("error") == "empty_bill_refused" or result.get("status") == "error":
+            logger.warning("DomainDemandRefresh: empty bill — rebuilding demand then retrying")
+            result = run_domain_demand_guard(
+                rebuild_demand=True,
+                dry_run=False,
+                reason="automation_rebuild",
+                pause_trillion=DOMAIN_TRILLION_GUARD_ENABLED,
+                equalize_weights=DOMAIN_TRILLION_GUARD_ENABLED,
+            )
         pause = result.get("trillion_pause") or {}
         hub_eq = result.get("hub_equalize") or {}
         return {
@@ -47,4 +57,5 @@ class DomainDemandRefresh(BaseAutomation):
             "hub_streams_updated": hub_eq.get("hub_streams_updated"),
             "total_demand": (result.get("sync") or {}).get("bill_rows"),
             "errors": pause.get("errors") or [],
+            "fallback": hub_eq.get("fallback"),
         }

@@ -3,7 +3,9 @@ Domain-demand guard: Trillion activate/pause + Keitaro flow weight equalization.
 
 Uses ``summary_by_geo`` from the domain-demand bill (hub campaign 94 segments).
 During the day: zero-weight filled offers, renormalize remaining demand, pause Trillion
-when a geo×device segment is fully delivered.
+when a geo×device segment is fully delivered. Rebalance always keeps **at least one**
+offer with positive share on each flow so leftover clicks do not fall through to fallback
+until Trillion is paused.
 """
 from __future__ import annotations
 
@@ -20,7 +22,10 @@ from integrations.domain_demand import build_domain_demand_payload, sync_domain_
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.keitaro_hub import (
     _hub_device_streams,
+    _stream_hub_offer_weights,
+    hub_active_feed_keys,
     load_hub_state,
+    resolve_hub_weight_context,
     set_flow_offers_weighted_keep_zeros,
 )
 from integrations.nipuhim_tr_nightly_close import (
@@ -33,14 +38,102 @@ from integrations.trillion import TrillionClientError, update_ron_active
 logger = logging.getLogger(__name__)
 
 
-def _slug(s: str) -> str:
+def _slug(s: str, max_len: int = 48) -> str:
     from blend_sync_from_sheet import _slug as blend_slug
 
-    return blend_slug(s, max_len=48)
+    return blend_slug(s, max_len=max_len)
 
 
 def _pause_fill_pct() -> float:
     return float(DOMAIN_DEMAND_TRILLION_PAUSE_FILL_PCT or 98.0)
+
+
+def _ensure_at_least_one_live_weight(
+    offer_weights: Dict[int, float],
+    zero_ids: List[int],
+    *,
+    preferred_offer_ids: Optional[List[int]] = None,
+) -> Tuple[Dict[int, float], List[int], Optional[int]]:
+    """
+    Guarantee ≥1 offer keeps a positive weight so leftover clicks stay monetized.
+
+    When every offer would be share=0 (caps filled), promote the best leftover candidate
+    to weight 1.0 until Trillion for that segment is paused.
+    """
+    if offer_weights:
+        return offer_weights, zero_ids, None
+
+    ordered: List[int] = []
+    seen: set[int] = set()
+    for oid in list(preferred_offer_ids or []) + list(zero_ids):
+        try:
+            i = int(oid)
+        except (TypeError, ValueError):
+            continue
+        if i in seen:
+            continue
+        seen.add(i)
+        ordered.append(i)
+    if not ordered:
+        return offer_weights, zero_ids, None
+
+    keep = ordered[0]
+    new_zeros = [z for z in zero_ids if int(z) != keep]
+    return {keep: 1.0}, new_zeros, keep
+
+
+def _preferred_hub_leftover_ids(
+    bill_rows: List[Dict[str, Any]],
+    geo: str,
+    channel: str,
+    *,
+    quality_brand_slugs: frozenset[str],
+) -> List[int]:
+    """Prefer leftover catch-all offers that had the most original demand for this segment."""
+    from integrations.hub_blend_child_flows import hub_quality_offer_name
+
+    state = load_hub_state()
+    all_meta = {**(state.get("hub_offers") or {}), **(state.get("hub_quality_offers") or {})}
+    demand_by_offer: Dict[str, float] = defaultdict(float)
+
+    for row in bill_rows:
+        if str(row.get("geo") or "").lower() != geo:
+            continue
+        if str(row.get("device") or "").lower() != channel:
+            continue
+        demand = max(0, int(row.get("demand_clicks") or 0))
+        if demand <= 0:
+            continue
+        family = str(row.get("family") or "")
+        feed = str(row.get("feed") or "")
+        brand_slug = _slug(str(row.get("brand") or ""))
+        if family == "nipuhim":
+            offer_name = f"hub_nipuhim_{feed}"
+        elif brand_slug in quality_brand_slugs:
+            offer_name = hub_quality_offer_name(brand_slug)
+        else:
+            offer_name = f"hub_blend_{feed}"
+        demand_by_offer[offer_name] += float(demand)
+
+    ranked = sorted(demand_by_offer.items(), key=lambda kv: kv[1], reverse=True)
+    out: List[int] = []
+    for name, _ in ranked:
+        meta = all_meta.get(name) or {}
+        oid = meta.get("id")
+        if oid is not None:
+            out.append(int(oid))
+    # Stable fallback: active nipuhim then blend feed offers.
+    for prefix in ("hub_nipuhim_", "hub_blend_"):
+        for name, meta in sorted(all_meta.items()):
+            if not name.startswith(prefix):
+                continue
+            oid = meta.get("id")
+            if oid is None:
+                continue
+            i = int(oid)
+            if i not in out:
+                out.append(i)
+    return out
 
 
 def _trillion_segment_map(folder: Optional[str] = None) -> Dict[Tuple[str, str], Dict[str, Any]]:
@@ -269,6 +362,101 @@ def _quality_brand_slugs(client: KeitaroClient) -> frozenset[str]:
     return frozenset(g.brand_slug for g in groups)
 
 
+def restore_hub_stream_weights_from_click_caps(
+    *,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Emergency / fallback: set campaign 94 geo flows from Blend clickCaps + Nipuhim equal split.
+
+    Used when the demand bill is missing (so equalize cannot run) or after a bad zero-share write.
+    """
+    from integrations.hub_click_cap_weights import hub_offer_weights_from_caps
+
+    client = KeitaroClient()
+    state = load_hub_state()
+    hub_id = int(state.get("hub_campaign_id") or KEITARO_HUB_CAMPAIGN_ID)
+    offer_state = dict(state.get("hub_offers") or {})
+    quality_state = dict(state.get("hub_quality_offers") or {})
+    active = hub_active_feed_keys()
+    wctx = resolve_hub_weight_context(use_click_caps=True)
+
+    blend_feeds = frozenset((wctx.blend_feed_caps or {}).keys()) | frozenset(
+        str(m.get("feed_key") or "")
+        for m in offer_state.values()
+        if str(m.get("hub_type") or "") == "blend"
+    )
+    blend_w = hub_offer_weights_from_caps(
+        wctx.blend_feed_caps or {},
+        {},
+        active_feeds=blend_feeds,
+        hub_types=("blend",),
+    )
+    nip_w = dict(wctx.weights)
+
+    oid_w: Dict[int, float] = {}
+    zeros: List[int] = []
+    b_ids, b_z = _stream_hub_offer_weights(
+        offer_state, blend_w, hub_types=("blend",), active_feeds=blend_feeds
+    )
+    n_ids, n_z = _stream_hub_offer_weights(
+        offer_state, nip_w, hub_types=("nipuhim",), active_feeds=active
+    )
+    oid_w.update(b_ids)
+    oid_w.update(n_ids)
+    zeros.extend(b_z)
+    zeros.extend(n_z)
+    for meta in {**offer_state, **quality_state}.values():
+        oid = meta.get("id")
+        if oid is None:
+            continue
+        if int(oid) not in oid_w and int(oid) not in zeros:
+            zeros.append(int(oid))
+
+    logs = [
+        f"click-cap restore: {len(oid_w)} weighted + {len(zeros)} zero-share "
+        f"(blend_caps={dict(wctx.blend_feed_caps or {})}, source={wctx.source})"
+    ]
+    if not oid_w:
+        return {
+            "hub_streams_updated": 0,
+            "logs": logs + ["ABORT: no positive click-cap weights"],
+            "dry_run": dry_run,
+            "status": "error",
+        }
+
+    updated = 0
+    if dry_run:
+        streams = _hub_device_streams(client, hub_id)
+        logs.append(f"would update {len(streams)} hub stream(s)")
+        return {
+            "hub_streams_updated": 0,
+            "logs": logs,
+            "dry_run": True,
+            "status": "dry_run",
+            "offer_weights": oid_w,
+        }
+
+    for stream in _hub_device_streams(client, hub_id):
+        sid = stream.get("id")
+        if sid is None:
+            continue
+        try:
+            set_flow_offers_weighted_keep_zeros(int(sid), oid_w, zero_offer_ids=zeros)
+            updated += 1
+            logs.append(f"hub {stream.get('name')}: restored")
+        except KeitaroClientError as e:
+            logs.append(f"hub {stream.get('name')}: error {e}")
+
+    return {
+        "hub_streams_updated": updated,
+        "logs": logs,
+        "dry_run": False,
+        "status": "ok",
+        "offer_weights": oid_w,
+    }
+
+
 def equalize_hub_stream_weights(
     *,
     dry_run: bool = False,
@@ -280,22 +468,28 @@ def equalize_hub_stream_weights(
     client = KeitaroClient()
     data = payload or build_domain_demand_payload(rebuild_demand=False, reason="weight_equalize")
     if data.get("error") == "empty_bill_refused" or data.get("status") == "error":
+        logs = list(data.get("logs") or []) + [
+            "Bill missing — falling back to click-cap hub weight restore"
+        ]
+        fallback = restore_hub_stream_weights_from_click_caps(dry_run=dry_run)
+        logs.extend(fallback.get("logs") or [])
         return {
-            "hub_streams_updated": 0,
-            "logs": list(data.get("logs") or [])
-            + ["Skipped hub equalize: empty/missing demand bill (refusing all-zero weights)"],
+            "hub_streams_updated": fallback.get("hub_streams_updated", 0),
+            "logs": logs,
             "dry_run": dry_run,
-            "skipped": True,
-            "reason": data.get("error") or "payload_error",
+            "skipped": False,
+            "fallback": "click_caps",
+            "status": fallback.get("status"),
         }
     bill_rows = data.get("bill") or []
     if not bill_rows:
+        fallback = restore_hub_stream_weights_from_click_caps(dry_run=dry_run)
         return {
-            "hub_streams_updated": 0,
-            "logs": ["Skipped hub equalize: no bill rows"],
+            "hub_streams_updated": fallback.get("hub_streams_updated", 0),
+            "logs": ["Empty bill rows — click-cap restore"] + list(fallback.get("logs") or []),
             "dry_run": dry_run,
-            "skipped": True,
-            "reason": "empty_bill",
+            "fallback": "click_caps",
+            "status": fallback.get("status"),
         }
     hub_id = int(data.get("hub_campaign_id") or load_hub_state().get("hub_campaign_id") or KEITARO_HUB_CAMPAIGN_ID)
     quality_slugs = _quality_brand_slugs(client)
@@ -314,40 +508,51 @@ def equalize_hub_stream_weights(
         offer_weights, zero_ids = _hub_offer_weights_for_segment(
             bill_rows, geo, channel, quality_brand_slugs=quality_slugs
         )
-        # Never replace a live flow with only share=0 offers — clicks fall through to fallback.
-        # All-zero is only valid when the segment still has bill demand that was fully filled
-        # (remaining=0 for every line); even then, leave at least one offer? No — when remaining
-        # is all 0 we *do* want zeros so traffic can fall through / Trillion pause. But if this
-        # geo×device has *no demand lines at all*, leave the stream untouched.
-        seg_has_demand = any(
-            str(r.get("geo") or "").lower() == geo
+        seg_rows = [
+            r
+            for r in bill_rows
+            if str(r.get("geo") or "").lower() == geo
             and str(r.get("device") or "").lower() == channel
             and int(r.get("demand_clicks") or 0) > 0
-            for r in bill_rows
-        )
+        ]
+        seg_remaining = sum(max(0, int(r.get("remaining") or 0)) for r in seg_rows)
+        leftover_kept: Optional[int] = None
         if not offer_weights:
-            if not seg_has_demand:
-                logs.append(f"hub {sname}: skip (no demand lines for segment)")
+            if seg_remaining > 0:
+                # Mapping bug / name mismatch — never wipe or invent a single leftover here.
+                logs.append(
+                    f"hub {sname}: skip (remaining={seg_remaining} but no mapped hub weights)"
+                )
                 continue
-            # Demand existed but remaining is 0 → intentional zero-share; keep attached.
-            if not zero_ids:
-                logs.append(f"hub {sname}: skip (no hub offers in state)")
+            preferred = _preferred_hub_leftover_ids(
+                bill_rows, geo, channel, quality_brand_slugs=quality_slugs
+            )
+            offer_weights, zero_ids, leftover_kept = _ensure_at_least_one_live_weight(
+                offer_weights, zero_ids, preferred_offer_ids=preferred
+            )
+            if not offer_weights:
+                logs.append(f"hub {sname}: skip (no hub offers available for leftover)")
                 continue
         if dry_run:
+            extra = f" leftover_offer={leftover_kept}" if leftover_kept else ""
             logs.append(
-                f"hub {sname}: would set {len(offer_weights)} weighted + {len(zero_ids)} zero-share"
+                f"hub {sname}: would set {len(offer_weights)} weighted + "
+                f"{len(zero_ids)} zero-share{extra}"
             )
-            continue
-        if not offer_weights and not zero_ids:
             continue
         try:
             set_flow_offers_weighted_keep_zeros(int(sid), offer_weights, zero_offer_ids=zero_ids)
             updated += 1
-            if not offer_weights:
+            if leftover_kept is not None:
                 skipped_all_zero += 1
-            logs.append(
-                f"hub {sname}: {len(offer_weights)} weighted + {len(zero_ids)} zero-share"
-            )
+                logs.append(
+                    f"hub {sname}: leftover catch-all offer_id={leftover_kept} "
+                    f"(+{len(zero_ids)} zero-share)"
+                )
+            else:
+                logs.append(
+                    f"hub {sname}: {len(offer_weights)} weighted + {len(zero_ids)} zero-share"
+                )
         except KeitaroClientError as e:
             logs.append(f"hub {sname}: error {e}")
 
@@ -355,7 +560,7 @@ def equalize_hub_stream_weights(
         "hub_streams_updated": updated,
         "logs": logs,
         "dry_run": dry_run,
-        "segments_zeroed": skipped_all_zero,
+        "segments_with_leftover": skipped_all_zero,
     }
 
 
@@ -445,30 +650,55 @@ def equalize_child_blend_offer_weights(
             if sid is None:
                 continue
             weights = dict(stream_map.get((geo, channel), {}))
-            if dry_run:
-                logs.append(f"campaign {cid} {geo}/{channel}: would weight {len(weights)} offer(s)")
-                continue
-            if weights:
-                set_flow_offers_weighted(int(sid), weights)
-                streams_updated += 1
-                logs.append(f"campaign {cid} {geo}/{channel}: weighted {len(weights)} offer(s)")
-            else:
-                # All offers filled — detach blend_* from this stream.
-                kept = []
+            leftover_oid: Optional[int] = None
+            if not weights:
+                # Prefer the blend offer that had the highest original demand for this segment.
+                demand_rank: List[Tuple[float, int]] = []
+                for row in bill_rows:
+                    if str(row.get("geo") or "").lower() != geo:
+                        continue
+                    if str(row.get("device") or "").lower() != channel:
+                        continue
+                    demand = max(0, int(row.get("demand_clicks") or 0))
+                    if demand <= 0:
+                        continue
+                    feed = str(row.get("feed") or "")
+                    brand = str(row.get("brand") or "")
+                    oname = f"blend_{geo}_{_slug(feed, max_len=24)}_{_slug(brand)}"
+                    oid = offers_by_name.get(oname)
+                    if oid is not None:
+                        demand_rank.append((float(demand), int(oid)))
+                demand_rank.sort(key=lambda t: t[0], reverse=True)
+                preferred = [oid for _, oid in demand_rank]
+                # Also consider blend_* already on the stream.
                 for slot in stream.get("offers") or []:
                     oidr = slot.get("offer_id")
                     if oidr is None:
                         continue
-                    name = ""
                     for on, oid in offers_by_name.items():
-                        if oid == int(oidr):
-                            name = on
+                        if oid == int(oidr) and on.startswith("blend_") and int(oid) not in preferred:
+                            preferred.append(int(oid))
                             break
-                    if not name.startswith("blend_"):
-                        kept.append(slot)
-                if len(kept) != len(stream.get("offers") or []):
-                    client.update_stream(int(sid), {"offers": kept})
-                    logs.append(f"campaign {cid} {geo}/{channel}: cleared filled blend offers")
+                weights, _ignored_zeros, leftover_oid = _ensure_at_least_one_live_weight(
+                    {}, preferred, preferred_offer_ids=preferred
+                )
+            if dry_run:
+                extra = f" leftover={leftover_oid}" if leftover_oid else ""
+                logs.append(
+                    f"campaign {cid} {geo}/{channel}: would weight {len(weights)} offer(s){extra}"
+                )
+                continue
+            if weights:
+                set_flow_offers_weighted(int(sid), weights)
+                streams_updated += 1
+                if leftover_oid is not None:
+                    logs.append(
+                        f"campaign {cid} {geo}/{channel}: leftover catch-all offer_id={leftover_oid}"
+                    )
+                else:
+                    logs.append(f"campaign {cid} {geo}/{channel}: weighted {len(weights)} offer(s)")
+            else:
+                logs.append(f"campaign {cid} {geo}/{channel}: skip (no blend offers for leftover)")
 
     return {"streams_updated": streams_updated, "logs": logs, "dry_run": dry_run}
 
@@ -495,7 +725,15 @@ def run_domain_demand_guard(
     if payload.get("error") == "empty_bill_refused" or payload.get("status") == "error":
         out["status"] = "error"
         out["error"] = payload.get("error") or "payload_error"
-        out["logs"].append("Guard aborted: missing demand bill (no sheet write / no weight changes)")
+        out["logs"].append(
+            "Demand bill missing — will restore hub weights from click caps; skipping Trillion pause"
+        )
+        if equalize_weights:
+            hub_eq = equalize_hub_stream_weights(dry_run=dry_run, payload=payload)
+            out["hub_equalize"] = hub_eq
+            out["logs"].extend(hub_eq.get("logs") or [])
+            if hub_eq.get("status") in ("ok", "dry_run"):
+                out["status"] = hub_eq.get("status")
         return out
 
     if equalize_weights:
