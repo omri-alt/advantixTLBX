@@ -659,7 +659,7 @@ def run_hub_blend_child_flows_daily_step(date_str: str) -> bool:
 
 
 def run_trillion_activate_daily_step(date_str: str) -> bool:
-    """Resume Trillion campaigns for geo×device segments that still need domain clicks today."""
+    """Resume Trillion for segments that need clicks; pause segments already filled today."""
     from config import (
         DOMAIN_DEMAND_ENABLED,
         DOMAIN_TRILLION_GUARD_ENABLED,
@@ -669,49 +669,67 @@ def run_trillion_activate_daily_step(date_str: str) -> bool:
     )
 
     if not DOMAIN_DEMAND_ENABLED or not DOMAIN_TRILLION_GUARD_ENABLED:
-        print("7g. Trillion activate skipped (DOMAIN_DEMAND or DOMAIN_TRILLION_GUARD disabled).")
+        print("7g. Trillion activate/pause skipped (DOMAIN_DEMAND or DOMAIN_TRILLION_GUARD disabled).")
         print()
         return True
     if not KEYTR:
-        print("7g. Trillion activate skipped (KEYTR not configured).")
+        print("7g. Trillion activate/pause skipped (KEYTR not configured).")
         print()
         return True
     if not (KEITARO_BASE_URL and KEITARO_API_KEY):
-        print("7g. Trillion activate skipped (Keitaro not configured).")
+        print("7g. Trillion activate/pause skipped (Keitaro not configured).")
         print()
         return True
 
-    from integrations.domain_demand_guard import run_trillion_activate_for_demand
+    from integrations.domain_demand_guard import (
+        run_trillion_activate_for_demand,
+        run_trillion_pause_filled_segments,
+    )
     from integrations.domain_demand import build_domain_demand_payload
 
-    print("7g. Trillion activate — resume segments with remaining domain demand ...")
+    print("7g. Trillion sync — resume underfilled + pause overfilled domain segments ...")
     try:
         payload = build_domain_demand_payload(
             date_str=date_str,
             rebuild_demand=False,
             reason="daily_workflow",
         )
+        segments = payload.get("summary_by_geo")
         result = run_trillion_activate_for_demand(
             dry_run=False,
             reason="daily_workflow",
-            segments=payload.get("summary_by_geo"),
+            segments=segments,
+        )
+        pause_result = run_trillion_pause_filled_segments(
+            dry_run=False,
+            reason="daily_workflow",
+            segments=segments,
         )
     except Exception as e:
-        print(f"   Trillion activate failed: {e}")
+        print(f"   Trillion activate/pause failed: {e}")
         return False
 
     for action in result.get("actions") or []:
         status = action.get("status")
         if status in ("resumed", "would_resume", "already_active", "unmapped", "error"):
             print(
-                f"   {action.get('geo')}/{action.get('device')} {action.get('campaign')}: {status}"
+                f"   activate {action.get('geo')}/{action.get('device')} "
+                f"{action.get('campaign')}: {status}"
+            )
+    for action in pause_result.get("actions") or []:
+        status = action.get("status")
+        if status in ("paused", "would_pause", "already_paused", "unmapped", "error"):
+            print(
+                f"   pause {action.get('geo')}/{action.get('device')} "
+                f"{action.get('campaign')}: {status}"
             )
     print(
-        f"   resumed={result.get('resumed')} segments_seen={result.get('segments_seen')} "
-        f"errors={len(result.get('errors') or [])}"
+        f"   resumed={result.get('resumed')} paused={pause_result.get('paused')} "
+        f"segments_seen={result.get('segments_seen')} "
+        f"errors={len(result.get('errors') or []) + len(pause_result.get('errors') or [])}"
     )
     print()
-    return not result.get("errors")
+    return not (result.get("errors") or pause_result.get("errors"))
 
 
 def run_domain_demand_daily_step(date_str: str) -> bool:

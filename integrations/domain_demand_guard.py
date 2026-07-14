@@ -763,14 +763,28 @@ def run_daily_trillion_activate_step(
     reason: str = "daily_workflow",
     date_str: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """After domain-demand bill is built: resume Trillion for segments that need traffic."""
+    """After domain-demand bill is built: resume underfilled + pause filled Trillion segments."""
     payload = build_domain_demand_payload(
         date_str=date_str,
         rebuild_demand=False,
         reason=reason,
     )
-    return run_trillion_activate_for_demand(
+    segments = payload.get("summary_by_geo")
+    activate = run_trillion_activate_for_demand(
         dry_run=dry_run,
         reason=reason,
-        segments=payload.get("summary_by_geo"),
+        segments=segments,
     )
+    pause = run_trillion_pause_filled_segments(
+        dry_run=dry_run,
+        reason=reason,
+        segments=segments,
+    )
+    return {
+        "activate": activate,
+        "pause": pause,
+        "resumed": activate.get("resumed"),
+        "paused": pause.get("paused"),
+        "errors": list(activate.get("errors") or []) + list(pause.get("errors") or []),
+        "actions": list(activate.get("actions") or []) + list(pause.get("actions") or []),
+    }

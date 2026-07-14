@@ -32,23 +32,15 @@ class DomainDemandRefresh(BaseAutomation):
         return out
 
     def _execute(self) -> dict[str, Any]:
+        # Always rebuild demand from live Blend clickCaps + Nipuhim offers so
+        # media-buyer mid-day clickCap bumps feed into the bill and hub weights.
         result = run_domain_demand_guard(
-            rebuild_demand=False,
+            rebuild_demand=True,
             dry_run=False,
             reason="automation",
             pause_trillion=DOMAIN_TRILLION_GUARD_ENABLED,
             equalize_weights=DOMAIN_TRILLION_GUARD_ENABLED,
         )
-        # If morning bill was wiped / missing, rebuild demand once then re-run guard.
-        if result.get("error") == "empty_bill_refused" or result.get("status") == "error":
-            logger.warning("DomainDemandRefresh: empty bill — rebuilding demand then retrying")
-            result = run_domain_demand_guard(
-                rebuild_demand=True,
-                dry_run=False,
-                reason="automation_rebuild",
-                pause_trillion=DOMAIN_TRILLION_GUARD_ENABLED,
-                equalize_weights=DOMAIN_TRILLION_GUARD_ENABLED,
-            )
         pause = result.get("trillion_pause") or {}
         hub_eq = result.get("hub_equalize") or {}
         return {

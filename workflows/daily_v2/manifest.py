@@ -169,7 +169,7 @@ STAGES: tuple[StageDef, ...] = (
     ),
     StageDef(
         "trillion_activate",
-        "7g - Trillion activate (domain demand segments)",
+        "7g - Trillion activate/pause (domain demand segments)",
         ("domain_demand", "hub_blend_child_flows"),
         skip_if=_skip_trillion_activate,
         fatal=False,

@@ -56,7 +56,7 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
     },
     {
         "class_name": "BlendSync2h",
-        "label": "Blend sheet → Keitaro sync (monetization + weights)",
+        "label": "Blend sheet → Keitaro + domain-demand rebuild",
         "schedule": "Every 2 hours (even hours)",
     },
     {
@@ -80,7 +80,7 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
     },
     {
         "class_name": "DomainDemandRefresh",
-        "label": "Domain-demand guard (weights + Trillion pause)",
+        "label": "Domain-demand rebuild (clickCaps + weights + Trillion pause)",
         "schedule": "Every 30 minutes (DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES)",
     },
 ]
