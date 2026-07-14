@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Monetization checker (Kelkoo feed1/2/5, Yadore feed3, Adexa feed4, Shopnomix feed6) driven by Google Sheets.
+Monetization checker (Kelkoo feed1/2/5, Yadore feed3, Adexa feed4, Shopnomix feed6,
+FlexOffers catalog) driven by Google Sheets.
 
 Spreadsheet: 1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0
 Input sheet: sourceToCheck (columns: url, geo; optional merchant_id / merchantId for Adexa)
@@ -11,6 +12,7 @@ For each (url, geo):
   - Yadore deeplink (feed3): POST /v2/deeplink (coupon-inclusive; deeplink vs smartlink)
   - Adexa (feed4): LinksMerchant homepage probe, then GetMerchant smartlink (Goffers golink)
   - Shopnomix demand (feed6): GET …/api/v2/demand/:campaign_id (tile + coupons placements)
+  - FlexOffers: static advertiser catalog match (no API) by hostname/URL only
 
 Writes one row per input line with statuses and CPC/EPC fields where available.
 
@@ -37,13 +39,14 @@ from integrations.shopnomix import (
     demand_coupons_check,
     ShopnomixClientError,
 )
+from integrations.flexoffers import merchant_monetization_check as flexoffers_merchant_check
 from integrations.monetization_geo import yadore_feed_class, shopnomix_feed_class
 
 SPREADSHEET_ID = "1z1Y-vPuqk6zI673ytgBQvoQNnqMosFeZkdAiOMMPgM0"
 INPUT_SHEET = "sourceToCheck"
 OUTPUT_SHEET = "Matches"
 
-# Parallel HTTP calls per row (Kelkoo×3 + Yadore + Adexa + Shopnomix×2).
+# Parallel HTTP calls per row (Kelkoo×3 + Yadore + Adexa + Shopnomix×2 + FlexOffers catalog).
 _ROW_POOL_WORKERS = 8
 
 
@@ -185,6 +188,12 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
         except ShopnomixClientError as e:
             return {"found": False, "epc": "", "note": str(e)[:200]}
 
+    def _flexoffers() -> Dict[str, Any]:
+        try:
+            return flexoffers_merchant_check(url, geo)
+        except Exception as e:
+            return {"found": False, "mode": "catalog", "note": str(e)[:200]}
+
     futures = {}
     with ThreadPoolExecutor(max_workers=_ROW_POOL_WORKERS) as ex:
         futures[ex.submit(_k1)] = "k1"
@@ -196,6 +205,7 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
         if shopnomix_monetization_enabled():
             futures[ex.submit(_sn_tile)] = "sn_tile"
             futures[ex.submit(_sn_coupons)] = "sn_coupons"
+        futures[ex.submit(_flexoffers)] = "flexoffers"
 
     out: Dict[str, Any] = {}
     for fut in as_completed(futures):
@@ -221,6 +231,8 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
                 out[key] = {"found": False, "estimatedCpc_amount": "", "estimatedCpc_currency": ""}
             elif key in ("sn_tile", "sn_coupons"):
                 out[key] = {"found": False, "epc": "", "note": str(e)[:200]}
+            elif key == "flexoffers":
+                out[key] = {"found": False, "mode": "catalog", "note": str(e)[:200]}
             else:
                 out[key] = {"found": False, "note": str(e)[:200]}
 
@@ -228,6 +240,8 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
     y_nc, y_c = _yadore_legacy_probe_fields(y)
     out["ync"] = y_nc
     out["yc"] = y_c
+    if "flexoffers" not in out:
+        out["flexoffers"] = _flexoffers()
 
     return out
 
@@ -273,6 +287,11 @@ def main() -> None:
         "kelkoo1_cpc",
         "kelkoo2_cpc",
         "kelkoo5_cpc",
+        "flexoffers_found",
+        "flexoffers_name",
+        "flexoffers_id",
+        "flexoffers_status",
+        "flexoffers_deeplink",
     ]
     ensure_sheet(service, OUTPUT_SHEET, header)
 
@@ -299,6 +318,7 @@ def main() -> None:
         ax = r["ax"]
         sn_tile = r.get("sn_tile") or {"found": False, "epc": ""}
         sn_coupons = r.get("sn_coupons") or {"found": False, "epc": ""}
+        flex = r.get("flexoffers") or {"found": False}
 
         y_nc_found = bool(y_nc.get("found"))
         y_nc_cpc = y_nc.get("estimatedCpc_amount") or ""
@@ -354,11 +374,16 @@ def main() -> None:
                 str(k1.get("estimatedCpc", "")),
                 str(k2.get("estimatedCpc", "")),
                 str(k5.get("estimatedCpc", "")),
+                str(bool(flex.get("found"))),
+                str(flex.get("name") or ""),
+                str(flex.get("advertiser_id") or ""),
+                str(flex.get("status") or flex.get("note") or ""),
+                str(bool(flex.get("deeplink"))) if flex.get("found") else "",
             ]
         )
 
     quoted = OUTPUT_SHEET.replace("'", "''")
-    service.values().clear(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A1:Z10000").execute()
+    service.values().clear(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A1:AZ10000").execute()
     service.values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=f"'{quoted}'!A1",

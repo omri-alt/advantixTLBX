@@ -685,7 +685,7 @@ def run_trillion_activate_daily_step(date_str: str) -> bool:
         run_trillion_activate_for_demand,
         run_trillion_pause_filled_segments,
     )
-    from integrations.domain_demand import build_domain_demand_payload
+    from integrations.domain_demand import build_domain_demand_payload, sync_domain_demand
 
     print("7g. Trillion sync — resume underfilled + pause overfilled domain segments ...")
     try:
@@ -705,6 +705,14 @@ def run_trillion_activate_daily_step(date_str: str) -> bool:
             reason="daily_workflow",
             segments=segments,
         )
+        post_sync = None
+        if int(result.get("resumed") or 0) > 0 or int(pause_result.get("paused") or 0) > 0:
+            post_sync = sync_domain_demand(
+                date_str=date_str,
+                rebuild_demand=False,
+                dry_run=False,
+                reason="daily_workflow_post_trillion_actions",
+            )
     except Exception as e:
         print(f"   Trillion activate/pause failed: {e}")
         return False
@@ -728,6 +736,12 @@ def run_trillion_activate_daily_step(date_str: str) -> bool:
         f"segments_seen={result.get('segments_seen')} "
         f"errors={len(result.get('errors') or []) + len(pause_result.get('errors') or [])}"
     )
+    if post_sync:
+        post_write = post_sync.get("write") or {}
+        print(
+            f"   Domain-demand status refreshed after actions "
+            f"(geo_rows={post_write.get('geo_rows', 0)})"
+        )
     print()
     return not (result.get("errors") or pause_result.get("errors"))
 

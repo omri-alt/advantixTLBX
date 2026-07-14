@@ -152,18 +152,49 @@ def _segment_needs_traffic(seg: Dict[str, Any]) -> bool:
     return demand > 0 and remaining > 0
 
 
+def _segment_fill_pct(seg: Dict[str, Any]) -> Optional[float]:
+    """Numeric fill % from the segment, or derived from demand/delivered."""
+    raw = seg.get("fill_pct")
+    if raw is not None and raw != "":
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    demand = float(seg.get("demand_clicks") or 0)
+    if demand <= 0:
+        return None
+    try:
+        delivered = float(seg.get("delivered_clicks") or 0)
+    except (TypeError, ValueError):
+        return None
+    return round((delivered / demand) * 100.0, 1)
+
+
 def _segment_should_pause(seg: Dict[str, Any]) -> bool:
+    """
+    Pause only when demand is real and fill is at/above the configured threshold.
+
+    Do not trust sheet hints alone, and do not pause on ``remaining<=0`` without a
+    verified fill % (a briefly understated demand bill used to zero remaining early).
+    """
     demand = int(seg.get("demand_clicks") or 0)
     if demand <= 0:
         return False
-    hint = str(seg.get("trillion_hint") or "").upper()
-    if hint == "PAUSE_SUGGESTED":
+    fill = _segment_fill_pct(seg)
+    if fill is None:
+        return False
+    return fill >= _pause_fill_pct()
+
+
+def _segment_should_resume(seg: Dict[str, Any]) -> bool:
+    """Resume when demand remains and fill is clearly below the pause threshold."""
+    if not _segment_needs_traffic(seg):
+        return False
+    fill = _segment_fill_pct(seg)
+    if fill is None:
         return True
-    fill = seg.get("fill_pct")
-    if fill is not None and float(fill) >= _pause_fill_pct():
-        return True
-    remaining = int(seg.get("remaining") or 0)
-    return remaining <= 0
+    # Hysteresis: only auto-resume when under threshold (same bar as pause).
+    return fill < _pause_fill_pct()
 
 
 def run_trillion_activate_for_demand(
@@ -187,7 +218,7 @@ def run_trillion_activate_for_demand(
     errors: List[str] = []
 
     for seg in segs:
-        if not _segment_needs_traffic(seg):
+        if not _segment_should_resume(seg):
             continue
         geo = str(seg.get("geo") or "").lower()
         device = str(seg.get("device") or "").lower()
@@ -198,6 +229,7 @@ def run_trillion_activate_for_demand(
             "campaign": campaign,
             "remaining": seg.get("remaining"),
             "demand_clicks": seg.get("demand_clicks"),
+            "fill_pct": _segment_fill_pct(seg),
         }
         if not campaign:
             action["status"] = "unmapped"
@@ -266,7 +298,8 @@ def run_trillion_pause_filled_segments(
             "campaign": campaign,
             "demand_clicks": seg.get("demand_clicks"),
             "delivered_clicks": seg.get("delivered_clicks"),
-            "fill_pct": seg.get("fill_pct"),
+            "fill_pct": _segment_fill_pct(seg),
+            "remaining": seg.get("remaining"),
         }
         if not campaign:
             action["status"] = "unmapped"
@@ -745,13 +778,40 @@ def run_domain_demand_guard(
         out["logs"].extend(child_eq.get("logs") or [])
 
     if pause_trillion:
+        # Resume underfilled first, then pause only when fill >= threshold.
+        resume_result = run_trillion_activate_for_demand(
+            dry_run=dry_run,
+            reason=reason,
+            segments=payload.get("summary_by_geo"),
+        )
         pause_result = run_trillion_pause_filled_segments(
             dry_run=dry_run,
             reason=reason,
             segments=payload.get("summary_by_geo"),
         )
+        out["trillion_resume"] = resume_result
         out["trillion_pause"] = pause_result
-        out["logs"].append(f"Trillion pause: {pause_result.get('paused')} segment(s)")
+        out["logs"].append(
+            f"Trillion resume: {resume_result.get('resumed')} segment(s); "
+            f"pause: {pause_result.get('paused')} segment(s)"
+        )
+        if not dry_run and (
+            int(resume_result.get("resumed") or 0) > 0
+            or int(pause_result.get("paused") or 0) > 0
+        ):
+            # The first sheet write is a pre-action snapshot. Refresh it after
+            # Trillion mutations so summary_by_geo shows Active/Stopped rather
+            # than PAUSE_SUGGESTED for a campaign that was already paused.
+            post_sync = sync_domain_demand(
+                rebuild_demand=False,
+                dry_run=False,
+                reason=f"{reason}_post_trillion_actions",
+            )
+            out["post_action_sync"] = post_sync.get("write")
+            out["logs"].extend(post_sync.get("logs") or [])
+            out["logs"].append(
+                "Domain-demand sheet refreshed after Trillion actions"
+            )
 
     out["status"] = "dry_run" if dry_run else "ok"
     return out
@@ -780,9 +840,21 @@ def run_daily_trillion_activate_step(
         reason=reason,
         segments=segments,
     )
+    post_sync: Optional[Dict[str, Any]] = None
+    if not dry_run and (
+        int(activate.get("resumed") or 0) > 0
+        or int(pause.get("paused") or 0) > 0
+    ):
+        post_sync = sync_domain_demand(
+            date_str=date_str,
+            rebuild_demand=False,
+            dry_run=False,
+            reason=f"{reason}_post_trillion_actions",
+        )
     return {
         "activate": activate,
         "pause": pause,
+        "post_action_sync": (post_sync or {}).get("write"),
         "resumed": activate.get("resumed"),
         "paused": pause.get("paused"),
         "errors": list(activate.get("errors") or []) + list(pause.get("errors") or []),

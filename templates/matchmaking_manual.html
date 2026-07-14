@@ -65,6 +65,8 @@
             <th>Shopnomix class</th>
             <th>Shopnomix tile</th>
             <th>Shopnomix coupons</th>
+            <th>FlexOffers</th>
+            <th>FO name</th>
             <th>Feed1 CPC</th>
             <th>Feed2 CPC</th>
             <th>Feed5 CPC</th>
@@ -86,6 +88,8 @@
             <td class="muted">{{ r.shopnomix_class }}</td>
             <td class="{{ 'ok' if r.shopnomix_tile_found else 'bad' }}">{{ 'FOUND' if r.shopnomix_tile_found else 'NO' }}</td>
             <td class="{{ 'ok' if r.shopnomix_coupons_found else 'bad' }}">{{ 'FOUND' if r.shopnomix_coupons_found else 'NO' }}</td>
+            <td class="{{ 'ok' if r.flexoffers_found else 'bad' }}">{{ 'FOUND' if r.flexoffers_found else 'NO' }}{% if r.flexoffers_status %} <span class="muted">({{ r.flexoffers_status }})</span>{% endif %}</td>
+            <td class="muted">{{ r.flexoffers_name }}{% if r.flexoffers_id %} <span class="muted">#{{ r.flexoffers_id }}</span>{% endif %}</td>
             <td>{{ r.kelkoo1_cpc }}</td>
             <td>{{ r.kelkoo2_cpc }}</td>
             <td>{{ r.kelkoo5_cpc }}</td>

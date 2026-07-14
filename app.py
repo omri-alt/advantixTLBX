@@ -47,6 +47,7 @@ from integrations.kelkoo_search import kelkoo_merchant_link_check
 from integrations.yadore import merchant_monetization_check as yadore_merchant_check, YadoreClientError
 from integrations.adexa import merchant_monetization_check as adexa_merchant_check, AdexaClientError
 from integrations.shopnomix import demand_tile_check, demand_coupons_check, ShopnomixClientError
+from integrations.flexoffers import merchant_monetization_check as flexoffers_merchant_check
 from integrations.monetization_geo import yadore_feed_class, shopnomix_feed_class
 from assistance import (
     get_campaigns_data,
@@ -599,7 +600,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
     "monetization-check": {
         "title": "Monetization Check",
         "script": "monetization_check.py",
-        "description": "Check source URLs against Kelkoo/Yadore and write Matches sheet.",
+        "description": "Check source URLs against Kelkoo/Yadore/Adexa/Shopnomix/FlexOffers and write Matches sheet.",
         "group": "match-making",
         "args_hint": "Optional args, e.g. --max-rows 20",
         "args_templates": [
@@ -1238,6 +1239,7 @@ def ui_matchmaking_manual():
                         sn_coupons_epc = str(sn_coupons.get("epc") or "")
                     except ShopnomixClientError:
                         sn_coupons_found = False
+                flex = flexoffers_merchant_check(domain, g)
                 result_rows.append(
                     {
                         "geo": g,
@@ -1261,6 +1263,11 @@ def ui_matchmaking_manual():
                         "kelkoo1_cpc": str(k1.get("estimatedCpc", "")),
                         "kelkoo2_cpc": str(k2.get("estimatedCpc", "")),
                         "kelkoo5_cpc": str(k5.get("estimatedCpc", "")),
+                        "flexoffers_found": bool(flex.get("found")),
+                        "flexoffers_name": str(flex.get("name") or ""),
+                        "flexoffers_id": str(flex.get("advertiser_id") or ""),
+                        "flexoffers_status": str(flex.get("status") or flex.get("note") or ""),
+                        "flexoffers_deeplink": bool(flex.get("deeplink")) if flex.get("found") else False,
                     }
                 )
     return render_template(

@@ -42,12 +42,14 @@ class DomainDemandRefresh(BaseAutomation):
             equalize_weights=DOMAIN_TRILLION_GUARD_ENABLED,
         )
         pause = result.get("trillion_pause") or {}
+        resume = result.get("trillion_resume") or {}
         hub_eq = result.get("hub_equalize") or {}
         return {
             "status": result.get("status", "error"),
+            "trillion_resumed": resume.get("resumed"),
             "trillion_paused": pause.get("paused"),
             "hub_streams_updated": hub_eq.get("hub_streams_updated"),
             "total_demand": (result.get("sync") or {}).get("bill_rows"),
-            "errors": pause.get("errors") or [],
+            "errors": list(resume.get("errors") or []) + list(pause.get("errors") or []),
             "fallback": hub_eq.get("fallback"),
         }

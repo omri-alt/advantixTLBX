@@ -628,6 +628,7 @@ def _feed_results_from_checkmon(
     ax = checks.get("ax") or {}
     sn_tile = checks.get("sn_tile") or {}
     sn_coupons = checks.get("sn_coupons") or {}
+    flex = checks.get("flexoffers") or {}
 
     ax_mode = str(ax.get("mode") or "")
     ax_detail = str(ax.get("note") or "")
@@ -672,7 +673,21 @@ def _feed_results_from_checkmon(
             "note": shopnomix_feed_class(bool(sn_tile.get("found")), bool(sn_coupons.get("found"))),
         },
         "effinity": {"found": None, "detail": "", "note": "no API check in KLblend yet"},
-        "flexoffers": {"found": None, "detail": "", "note": "no API check in KLblend yet"},
+        "flexoffers": {
+            "found": bool(flex.get("found")),
+            "detail": (
+                f"{flex.get('name') or ''} id={flex.get('advertiser_id') or ''} "
+                f"status={flex.get('status') or ''}"
+            ).strip()
+            if flex.get("found")
+            else str(flex.get("note") or ""),
+            "note": (
+                f"catalog:{flex.get('status') or 'hit'}"
+                + (" deeplink" if flex.get("deeplink") else "")
+                if flex.get("found")
+                else str(flex.get("note") or "not in flexoffers catalog")
+            ),
+        },
     }
 
     seen: set[str] = set()
