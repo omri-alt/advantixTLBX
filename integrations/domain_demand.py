@@ -513,6 +513,99 @@ def _line_delivered(
     return float(blend_alloc.get(line.line_key, 0.0))
 
 
+def load_bill_lines_from_sheet(
+    *,
+    date_str: Optional[str] = None,
+) -> Tuple[List[BillLine], List[str]]:
+    """Rebuild BillLine demand from today's ``bill`` tab (intraday delivered refresh)."""
+    day = (date_str or _calendar_day()).strip()
+    logs: List[str] = []
+    sheet_id = (DOMAIN_DEMAND_SHEET_ID or "").strip()
+    if not sheet_id:
+        return [], ["DOMAIN_DEMAND_SHEET_ID not set — cannot load bill"]
+
+    tab = DOMAIN_DEMAND_BILL_TAB
+    quoted = tab.replace("'", "''")
+    try:
+        service = _get_sheets_service()
+        result = service.values().get(
+            spreadsheetId=sheet_id,
+            range=f"'{quoted}'!A:Z",
+        ).execute()
+    except Exception as e:
+        return [], [f"Failed to read bill tab '{tab}': {e}"]
+
+    values = result.get("values") or []
+    if len(values) < 2:
+        return [], [f"Bill tab '{tab}' is empty — run a demand rebuild first"]
+
+    header = [str(h).strip().lower() for h in values[0]]
+    idx = {name: i for i, name in enumerate(header)}
+
+    def cell(row: List[Any], name: str) -> str:
+        i = idx.get(name)
+        if i is None or i >= len(row):
+            return ""
+        return str(row[i] if row[i] is not None else "").strip()
+
+    lines: List[BillLine] = []
+    skipped_other_day = 0
+    for row in values[1:]:
+        if not row:
+            continue
+        row_day = cell(row, "date")
+        if row_day and row_day != day:
+            skipped_other_day += 1
+            continue
+        family = cell(row, "family")
+        feed = cell(row, "feed")
+        geo = cell(row, "geo").lower()
+        device = cell(row, "device").lower()
+        if family not in ("nipuhim", "blend") or not feed or not geo or device not in ("desktop", "mobile"):
+            continue
+        try:
+            demand = float(cell(row, "demand_clicks") or 0)
+        except ValueError:
+            demand = 0.0
+        if demand <= 0:
+            continue
+        brand = cell(row, "brand")
+        merchant_id = cell(row, "merchant_id")
+        line_key = cell(row, "line_key") or f"{family}|{feed}|{geo}|{device}|{brand}|{merchant_id}"
+        cid_raw = cell(row, "child_campaign_id")
+        child_id: Optional[int] = None
+        if cid_raw:
+            try:
+                child_id = int(float(cid_raw))
+            except ValueError:
+                child_id = None
+        lines.append(
+            BillLine(
+                line_key=line_key,
+                family=family,
+                feed=feed,
+                geo=geo,
+                device=device,
+                brand=brand,
+                merchant_id=merchant_id,
+                demand=demand,
+                child_campaign_id=child_id,
+                source=cell(row, "source") or "sheet",
+            )
+        )
+
+    logs.append(
+        f"Loaded {len(lines)} bill line(s) from sheet for {day}"
+        + (f" (skipped {skipped_other_day} other-day row(s))" if skipped_other_day else "")
+    )
+    if not lines:
+        logs.append(
+            "No demand lines on bill tab for today — refusing empty refresh "
+            "(would wipe demand / zero hub weights)"
+        )
+    return lines, logs
+
+
 def build_domain_demand_payload(
     *,
     date_str: Optional[str] = None,
@@ -522,8 +615,7 @@ def build_domain_demand_payload(
 ) -> Dict[str, Any]:
     day = (date_str or _calendar_day()).strip()
     logs: List[str] = []
-    nip_lines: List[BillLine] = []
-    blend_lines: List[BillLine] = []
+    lines: List[BillLine] = []
 
     if rebuild_demand:
         nip_lines, nip_logs = build_nipuhim_demand_lines(
@@ -533,10 +625,32 @@ def build_domain_demand_payload(
         blend_lines, blend_logs = build_blend_demand_lines()
         logs.extend(nip_logs)
         logs.extend(blend_logs)
+        lines = nip_lines + blend_lines
     else:
-        logs.append("Demand rebuild skipped (delivered-only refresh)")
-
-    lines = nip_lines + blend_lines
+        lines, load_logs = load_bill_lines_from_sheet(date_str=day)
+        logs.extend(load_logs)
+        if not lines:
+            # Hard stop: empty bill refresh previously wiped the sheet and set hub share=0.
+            return {
+                "updated_at": _utc_now_iso(),
+                "date": day,
+                "reason": reason,
+                "logs": logs,
+                "bill": [],
+                "summary": [],
+                "summary_by_geo": [],
+                "hub_campaign_id": int(
+                    load_hub_state().get("hub_campaign_id") or KEITARO_HUB_CAMPAIGN_ID
+                ),
+                "hub_delivered_clicks": None,
+                "trillion_hint": "OPEN",
+                "hub_weights": {},
+                "keitaro_meta": {},
+                "total_demand": 0,
+                "total_delivered_child_sum": 0,
+                "status": "error",
+                "error": "empty_bill_refused",
+            }
     delivered_bucket, report_meta, k_logs = _fetch_delivered_by_bucket(lines)
     logs.extend(k_logs)
 
@@ -773,6 +887,16 @@ def write_domain_demand_sheet(payload: Dict[str, Any], *, dry_run: bool = False)
     if not sheet_id:
         return {"status": "error", "error": "DOMAIN_DEMAND_SHEET_ID not set"}
 
+    if payload.get("status") == "error" or payload.get("error") == "empty_bill_refused":
+        return {
+            "status": "skipped",
+            "reason": payload.get("error") or "payload_error",
+            "spreadsheet_id": sheet_id,
+            "bill_rows": 0,
+            "summary_rows": 0,
+            "geo_rows": 0,
+        }
+
     now = payload.get("updated_at") or _utc_now_iso()
     day = payload.get("date") or _calendar_day()
 
@@ -834,6 +958,17 @@ def write_domain_demand_sheet(payload: Dict[str, Any], *, dry_run: bool = False)
                 r.get("trillion_hint"),
             ]
         )
+
+    if not bill_values:
+        return {
+            "status": "skipped",
+            "reason": "empty_bill_refused",
+            "spreadsheet_id": sheet_id,
+            "bill_rows": 0,
+            "summary_rows": len(summary_values),
+            "geo_rows": len(geo_values),
+            "trillion_hint": payload.get("trillion_hint"),
+        }
 
     if dry_run:
         return {

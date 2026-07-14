@@ -279,12 +279,30 @@ def equalize_hub_stream_weights(
 
     client = KeitaroClient()
     data = payload or build_domain_demand_payload(rebuild_demand=False, reason="weight_equalize")
+    if data.get("error") == "empty_bill_refused" or data.get("status") == "error":
+        return {
+            "hub_streams_updated": 0,
+            "logs": list(data.get("logs") or [])
+            + ["Skipped hub equalize: empty/missing demand bill (refusing all-zero weights)"],
+            "dry_run": dry_run,
+            "skipped": True,
+            "reason": data.get("error") or "payload_error",
+        }
     bill_rows = data.get("bill") or []
+    if not bill_rows:
+        return {
+            "hub_streams_updated": 0,
+            "logs": ["Skipped hub equalize: no bill rows"],
+            "dry_run": dry_run,
+            "skipped": True,
+            "reason": "empty_bill",
+        }
     hub_id = int(data.get("hub_campaign_id") or load_hub_state().get("hub_campaign_id") or KEITARO_HUB_CAMPAIGN_ID)
     quality_slugs = _quality_brand_slugs(client)
 
     logs: List[str] = []
     updated = 0
+    skipped_all_zero = 0
     for stream in _hub_device_streams(client, hub_id):
         sname = stream.get("name") or ""
         sid = stream.get("id")
@@ -296,6 +314,25 @@ def equalize_hub_stream_weights(
         offer_weights, zero_ids = _hub_offer_weights_for_segment(
             bill_rows, geo, channel, quality_brand_slugs=quality_slugs
         )
+        # Never replace a live flow with only share=0 offers — clicks fall through to fallback.
+        # All-zero is only valid when the segment still has bill demand that was fully filled
+        # (remaining=0 for every line); even then, leave at least one offer? No — when remaining
+        # is all 0 we *do* want zeros so traffic can fall through / Trillion pause. But if this
+        # geo×device has *no demand lines at all*, leave the stream untouched.
+        seg_has_demand = any(
+            str(r.get("geo") or "").lower() == geo
+            and str(r.get("device") or "").lower() == channel
+            and int(r.get("demand_clicks") or 0) > 0
+            for r in bill_rows
+        )
+        if not offer_weights:
+            if not seg_has_demand:
+                logs.append(f"hub {sname}: skip (no demand lines for segment)")
+                continue
+            # Demand existed but remaining is 0 → intentional zero-share; keep attached.
+            if not zero_ids:
+                logs.append(f"hub {sname}: skip (no hub offers in state)")
+                continue
         if dry_run:
             logs.append(
                 f"hub {sname}: would set {len(offer_weights)} weighted + {len(zero_ids)} zero-share"
@@ -306,13 +343,20 @@ def equalize_hub_stream_weights(
         try:
             set_flow_offers_weighted_keep_zeros(int(sid), offer_weights, zero_offer_ids=zero_ids)
             updated += 1
+            if not offer_weights:
+                skipped_all_zero += 1
             logs.append(
                 f"hub {sname}: {len(offer_weights)} weighted + {len(zero_ids)} zero-share"
             )
         except KeitaroClientError as e:
             logs.append(f"hub {sname}: error {e}")
 
-    return {"hub_streams_updated": updated, "logs": logs, "dry_run": dry_run}
+    return {
+        "hub_streams_updated": updated,
+        "logs": logs,
+        "dry_run": dry_run,
+        "segments_zeroed": skipped_all_zero,
+    }
 
 
 def equalize_child_blend_offer_weights(
@@ -326,7 +370,21 @@ def equalize_child_blend_offer_weights(
 
     client = KeitaroClient()
     data = payload or build_domain_demand_payload(rebuild_demand=False, reason="weight_equalize")
+    if data.get("error") == "empty_bill_refused" or data.get("status") == "error":
+        return {
+            "streams_updated": 0,
+            "logs": ["Skipped child equalize: empty/missing demand bill"],
+            "dry_run": dry_run,
+            "skipped": True,
+        }
     bill_rows = [r for r in (data.get("bill") or []) if str(r.get("family") or "") == "blend"]
+    if not bill_rows:
+        return {
+            "streams_updated": 0,
+            "logs": ["Skipped child equalize: no blend bill rows"],
+            "dry_run": dry_run,
+            "skipped": True,
+        }
 
     offers_by_name = {(o.get("name") or "").strip(): int(o["id"]) for o in client.get_offers() if o.get("id")}
 
@@ -433,6 +491,12 @@ def run_domain_demand_guard(
         "sync": sync_result.get("write"),
         "logs": list(sync_result.get("logs") or []),
     }
+
+    if payload.get("error") == "empty_bill_refused" or payload.get("status") == "error":
+        out["status"] = "error"
+        out["error"] = payload.get("error") or "payload_error"
+        out["logs"].append("Guard aborted: missing demand bill (no sheet write / no weight changes)")
+        return out
 
     if equalize_weights:
         hub_eq = equalize_hub_stream_weights(dry_run=dry_run, payload=payload)
