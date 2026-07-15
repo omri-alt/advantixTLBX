@@ -183,4 +183,23 @@ def pause_trillion_hub_campaigns(
         len(errors),
         dry_run,
     )
+    if not dry_run:
+        try:
+            from integrations.domain_demand import archive_and_reset_domain_demand_for_new_day
+
+            rollover = archive_and_reset_domain_demand_for_new_day(
+                dry_run=False,
+                reason=reason,
+            )
+            payload["domain_demand_rollover"] = {
+                "status": rollover.get("status"),
+                "archive_date": rollover.get("archive_date"),
+                "new_day": rollover.get("new_day"),
+                "archived_tabs": rollover.get("archived_tabs"),
+            }
+            for line in rollover.get("logs") or []:
+                logger.info("Domain-demand rollover: %s", line)
+        except Exception as e:
+            logger.warning("Domain-demand nightly rollover failed: %s", e)
+            payload["domain_demand_rollover_error"] = str(e)
     return payload

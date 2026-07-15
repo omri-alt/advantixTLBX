@@ -742,9 +742,15 @@ def run_domain_demand_guard(
     reason: str = "scheduled",
     rebuild_demand: bool = False,
     pause_trillion: bool = True,
+    resume_trillion: bool = False,
     equalize_weights: bool = True,
 ) -> Dict[str, Any]:
-    """Intraday: refresh delivered, equalize Keitaro weights, pause filled Trillion segments."""
+    """
+    Intraday: refresh delivered, equalize Keitaro weights, pause filled Trillion segments.
+
+    ``resume_trillion`` defaults False so overnight cron cannot reopen campaigns on
+    yesterday's demand. Morning daily stage 7g activates after the bill is rebuilt.
+    """
     sync_result = sync_domain_demand(rebuild_demand=rebuild_demand, dry_run=dry_run, reason=reason)
     payload = {k: v for k, v in sync_result.items() if k != "write"}
 
@@ -756,17 +762,14 @@ def run_domain_demand_guard(
     }
 
     if payload.get("error") == "empty_bill_refused" or payload.get("status") == "error":
-        out["status"] = "error"
+        out["status"] = "awaiting_morning" if not rebuild_demand else "error"
         out["error"] = payload.get("error") or "payload_error"
         out["logs"].append(
-            "Demand bill missing — will restore hub weights from click caps; skipping Trillion pause"
+            "Demand bill empty — skipping Trillion actions (await morning daily rebuild)"
+            if not rebuild_demand
+            else "Demand bill missing — skipping equalize fallback; await morning rebuild"
         )
-        if equalize_weights:
-            hub_eq = equalize_hub_stream_weights(dry_run=dry_run, payload=payload)
-            out["hub_equalize"] = hub_eq
-            out["logs"].extend(hub_eq.get("logs") or [])
-            if hub_eq.get("status") in ("ok", "dry_run"):
-                out["status"] = hub_eq.get("status")
+        # Do not rewrite hub weights from click-caps when the bill is empty overnight.
         return out
 
     if equalize_weights:
@@ -777,18 +780,21 @@ def run_domain_demand_guard(
         out["logs"].extend(hub_eq.get("logs") or [])
         out["logs"].extend(child_eq.get("logs") or [])
 
-    if pause_trillion:
-        # Resume underfilled first, then pause only when fill >= threshold.
-        resume_result = run_trillion_activate_for_demand(
-            dry_run=dry_run,
-            reason=reason,
-            segments=payload.get("summary_by_geo"),
-        )
-        pause_result = run_trillion_pause_filled_segments(
-            dry_run=dry_run,
-            reason=reason,
-            segments=payload.get("summary_by_geo"),
-        )
+    if pause_trillion or resume_trillion:
+        resume_result: Dict[str, Any] = {"resumed": 0, "actions": [], "errors": []}
+        if resume_trillion:
+            resume_result = run_trillion_activate_for_demand(
+                dry_run=dry_run,
+                reason=reason,
+                segments=payload.get("summary_by_geo"),
+            )
+        pause_result: Dict[str, Any] = {"paused": 0, "actions": [], "errors": []}
+        if pause_trillion:
+            pause_result = run_trillion_pause_filled_segments(
+                dry_run=dry_run,
+                reason=reason,
+                segments=payload.get("summary_by_geo"),
+            )
         out["trillion_resume"] = resume_result
         out["trillion_pause"] = pause_result
         out["logs"].append(
@@ -799,9 +805,6 @@ def run_domain_demand_guard(
             int(resume_result.get("resumed") or 0) > 0
             or int(pause_result.get("paused") or 0) > 0
         ):
-            # The first sheet write is a pre-action snapshot. Refresh it after
-            # Trillion mutations so summary_by_geo shows Active/Stopped rather
-            # than PAUSE_SUGGESTED for a campaign that was already paused.
             post_sync = sync_domain_demand(
                 rebuild_demand=False,
                 dry_run=False,
@@ -809,9 +812,7 @@ def run_domain_demand_guard(
             )
             out["post_action_sync"] = post_sync.get("write")
             out["logs"].extend(post_sync.get("logs") or [])
-            out["logs"].append(
-                "Domain-demand sheet refreshed after Trillion actions"
-            )
+            out["logs"].append("Domain-demand sheet refreshed after Trillion actions")
 
     out["status"] = "dry_run" if dry_run else "ok"
     return out

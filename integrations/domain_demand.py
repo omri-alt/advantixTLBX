@@ -994,6 +994,173 @@ def write_domain_demand_sheet(payload: Dict[str, Any], *, dry_run: bool = False)
     }
 
 
+def _read_tab_values(service: Any, spreadsheet_id: str, tab: str) -> List[List[Any]]:
+    quoted = tab.replace("'", "''")
+    try:
+        result = service.values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{quoted}'!A:Z",
+        ).execute()
+    except Exception:
+        return []
+    return list(result.get("values") or [])
+
+
+def _infer_bill_date(bill_values: List[List[Any]]) -> str:
+    """Most common ``date`` cell on the bill tab (skips header)."""
+    if len(bill_values) < 2:
+        return ""
+    header = [str(h).strip().lower() for h in bill_values[0]]
+    try:
+        date_i = header.index("date")
+    except ValueError:
+        date_i = 1 if len(bill_values[0]) > 1 else -1
+    counts: Dict[str, int] = defaultdict(int)
+    for row in bill_values[1:]:
+        if date_i < 0 or date_i >= len(row):
+            continue
+        d = str(row[date_i] or "").strip()
+        if d and d.lower() not in ("awaiting_daily", "pending"):
+            counts[d] += 1
+    if not counts:
+        return ""
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+def today_domain_demand_ready(*, date_str: Optional[str] = None) -> bool:
+    """
+    True when the live ``bill`` tab has real demand rows for today.
+
+    After nightly rollover the bill is empty (or awaiting-morning marker only), so
+    overnight automations must not rebuild from yesterday's Nipuhim/Blend sheets
+    or resume Trillion.
+    """
+    day = (date_str or _calendar_day()).strip()
+    lines, _logs = load_bill_lines_from_sheet(date_str=day)
+    return any(float(l.demand or 0) > 0 for l in lines)
+
+
+def archive_and_reset_domain_demand_for_new_day(
+    *,
+    dry_run: bool = False,
+    reason: str = "nightly_rollover",
+) -> Dict[str, Any]:
+    """
+    Nightly rollover: copy live domain-demand tabs to dated + ``yesterday_*`` tabs,
+    then clear live tabs so morning daily workflow rebuilds fresh demand.
+
+    While live ``bill`` is empty, overnight DomainDemandRefresh / BlendSync will not
+    rebuild demand or resume Trillion (yesterday's Nipuhim offers would otherwise
+    reopen traffic before the morning run).
+    """
+    sheet_id = (DOMAIN_DEMAND_SHEET_ID or "").strip()
+    if not sheet_id:
+        return {"status": "error", "error": "DOMAIN_DEMAND_SHEET_ID not set"}
+
+    service = _get_sheets_service()
+    bill_vals = _read_tab_values(service, sheet_id, DOMAIN_DEMAND_BILL_TAB)
+    summary_vals = _read_tab_values(service, sheet_id, DOMAIN_DEMAND_SUMMARY_TAB)
+    geo_vals = _read_tab_values(service, sheet_id, DOMAIN_DEMAND_SUMMARY_BY_GEO_TAB)
+
+    archive_date = _infer_bill_date(bill_vals)
+    has_data = len(bill_vals) > 1
+    if not archive_date and has_data:
+        # Fallback: calendar yesterday in report TZ.
+        from datetime import datetime, timedelta
+
+        from integrations.blend_cap_progress import _today_in_report_tz
+
+        today = datetime.strptime(_today_in_report_tz(), "%Y-%m-%d").date()
+        archive_date = (today - timedelta(days=1)).isoformat()
+
+    logs: List[str] = [f"Nightly domain-demand rollover ({reason})"]
+    archived_tabs: List[str] = []
+
+    def _copy(src_vals: List[List[Any]], *dest_tabs: str) -> None:
+        if not src_vals:
+            return
+        header = list(src_vals[0])
+        rows = [list(r) for r in src_vals[1:]]
+        for tab in dest_tabs:
+            if dry_run:
+                logs.append(f"would archive {len(rows)} row(s) → {tab}")
+                continue
+            _write_tab(service, sheet_id, tab, header, rows)
+            archived_tabs.append(tab)
+            logs.append(f"archived {len(rows)} row(s) → {tab}")
+
+    if has_data and archive_date:
+        _copy(
+            bill_vals,
+            f"{DOMAIN_DEMAND_BILL_TAB}_{archive_date}",
+            f"yesterday_{DOMAIN_DEMAND_BILL_TAB}",
+        )
+        _copy(
+            summary_vals,
+            f"{DOMAIN_DEMAND_SUMMARY_TAB}_{archive_date}",
+            f"yesterday_{DOMAIN_DEMAND_SUMMARY_TAB}",
+        )
+        _copy(
+            geo_vals,
+            f"{DOMAIN_DEMAND_SUMMARY_BY_GEO_TAB}_{archive_date}",
+            f"yesterday_{DOMAIN_DEMAND_SUMMARY_BY_GEO_TAB}",
+        )
+    else:
+        logs.append("No live bill data to archive (already empty or awaiting morning)")
+
+    # Fresh live tabs for the new day — filled only by morning daily workflow / rebuild.
+    now = _utc_now_iso()
+    new_day = _calendar_day()
+    awaiting_note = (
+        f"Awaiting morning daily workflow ({reason}). "
+        f"Archived prior demand as {archive_date or 'n/a'}. Do not rebuild overnight."
+    )
+    if dry_run:
+        logs.append(f"would reset live tabs for {new_day}")
+        return {
+            "status": "dry_run",
+            "archive_date": archive_date,
+            "new_day": new_day,
+            "archived_tabs": archived_tabs,
+            "logs": logs,
+        }
+
+    _write_tab(service, sheet_id, DOMAIN_DEMAND_BILL_TAB, BILL_HEADER, [])
+    _write_tab(
+        service,
+        sheet_id,
+        DOMAIN_DEMAND_SUMMARY_TAB,
+        SUMMARY_HEADER,
+        [
+            [
+                now,
+                new_day,
+                "awaiting_daily",
+                "",
+                "",
+                0,
+                0,
+                0,
+                "",
+                "",
+                "AWAITING_MORNING",
+                awaiting_note,
+            ]
+        ],
+    )
+    _write_tab(service, sheet_id, DOMAIN_DEMAND_SUMMARY_BY_GEO_TAB, SUMMARY_BY_GEO_HEADER, [])
+    logs.append(f"reset live bill/summary/summary_by_geo for {new_day}")
+
+    return {
+        "status": "ok",
+        "reason": reason,
+        "archive_date": archive_date,
+        "new_day": new_day,
+        "archived_tabs": archived_tabs,
+        "logs": logs,
+    }
+
+
 def sync_domain_demand(
     *,
     date_str: Optional[str] = None,

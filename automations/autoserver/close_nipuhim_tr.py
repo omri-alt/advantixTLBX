@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 class CloseNipuhimTrAuto(BaseAutomation):
     """
-    Daily Trillion close: pause campaigns whose target URL routes to Keitaro hub 94.
+    Daily Trillion close: pause campaigns whose target URL routes to Keitaro hub 94,
+    then archive the live domain-demand bill as yesterday and clear today for morning.
 
     Scheduled at ``TRILLION_HUB_CLOSE_*`` in ``TRILLION_HUB_CLOSE_TZ`` (default 01:00 Asia/Jerusalem).
     """

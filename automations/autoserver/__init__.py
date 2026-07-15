@@ -51,13 +51,13 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
     },
     {
         "class_name": "CloseNipuhimTrAuto",
-        "label": "Close Nipuhim Trillion (hub campaign 94)",
+        "label": "Close Nipuhim Trillion + archive domain-demand sheet",
         "schedule": "Daily 01:00 Asia/Jerusalem (TRILLION_HUB_CLOSE_* env)",
     },
     {
         "class_name": "BlendSync2h",
         "label": "Blend sheet → Keitaro + domain-demand rebuild",
-        "schedule": "Every 2 hours (even hours)",
+        "schedule": "Every 2 hours (even hours); quiet 01:00–10:00 Asia/Jerusalem",
     },
     {
         "class_name": "BlendTrCapGuard",
@@ -80,7 +80,7 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
     },
     {
         "class_name": "DomainDemandRefresh",
-        "label": "Domain-demand rebuild (clickCaps + weights + Trillion pause)",
+        "label": "Domain-demand rebuild (after morning bill) + Trillion pause",
         "schedule": "Every 30 minutes (DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES)",
     },
 ]

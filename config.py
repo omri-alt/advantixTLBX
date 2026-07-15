@@ -367,6 +367,22 @@ TRILLION_HUB_CLOSE_ALIAS = (os.getenv("TRILLION_HUB_CLOSE_ALIAS") or "").strip()
 # Optional comma folders (e.g. ``Blend``). Empty = any folder whose URL hits the hub alias.
 TRILLION_HUB_CLOSE_FOLDERS = (os.getenv("TRILLION_HUB_CLOSE_FOLDERS") or "").strip()
 
+# BlendSync2h quiet window: skip scheduled runs from close hour until end hour (local TZ).
+# Default: same TZ/hour as Trillion hub nightly close → 10:00 (no sync while domain traffic is off).
+BLEND_SYNC_QUIET_TZ = (os.getenv("BLEND_SYNC_QUIET_TZ") or TRILLION_HUB_CLOSE_TZ or "Asia/Jerusalem").strip()
+try:
+    BLEND_SYNC_QUIET_START_HOUR = int(
+        (os.getenv("BLEND_SYNC_QUIET_START_HOUR") or str(TRILLION_HUB_CLOSE_HOUR)).strip()
+    )
+except ValueError:
+    BLEND_SYNC_QUIET_START_HOUR = TRILLION_HUB_CLOSE_HOUR
+try:
+    BLEND_SYNC_QUIET_END_HOUR = int((os.getenv("BLEND_SYNC_QUIET_END_HOUR") or "10").strip())
+except ValueError:
+    BLEND_SYNC_QUIET_END_HOUR = 10
+BLEND_SYNC_QUIET_START_HOUR = max(0, min(23, BLEND_SYNC_QUIET_START_HOUR))
+BLEND_SYNC_QUIET_END_HOUR = max(0, min(23, BLEND_SYNC_QUIET_END_HOUR))
+
 # Domain-demand workbook: daily click bill for hub campaign 94 (Nipuhim + Blend).
 DOMAIN_DEMAND_SHEET_ID = (
     os.getenv("DOMAIN_DEMAND_SHEET_ID") or "1RzC8f7MSzq0YexMceEFTtiCdbU1Bxoa3ApyGxLZBzvA"
