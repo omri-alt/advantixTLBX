@@ -23,6 +23,7 @@ from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.keitaro_hub import (
     _hub_device_streams,
     _stream_hub_offer_weights,
+    ensure_hub_routing_geos,
     hub_active_feed_keys,
     load_hub_state,
     resolve_hub_weight_context,
@@ -409,6 +410,9 @@ def restore_hub_stream_weights_from_click_caps(
     client = KeitaroClient()
     state = load_hub_state()
     hub_id = int(state.get("hub_campaign_id") or KEITARO_HUB_CAMPAIGN_ID)
+    ensure_res = ensure_hub_routing_geos(
+        dry_run=dry_run, client=client, hub_campaign_id=hub_id
+    )
     offer_state = dict(state.get("hub_offers") or {})
     quality_state = dict(state.get("hub_quality_offers") or {})
     active = hub_active_feed_keys()
@@ -446,7 +450,7 @@ def restore_hub_stream_weights_from_click_caps(
         if int(oid) not in oid_w and int(oid) not in zeros:
             zeros.append(int(oid))
 
-    logs = [
+    logs = list(ensure_res.get("logs") or []) + [
         f"click-cap restore: {len(oid_w)} weighted + {len(zeros)} zero-share "
         f"(blend_caps={dict(wctx.blend_feed_caps or {})}, source={wctx.source})"
     ]
@@ -528,6 +532,14 @@ def equalize_hub_stream_weights(
     quality_slugs = _quality_brand_slugs(client)
 
     logs: List[str] = []
+    ensure_res = ensure_hub_routing_geos(
+        bill_rows=bill_rows,
+        dry_run=dry_run,
+        client=client,
+        hub_campaign_id=hub_id,
+    )
+    logs.extend(ensure_res.get("logs") or [])
+
     updated = 0
     skipped_all_zero = 0
     for stream in _hub_device_streams(client, hub_id):
@@ -760,6 +772,15 @@ def run_domain_demand_guard(
         "sync": sync_result.get("write"),
         "logs": list(sync_result.get("logs") or []),
     }
+
+    # Even with an empty overnight bill, keep hub geo streams complete so any
+    # residual / early traffic cannot fall through to the empty-filter fallback.
+    ensure_res = ensure_hub_routing_geos(dry_run=dry_run)
+    out["hub_stream_ensure"] = {
+        "created": ensure_res.get("created") or [],
+        "refreshed_count": len(ensure_res.get("refreshed") or []),
+    }
+    out["logs"].extend(ensure_res.get("logs") or [])
 
     if payload.get("error") == "empty_bill_refused" or payload.get("status") == "error":
         out["status"] = "awaiting_morning" if not rebuild_demand else "error"

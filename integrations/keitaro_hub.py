@@ -811,6 +811,240 @@ def _hub_device_streams(client: KeitaroClient, hub_campaign_id: int) -> List[Dic
     return out
 
 
+def _is_hub_fallback_stream(stream: Dict[str, Any]) -> bool:
+    name = (stream.get("name") or "").strip().lower()
+    stype = (stream.get("type") or "").strip().lower()
+    if stype == "default":
+        return True
+    return name == "fallback" or name.startswith("fallback")
+
+
+def _device_stream_sort_key(stream: Dict[str, Any]) -> Tuple[str, str, int]:
+    geo, channel = parse_blend_stream_geo_channel(stream.get("name") or "")
+    ch_rank = 0 if channel == "desktop" else 1
+    return (geo or "", channel or "", ch_rank)
+
+
+def reorder_hub_streams_fallback_last(
+    client: KeitaroClient,
+    hub_campaign_id: int,
+    *,
+    dry_run: bool = False,
+) -> List[str]:
+    """
+    Keep geo desktop/mobile flows before the catch-all fallback.
+
+    New streams are often appended after the empty-filter fallback; without a reorder,
+    that fallback steals all unmatched (and newly added) geo traffic.
+
+    Keitaro requires unique positions, so we park streams at high temporary positions
+    first, then assign the final 1..N order.
+    """
+    logs: List[str] = []
+    streams = list(client.get_streams(int(hub_campaign_id)))
+    device: List[Dict[str, Any]] = []
+    fallback: List[Dict[str, Any]] = []
+    other: List[Dict[str, Any]] = []
+    for s in streams:
+        geo, channel = parse_blend_stream_geo_channel(s.get("name") or "")
+        if geo and channel in ("desktop", "mobile"):
+            device.append(s)
+        elif _is_hub_fallback_stream(s):
+            fallback.append(s)
+        else:
+            other.append(s)
+
+    if not device:
+        return ["hub reorder: no device streams"]
+
+    device_sorted = sorted(device, key=_device_stream_sort_key)
+    # Preserve relative order of non-device / fallback; fallback always last.
+    ordered = device_sorted + other + fallback
+    expected_pos = {int(s["id"]): idx for idx, s in enumerate(ordered, start=1) if s.get("id")}
+    changes: List[Tuple[int, str, int, int]] = []
+    for s in streams:
+        sid = s.get("id")
+        if sid is None:
+            continue
+        sid_i = int(sid)
+        want = expected_pos.get(sid_i)
+        if want is None:
+            continue
+        have = int(s.get("position") or 0)
+        if have != want:
+            changes.append((sid_i, str(s.get("name") or ""), have, want))
+
+    if not changes:
+        logs.append("hub reorder: positions already correct (device flows before fallback)")
+        return logs
+
+    if dry_run:
+        logs.append(f"hub reorder: would update {len(changes)} stream position(s)")
+        for sid_i, name, have, want in changes[:8]:
+            logs.append(f"  {name} id={sid_i}: {have} -> {want}")
+        return logs
+
+    # Phase 1: park *all* ordered streams at unique high positions (avoids unique conflicts).
+    park_base = 10000
+    for i, s in enumerate(ordered):
+        sid_i = int(s["id"])
+        client.update_stream(sid_i, {"position": park_base + i})
+
+    # Phase 2: assign final 1..N (device flows first, fallback last).
+    for want, s in enumerate(ordered, start=1):
+        sid_i = int(s["id"])
+        name = str(s.get("name") or "")
+        have = int(s.get("position") or 0)
+        client.update_stream(sid_i, {"position": want})
+        if have != want:
+            logs.append(f"hub reorder: {name} id={sid_i} position {have} -> {want}")
+    logs.append(
+        f"hub reorder: {len(device_sorted)} device + {len(other)} other + "
+        f"{len(fallback)} fallback (fallback last)"
+    )
+    return logs
+
+
+def ensure_hub_device_streams_for_geos(
+    geos: List[str],
+    *,
+    dry_run: bool = False,
+    client: Optional[KeitaroClient] = None,
+    hub_campaign_id: Optional[int] = None,
+    refresh_filters: bool = True,
+) -> Dict[str, Any]:
+    """
+    Ensure campaign 94 has ``{geo}_desktop`` / ``{geo}_mobile`` for each geo.
+
+    Also repairs country filters (``uk`` → Keitaro ``GB``) when mismatched and
+    pushes fallback last.
+    """
+    from assistance import (
+        _geo_for_api,
+        assert_blend_stream_filters_sane,
+        set_blend_device_stream_filters,
+    )
+    from geos import SUPPORTED_GEOS, normalize_geo
+
+    client = client or KeitaroClient()
+    hub_id = int(hub_campaign_id or KEITARO_HUB_CAMPAIGN_ID)
+    wanted: List[str] = []
+    seen: set[str] = set()
+    for raw in geos:
+        g = normalize_geo(raw)
+        if not g or g in seen:
+            continue
+        if SUPPORTED_GEOS and g not in SUPPORTED_GEOS:
+            continue
+        seen.add(g)
+        wanted.append(g)
+
+    logs: List[str] = []
+    created: List[str] = []
+    refreshed: List[str] = []
+
+    existing_streams = list(client.get_streams(hub_id))
+    by_name = {
+        (s.get("name") or "").strip().lower(): s for s in existing_streams
+    }
+
+    if dry_run:
+        for geo in wanted:
+            for channel in ("desktop", "mobile"):
+                key = f"{geo}_{channel}"
+                cur = by_name.get(key)
+                if cur:
+                    if refresh_filters:
+                        logs.append(f"hub stream {key}: would check/repair filters")
+                        refreshed.append(key)
+                else:
+                    logs.append(f"hub stream {key}: would create")
+                    created.append(key)
+        logs.extend(reorder_hub_streams_fallback_last(client, hub_id, dry_run=True))
+        return {
+            "created": created,
+            "refreshed": refreshed,
+            "logs": logs,
+            "dry_run": True,
+            "geos": wanted,
+        }
+
+    for geo in wanted:
+        for channel in ("desktop", "mobile"):
+            key = f"{geo}_{channel}"
+            cur = by_name.get(key)
+            if cur:
+                if refresh_filters:
+                    geo_code = _geo_for_api(geo)
+                    try:
+                        assert_blend_stream_filters_sane(
+                            cur.get("filters") or [], channel, geo_code=geo_code
+                        )
+                    except ValueError:
+                        sid = cur.get("id")
+                        if sid is not None:
+                            set_blend_device_stream_filters(int(sid), geo, channel)
+                            refreshed.append(key)
+                            logs.append(
+                                f"hub stream {key}: repaired filters id={sid}"
+                            )
+                continue
+            result = ensure_blend_device_stream(
+                hub_id, geo, channel, skip_if_exists=True
+            )
+            if result.get("_skipped"):
+                if result.get("_filters_repaired"):
+                    refreshed.append(key)
+                    logs.append(f"hub stream {key}: repaired filters id={result.get('id')}")
+            else:
+                created.append(key)
+                logs.append(f"hub stream {key}: created id={result.get('id')}")
+                # keep local map current for later iterations
+                by_name[key] = result
+
+    logs.extend(reorder_hub_streams_fallback_last(client, hub_id, dry_run=False))
+    return {
+        "created": created,
+        "refreshed": refreshed,
+        "logs": logs,
+        "dry_run": False,
+        "geos": wanted,
+    }
+
+
+def ensure_hub_routing_geos(
+    *,
+    extra_geos: Optional[List[str]] = None,
+    bill_rows: Optional[List[Dict[str, Any]]] = None,
+    dry_run: bool = False,
+    client: Optional[KeitaroClient] = None,
+    hub_campaign_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Ensure hub streams for every supported geo we may route (bill + known inventory).
+
+    Defaults to all ``SUPPORTED_GEOS`` so Trillion segments never land on empty-filter fallback
+    just because a geo stream was never bootstrapped on campaign 94.
+    """
+    from geos import SUPPORTED_GEOS
+
+    geos: List[str] = list(SUPPORTED_GEOS)
+    for row in bill_rows or []:
+        g = str(row.get("geo") or "").strip().lower()
+        if g:
+            geos.append(g)
+    for g in extra_geos or []:
+        if g:
+            geos.append(str(g).strip().lower())
+    return ensure_hub_device_streams_for_geos(
+        geos,
+        dry_run=dry_run,
+        client=client,
+        hub_campaign_id=hub_campaign_id,
+        refresh_filters=True,
+    )
+
+
 def ensure_hub_child_device_streams(
     *,
     dry_run: bool = True,
@@ -917,6 +1151,11 @@ def wire_hub_streams(
     active_feeds = hub_active_feed_keys()
     per_geo = wctx.weights_by_geo or {}
     use_per_geo = bool(per_geo) and hub_types == ("nipuhim",)
+
+    ensure_res = ensure_hub_routing_geos(
+        dry_run=dry_run, client=client, hub_campaign_id=hub_id
+    )
+    logs.extend(ensure_res.get("logs") or [])
 
     if not use_per_geo:
         weights_by_name = wctx.weights

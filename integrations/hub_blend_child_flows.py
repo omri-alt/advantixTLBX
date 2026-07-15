@@ -31,6 +31,7 @@ from integrations.keitaro_hub import (
     _hub_device_streams,
     _hub_offer_needs_update,
     _stream_hub_offer_weights,
+    ensure_hub_routing_geos,
     hub_active_feed_keys,
     hub_offer_click_url,
     load_hub_state,
@@ -359,6 +360,11 @@ def wire_hub_with_blend_and_quality(
         active_feeds=active_feeds,
         hub_types=("nipuhim",),
     )
+
+    ensure_res = ensure_hub_routing_geos(
+        dry_run=dry_run, client=client, hub_campaign_id=hub_id
+    )
+    logs.extend(ensure_res.get("logs") or [])
 
     streams = _hub_device_streams(client, hub_id)
     if not streams:

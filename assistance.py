@@ -191,9 +191,20 @@ except ImportError:
 
 
 def _geo_for_api(code: str) -> str:
-    """Normalize geo for our list (lowercase), then return uppercase for Keitaro filter payload."""
+    """
+    Normalize geo for our list (lowercase), then return Keitaro country filter code.
+
+    Keitaro/MaxMind use ISO 3166-1 alpha-2: United Kingdom is ``GB``, not ``UK``.
+    Internally we still use ``uk`` (stream names ``uk_desktop``, sheets, bills).
+    """
     c = normalize_geo(code)
-    return c.upper() if c else ""
+    if not c:
+        return ""
+    if c == "uk":
+        return "GB"
+    if c == "gb":
+        return "GB"
+    return c.upper()
 
 
 def add_country_flow(
@@ -1202,6 +1213,7 @@ def ensure_blend_device_stream(
 
     client = KeitaroClient(base_url=base_url, api_key=api_key)
     flow_name = blend_device_stream_name(geo, channel)
+    geo_code = _geo_for_api(geo)
     if skip_if_exists:
         name_lower = flow_name.lower()
         for s in client.get_streams(int(campaign_id)):
@@ -1209,22 +1221,28 @@ def ensure_blend_device_stream(
                 out = dict(s)
                 out["_skipped"] = True
                 sid = out.get("id")
-                if sid is not None:
-                    set_blend_device_stream_filters(
-                        int(sid), geo, channel, base_url=base_url, api_key=api_key
-                    )
+                if sid is not None and geo_code:
+                    try:
+                        assert_blend_stream_filters_sane(
+                            s.get("filters") or [], channel, geo_code=geo_code
+                        )
+                        out["_filters_ok"] = True
+                    except ValueError:
+                        set_blend_device_stream_filters(
+                            int(sid), geo, channel, base_url=base_url, api_key=api_key
+                        )
+                        out["_filters_repaired"] = True
                 return out
-    geo_code = _geo_for_api(geo)
     if not geo_code:
         raise ValueError(f"Invalid country code {geo!r}")
     filters = _blend_filter_specs(geo_code, channel)
     payload = {
         "campaign_id": int(campaign_id),
         "type": "regular",
-        "name": flow_name,
         "schema": "landings",
         "action_type": "http",
         "state": "active",
+        "name": flow_name,
         "weight": 100,
         "filter_or": False,
         "collect_clicks": True,
