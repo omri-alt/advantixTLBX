@@ -811,6 +811,7 @@ YADORE_DEFAULT_DETAIL_MARKETS = [
     "es",
     "at",
     "it",
+    "mx",
 ]
 
 # Adexa (feed4) — site ID + API key (GetMerchant, feeds). Names from .env:
