@@ -5,9 +5,10 @@ pick ranked merchants per geo, generate offers sheet. Used by run_daily_workflow
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import requests
 
@@ -43,6 +44,31 @@ DEFAULT_MAX_PRODUCTS_PER_GEO = 60
 # Kelkoo reports use leadCount (often shown as "leads" on sheets); coloring uses the same.
 LEADS_LOW_MAX = 399  # < 400 leads → green or yellow row when colored
 # Orange rows (400–799 leads in ``apply_fixim_colors``) are **never** chosen — no more traffic.
+
+# Merchants whose clicks never run (dead/unroutable) — never pick them for PLA traffic.
+# (geo, kelkoo merchant id); extend without code via env
+# ``KELKOO_MERCHANT_SKIP_LIST="es:100482516,pt:14390313"``.
+MERCHANT_SKIP_LIST: Set[Tuple[str, str]] = {
+    ("es", "100482516"),  # pce-instruments.com
+    ("pt", "14390313"),   # girassol.com
+    ("no", "6995723"),    # netonnet.no
+}
+
+
+def merchant_skip_pairs() -> Set[Tuple[str, str]]:
+    """Built-in skip list plus optional env additions (``geo:merchant_id`` comma list)."""
+    pairs = set(MERCHANT_SKIP_LIST)
+    raw = (os.getenv("KELKOO_MERCHANT_SKIP_LIST") or "").strip()
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok or ":" not in tok:
+            continue
+        geo, _, mid = tok.partition(":")
+        geo = geo.strip().lower()
+        mid = mid.strip()
+        if geo and mid:
+            pairs.add((geo, mid))
+    return pairs
 
 CLICK_COUNT_HEADERS = {
     # Kelkoo / sheet naming (clicks column often = leads in practice)
@@ -602,6 +628,7 @@ def pick_merchants_one_per_geo_from_fixim_values(
             f" ({log_context})" if log_context else "",
         )
 
+    skip_pairs = merchant_skip_pairs()
     by_geo_eligible: Dict[str, List[tuple]] = {}
     for i in range(1, len(values)):
         row = values[i]
@@ -612,6 +639,9 @@ def pick_merchants_one_per_geo_from_fixim_values(
             continue
         merchant_id = _normalize_merchant_id_from_sheet(row[id_idx] if id_idx < len(row) else None)
         if not merchant_id:
+            continue
+        if (geo, merchant_id) in skip_pairs:
+            logger.info("Merchant %s (%s) on skip list — excluded from pick", merchant_id, geo)
             continue
         if not _row_is_visible_merchant(row, visible_idx):
             continue
@@ -681,6 +711,7 @@ def pick_top_merchants_per_geo_from_fixim_values(
             f" ({log_context})" if log_context else "",
         )
 
+    skip_pairs = merchant_skip_pairs()
     by_geo_eligible: Dict[str, List[tuple]] = {}
     for i in range(1, len(values)):
         row = values[i]
@@ -691,6 +722,9 @@ def pick_top_merchants_per_geo_from_fixim_values(
             continue
         merchant_id = _normalize_merchant_id_from_sheet(row[id_idx] if id_idx < len(row) else None)
         if not merchant_id:
+            continue
+        if (geo, merchant_id) in skip_pairs:
+            logger.info("Merchant %s (%s) on skip list — excluded from pick", merchant_id, geo)
             continue
         if not _row_is_visible_merchant(row, visible_idx):
             continue

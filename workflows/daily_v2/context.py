@@ -116,8 +116,11 @@ class RunContext:
     def _pa_for_json(self) -> Dict[str, Any]:
         pa = dict(self.pa)
         pg = pa.get("partial_geos")
-        if isinstance(pg, frozenset):
+        if isinstance(pg, (set, frozenset)):
             pa["partial_geos"] = sorted(pg)
+        og = pa.get("only_geos")
+        if isinstance(og, (set, frozenset)):
+            pa["only_geos"] = sorted(og)
         mo = pa.get("merchant_overrides") or {}
         pa["merchant_overrides"] = {str(k): v for k, v in mo.items()}
         ma = pa.get("merchant_auto_overrides") or {}
@@ -132,6 +135,9 @@ class RunContext:
         pg = pa.get("partial_geos")
         if isinstance(pg, list):
             out["partial_geos"] = frozenset(str(g).strip().lower()[:2] for g in pg if str(g).strip())
+        og = pa.get("only_geos")
+        if isinstance(og, list):
+            out["only_geos"] = {str(g).strip().lower()[:2] for g in og if str(g).strip()}
         mo = pa.get("merchant_overrides") or {}
         out["merchant_overrides"] = {int(k): v for k, v in mo.items()}
         ma = pa.get("merchant_auto_overrides") or {}
