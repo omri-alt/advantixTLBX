@@ -1,14 +1,16 @@
 """
-Hub campaign stream weights from Blend clickCap totals and Nipuhim offer-slot counts.
+Hub campaign stream weights from Blend clickCap totals and Nipuhim geo/merchant coverage.
 
 Blend: sum ``clickCap`` per ``feed`` on the Blend sheet (rows with cap > 0).
-Nipuhim: count of PLA offer slots per feed from today's ``{date}_offers_*`` tabs
-(one slot per geo row up to ``max_offers_per_geo``; no clickCap column on Nipuhim).
+Nipuhim: inspect today's ``{date}_offers_*`` tabs to see which geos are active and how
+many distinct merchants are selected per geo.
 """
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 
@@ -25,6 +27,140 @@ def _nipuhim_sheet_for_feed(date_str: str, feed_key: str) -> Optional[str]:
     if fk == "kelkoo5":
         return f"{date_str}_offers_5"
     return None
+
+
+def _latest_daily_run_dir() -> Optional[Path]:
+    meta = Path(__file__).resolve().parents[1] / "runtime" / "workflow_runs" / "daily.json"
+    if not meta.exists():
+        return None
+    try:
+        payload = json.loads(meta.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    raw = str(payload.get("run_dir") or "").strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    return p if p.exists() else None
+
+
+def _merchant_counts_from_chosen_artifacts(
+    *,
+    date_str: str,
+    feed_keys: Tuple[str, ...],
+) -> Tuple[Dict[str, Dict[str, int]], List[str]]:
+    run_dir = _latest_daily_run_dir()
+    if not run_dir:
+        return {}, ["Nipuhim merchant counts: no daily run metadata/artifacts fallback"]
+
+    feed_to_artifact = {
+        "kelkoo1": "chosen1.json",
+        "kelkoo2": "chosen2.json",
+        "kelkoo5": "chosen5.json",
+    }
+    out: Dict[str, Dict[str, int]] = {}
+    logs: List[str] = []
+    artifacts_dir = run_dir / "artifacts"
+    for fk in feed_keys:
+        name = feed_to_artifact.get(fk)
+        if not name:
+            continue
+        path = artifacts_dir / name
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logs.append(f"Nipuhim {fk}: could not read artifact {name}: {e}")
+            continue
+        counts = {
+            str(geo).strip().lower()[:2]: len([m for m in (mids or []) if str(m).strip()])
+            for geo, mids in (payload or {}).items()
+            if str(geo).strip()
+        }
+        if counts:
+            out[fk] = counts
+            parts = ", ".join(f"{geo}={count}" for geo, count in sorted(counts.items()))
+            logs.append(
+                f"Nipuhim {fk}: merchant counts from {name} for {date_str} ({parts})"
+            )
+    return out, logs
+
+
+def nipuhim_feed_geo_merchant_counts(
+    *,
+    date_str: Optional[str] = None,
+    feed_keys: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5"),
+) -> Tuple[Dict[str, Dict[str, int]], List[str]]:
+    """
+    Distinct merchant count per feed+geo from today's Nipuhim offers tabs.
+
+    Uses the generated offers sheets because they are the post-selection source of truth:
+    one geo can have 1-3 merchants selected, each repeated across many product rows.
+    """
+    from update_offers_from_sheet import SPREADSHEET_ID, get_credentials_path
+    from geos import normalize_geo
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+
+    day = (date_str or _utc_today_str()).strip()
+    logs: List[str] = []
+    out: Dict[str, Dict[str, int]] = {}
+
+    try:
+        creds = service_account.Credentials.from_service_account_file(get_credentials_path())
+        service = build("sheets", "v4", credentials=creds).spreadsheets()
+    except Exception as e:
+        fallback, fb_logs = _merchant_counts_from_chosen_artifacts(date_str=day, feed_keys=feed_keys)
+        return fallback, [f"Nipuhim merchant counts: sheets client unavailable: {e}"] + fb_logs
+
+    for fk in feed_keys:
+        sheet = _nipuhim_sheet_for_feed(day, fk)
+        if not sheet:
+            continue
+        quoted = sheet.replace("'", "''")
+        try:
+            rows = (
+                service.values()
+                .get(spreadsheetId=SPREADSHEET_ID, range=f"'{quoted}'!A:B")
+                .execute()
+                .get("values")
+                or []
+            )
+        except HttpError as e:
+            msg = str(e)
+            if "Unable to parse range" in msg:
+                logs.append(f"Nipuhim {fk}: missing offers sheet {sheet!r}")
+                continue
+            logs.append(f"Nipuhim {fk}: could not read {sheet!r}: {e}")
+            continue
+        by_geo: Dict[str, set[str]] = defaultdict(set)
+        for row in rows:
+            if len(row) < 2:
+                continue
+            geo = normalize_geo(str(row[0] or "").strip())
+            mid = str(row[1] or "").strip().split(".")[0]
+            if not geo or not mid or geo in ("country", "geo"):
+                continue
+            by_geo[geo].add(mid)
+        counts = {geo: len(mids) for geo, mids in by_geo.items() if mids}
+        out[fk] = counts
+        if counts:
+            parts = ", ".join(f"{geo}={count}" for geo, count in sorted(counts.items()))
+            logs.append(
+                f"Nipuhim {fk}: {len(counts)} geo(s) with merchant counts from {sheet!r} ({parts})"
+            )
+        else:
+            logs.append(f"Nipuhim {fk}: 0 geos with merchants from {sheet!r}")
+    if any(out.get(fk) for fk in feed_keys):
+        return out, logs
+
+    fallback, fb_logs = _merchant_counts_from_chosen_artifacts(date_str=day, feed_keys=feed_keys)
+    if fallback:
+        logs.extend(fb_logs)
+        return fallback, logs
+    return out, logs + fb_logs
 
 
 def blend_feed_click_caps(*, sheets_service: Any = None) -> Tuple[Dict[str, float], List[str]]:

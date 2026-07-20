@@ -2,7 +2,8 @@
 Domain-demand bill for Keitaro hub campaign 94.
 
 Builds a daily click order from:
-- Nipuhim: each active feed × geo on today's offers tabs (``DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO``).
+- Nipuhim: each active feed × geo on today's offers tabs, scaled by selected merchant count
+  (``DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO`` per merchant).
 - Blend: each sheet row with device-weighted ``clickCap``.
 
 Refreshes delivered clicks from Keitaro child campaigns (hub state) and hub 94 totals.
@@ -31,6 +32,7 @@ from integrations.blend_device import blend_stream_weight_for_channel
 from integrations.hub_click_cap_weights import (
     hub_offer_weights_from_caps,
     nipuhim_feed_active_geos,
+    nipuhim_feed_geo_merchant_counts,
 )
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.keitaro_hub import load_hub_state
@@ -195,7 +197,7 @@ def build_nipuhim_demand_lines(
     clicks_per_geo: Optional[int] = None,
     active_feeds: Optional[FrozenSet[str]] = None,
 ) -> Tuple[List[BillLine], List[str]]:
-    """One bill line per feed × geo × device (50/50 desktop/mobile split)."""
+    """One bill line per feed × geo × device (50/50 desktop/mobile split, scaled by merchant count)."""
     feeds = active_feeds or frozenset(KEITARO_HUB_ACTIVE_FEEDS)
     cap = clicks_per_geo if clicks_per_geo is not None else DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO
     if cap <= 0:
@@ -206,14 +208,23 @@ def build_nipuhim_demand_lines(
         max_offers_per_geo=max_offers_per_geo,
         feed_keys=tuple(sorted(feeds)),
     )
-    half = cap / 2.0
+    merchant_counts, count_logs = nipuhim_feed_geo_merchant_counts(
+        date_str=date_str,
+        feed_keys=tuple(sorted(feeds)),
+    )
+    logs.extend(count_logs)
     lines: List[BillLine] = []
     child_idx = _child_index(load_hub_state())
 
     for fk in sorted(feeds):
-        geos = sorted(feed_geos.get(fk, frozenset()))
+        geos = sorted(
+            set(feed_geos.get(fk, frozenset())) | set((merchant_counts.get(fk) or {}).keys())
+        )
         cid = child_idx.get(("nipuhim", fk))
         for geo in geos:
+            merchant_count = max(1, int((merchant_counts.get(fk) or {}).get(geo) or 0))
+            geo_cap = float(cap) * float(merchant_count)
+            half = geo_cap / 2.0
             for device, demand in (("desktop", half), ("mobile", cap - half)):
                 key = f"nipuhim|{fk}|{geo}|{device}"
                 lines.append(
@@ -225,7 +236,7 @@ def build_nipuhim_demand_lines(
                         device=device,
                         brand="",
                         merchant_id="",
-                        demand=float(demand),
+                        demand=float(demand if device == "desktop" else geo_cap - half),
                         child_campaign_id=cid,
                         source="nipuhim_offers_tab",
                     )
@@ -234,7 +245,10 @@ def build_nipuhim_demand_lines(
         logs.append("Nipuhim demand: no feed×geo lines")
     else:
         total = sum(l.demand for l in lines)
-        logs.append(f"Nipuhim demand: {len(lines)} line(s), {int(total)} clicks total")
+        logs.append(
+            f"Nipuhim demand: {len(lines)} line(s), {int(total)} clicks total "
+            f"({int(cap)} per merchant × selected merchants per geo)"
+        )
     return lines, logs
 
 
