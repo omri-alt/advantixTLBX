@@ -3,7 +3,9 @@
 Create / extend Google Sheets columns for EC + SK optimizers.
 
 - EC workbook (``EC_SHEETS_SPREADSHEET_ID``): tabs ``trackExploration`` and ``trackWL``
-  get a ``budgetReachedYesterday`` column on row 1 if missing (appended; existing data untouched).
+  get required optimizer columns on row 1 if missing (appended; existing data untouched),
+  including ``budgetReachedYesterday``, ``monUrl`` / ``monNetwork``, ``skipUnmon``.
+  Also ensures ``ECQualityWL`` (per-source quality reporting) headers exist.
 - SK workbook (``SK_OPTIMIZER_SHEET_ID``): tabs ``SKtrackExploration`` and ``SKtrackWL``
   are created if missing, or row 1 is extended with any missing headers from the optimizer spec.
 - EC + SK **tools** workbook: a ``logs`` tab (exploration / bulk audit) is created if missing.
@@ -32,6 +34,13 @@ def main() -> None:
 
     from config import EC_SHEETS_SPREADSHEET_ID, SK_OPTIMIZER_SHEET_ID, SK_TOOLS_SPREADSHEET_ID
     from integrations.autoserver.exploration_sheet_logs import ensure_logs_worksheet
+    from integrations.autoserver.ec import HEADERS_EXPLORATION as EC_HEADERS_EXPLORATION
+    from integrations.autoserver.ec import HEADERS_WL as EC_HEADERS_WL
+    from integrations.autoserver.ec_exploration_wl_sync import (
+        HEADERS_QUALITY_WL as EC_HEADERS_QUALITY_WL,
+        TAB_QUALITY_WL as EC_TAB_QUALITY_WL,
+        ensure_ec_quality_wl_sheet,
+    )
     from integrations.autoserver.sk_optimizer import HEADERS_EXPLORATION, HEADERS_WL
 
     try:
@@ -60,18 +69,24 @@ def main() -> None:
     if not tools_id:
         print("SK_TOOLS_SPREADSHEET_ID is not set; skipping SK tools logs tab.")
 
-    extra = ["budgetReachedYesterday"]
-
     if ec_id:
-        for tab in ("trackExploration", "trackWL"):
+        for tab, headers in (
+            ("trackExploration", EC_HEADERS_EXPLORATION),
+            ("trackWL", EC_HEADERS_WL),
+        ):
             try:
                 added = gd.append_missing_headers_row1(
-                    ec_id, tab, extra, create_if_missing=False
+                    ec_id, tab, headers, create_if_missing=False
                 )
             except WorksheetNotFound:
                 print(f"EC {tab!r}: worksheet not found — create the tab first; skipped.")
                 continue
             print(f"EC {tab!r}: appended headers {added or '(none)'}")
+        try:
+            ensure_ec_quality_wl_sheet(ec_id)
+            print(f"EC {EC_TAB_QUALITY_WL!r}: ensured ({len(EC_HEADERS_QUALITY_WL)} columns).")
+        except Exception as e:
+            print(f"EC {EC_TAB_QUALITY_WL!r}: {e}")
         try:
             ensure_logs_worksheet(ec_id)
             print("EC logs: ensured tab 'logs' exists.")

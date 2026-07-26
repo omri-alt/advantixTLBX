@@ -15,39 +15,82 @@
     pre { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px; max-height: 420px; overflow: auto; white-space: pre-wrap; }
     a { color: #86efac; text-decoration: none; }
     a:hover { text-decoration: underline; }
+    code { font-size: 0.92em; }
   </style>
+  <script>
+  document.addEventListener('DOMContentLoaded', function () {
+    function syncMonRow() {
+      var expl = document.getElementById('reg_expl');
+      var row = document.getElementById('mon-network-row');
+      if (!expl || !row) return;
+      row.style.display = expl.checked ? 'block' : 'none';
+    }
+    document.querySelectorAll('input[name="register_mode"]').forEach(function (el) {
+      el.addEventListener('change', syncMonRow);
+    });
+    syncMonRow();
+  });
+  </script>
 </head>
 <body>
   {% from "macros/page_header.html" import tool_header %}
   <div><a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#ecomnia-bulk">Help</a></div>
-  {{ tool_header("Ecomnia — bulk open", "Create campaigns from EC sheet rows.", "ecomnia-bulk", "tab bulk · dry-run") }}
+  {{ tool_header("Ecomnia — bulk open", "Create campaigns from EC sheet rows; optionally register trackExploration.", "ecomnia-bulk", "tab bulk · dry-run") }}
 
   <div class="card">
     <form method="post">
       <div style="margin:8px 0;">
         <label>Prefix</label><br>
-        <input type="text" name="prefix" placeholder="KLFIX / KLWL..." required>
+        <input type="text" name="prefix" placeholder="KLFIX / KLWL..." value="{{ request.form.get('prefix', '') }}" required>
       </div>
       <div style="margin:8px 0;">
         <label>Keitaro alias (trck path segment)</label><br>
-        <input type="text" name="alias" placeholder="7FDKRK or your custom alias" required>
+        <input type="text" name="alias" placeholder="7FDKRK or your custom alias" value="{{ request.form.get('alias', '') }}" required>
       </div>
       <div style="margin:8px 0;">
         <label>Input tab</label><br>
-        <input type="text" name="tab" value="bulk" placeholder="bulk (or gid from URL)" required>
+        <input type="text" name="tab" value="{{ request.form.get('tab', 'bulk') }}" placeholder="bulk (or gid from URL)" required>
       </div>
       <div style="margin:8px 0;">
         <label>Bulk type</label><br>
+        {% set bt = request.form.get('bulk_type', 'homepage') %}
         <select name="bulk_type">
-          <option value="homepage">Homepage (ishomepageonly=true)</option>
-          <option value="deeplink">Deeplink (ishomepageonly=false)</option>
+          <option value="homepage" {% if bt != 'deeplink' %}selected{% endif %}>Homepage (ishomepageonly=true)</option>
+          <option value="deeplink" {% if bt == 'deeplink' %}selected{% endif %}>Deeplink (ishomepageonly=false)</option>
+        </select>
+      </div>
+      <div style="margin:12px 0;">
+        <div class="muted" style="margin-bottom:6px">After apply — register for EC exploration?</div>
+        {% set rm = request.form.get('register_mode', 'bulk_only') %}
+        <label style="display:block;margin:4px 0;">
+          <input type="radio" name="register_mode" value="bulk_only" {% if rm != 'exploration' %}checked{% endif %}>
+          Standard bulk only (no <code>trackExploration</code> row)
+        </label>
+        <label style="display:block;margin:4px 0;">
+          <input type="radio" name="register_mode" value="exploration" id="reg_expl" {% if rm == 'exploration' %}checked{% endif %}>
+          Add each new campaign to <strong>trackExploration</strong> (needs monetization network below)
+        </label>
+      </div>
+      <div id="mon-network-row" style="margin:8px 0; display:none;">
+        <label for="mon_network">Monetization network</label><br>
+        <select id="mon_network" name="mon_network">
+          {% set mn = request.form.get('mon_network', 'kl') %}
+          <option value="kl" {% if mn == 'kl' %}selected{% endif %}>kl (Kelkoo keyKL)</option>
+          <option value="feed1" {% if mn == 'feed1' %}selected{% endif %}>feed1</option>
+          <option value="feed2" {% if mn == 'feed2' %}selected{% endif %}>feed2</option>
+          <option value="feed5" {% if mn == 'feed5' %}selected{% endif %}>feed5 (Kelkoo / KLFEED3)</option>
+          <option value="feed3" {% if mn == 'feed3' %}selected{% endif %}>feed3 (Yadore)</option>
+          <option value="feed4" {% if mn == 'feed4' %}selected{% endif %}>feed4 (Adexa)</option>
+          <option value="new" {% if mn == 'new' %}selected{% endif %}>new (skip unmon — not integrated yet)</option>
+          <option value="skip" {% if mn == 'skip' %}selected{% endif %}>skip (skip unmon — operator opt-out)</option>
         </select>
       </div>
       <div style="margin:8px 0;">
         <label>Mode</label><br>
+        {% set md = request.form.get('mode', 'dry-run') %}
         <select name="mode">
-          <option value="dry-run">Dry run</option>
-          <option value="apply">Apply</option>
+          <option value="dry-run" {% if md != 'apply' %}selected{% endif %}>Dry run</option>
+          <option value="apply" {% if md == 'apply' %}selected{% endif %}>Apply</option>
         </select>
       </div>
       <button type="submit">Run</button>
@@ -55,7 +98,7 @@
     {% if bulk_open_result %}
       <hr style="border-color:#374151;">
       <div>Status: <strong>{{ bulk_open_result.status }}</strong> (exit {{ bulk_open_result.exit_code }})</div>
-      <div class="muted">prefix={{ bulk_open_result.prefix }}, alias={{ bulk_open_result.alias }}, tab={{ bulk_open_result.tab }}, bulk_type={{ bulk_open_result.bulk_type or 'homepage' }}, mode={{ bulk_open_result.mode }}</div>
+      <div class="muted">prefix={{ bulk_open_result.prefix }}, alias={{ bulk_open_result.alias }}, tab={{ bulk_open_result.tab }}, bulk_type={{ bulk_open_result.bulk_type or 'homepage' }}, mode={{ bulk_open_result.mode }}{% if bulk_open_result.register_exploration %}, register_exploration=yes monNetwork={{ bulk_open_result.mon_network }}{% endif %}</div>
       <pre>{{ bulk_open_result.log or "(No output)" }}</pre>
     {% endif %}
   </div>

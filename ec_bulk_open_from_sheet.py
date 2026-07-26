@@ -13,10 +13,14 @@ Expected columns (case-insensitive; supports legacy bulkEC + sheet bulk names):
 Uses the same create payload as legacy ``ec (2).py`` / ``bulkEC.py``, with
 configurable Keitaro ``alias`` (trck path) and affiliation ``prefix`` (sub_id_6 / name).
 
+With ``--apply``, you may add ``--register-exploration`` to append each created campaign
+to the EC ``trackExploration`` sheet (same unmon/monNetwork model as SK exploration).
+
 Examples:
   python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --dry-run
   python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --tab bulk --apply
   python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --tab bulk --bulk-type deeplink --apply
+  python ec_bulk_open_from_sheet.py --prefix KLFIX --alias 7FDKRK --apply --register-exploration --mon-network kl
 """
 from __future__ import annotations
 
@@ -251,8 +255,8 @@ def _create_campaign(
     mid: str,
     prefix: str,
     is_homepage_only: bool,
-) -> tuple[int, Any]:
-    """POST create-advertiser-campaign. Returns (http_status, json)."""
+) -> tuple[int, Any, str]:
+    """POST create-advertiser-campaign. Returns (http_status, json, campaign_name)."""
     geo_ec = geo
     if geo_ec in ("uk", "UK"):
         geo_ec = "GB"
@@ -282,7 +286,7 @@ def _create_campaign(
         body = r.json() if r.text else {}
     except Exception:
         body = {"_raw": (r.text or "")[:500]}
-    return r.status_code, body
+    return r.status_code, body, name
 
 
 def main() -> None:
@@ -295,6 +299,8 @@ def main() -> None:
     tab = DEFAULT_INPUT_TAB
     bulk_type = "homepage"
     apply = False
+    register_exploration = False
+    mon_network = "kl"
 
     args = sys.argv[1:]
     i = 0
@@ -316,6 +322,14 @@ def main() -> None:
             bulk_type = args[i + 1].strip().lower()
             i += 2
             continue
+        if a == "--mon-network" and i + 1 < len(args):
+            mon_network = args[i + 1].strip().lower() or "kl"
+            i += 2
+            continue
+        if a == "--register-exploration":
+            register_exploration = True
+            i += 1
+            continue
         if a == "--apply":
             apply = True
             i += 1
@@ -335,6 +349,8 @@ def main() -> None:
         _usage_error("Missing --alias")
     if bulk_type not in ("homepage", "deeplink"):
         _usage_error("Invalid --bulk-type (use homepage or deeplink)")
+    if register_exploration and not apply:
+        _usage_error("--register-exploration requires --apply")
     is_homepage_only = bulk_type == "homepage"
 
     rows = _read_input_rows(tab)
@@ -349,12 +365,20 @@ def main() -> None:
     print(f"Prefix: {prefix}")
     print(f"Alias: {alias}")
     print(f"Bulk type: {bulk_type} (ishomepageonly={'true' if is_homepage_only else 'false'})")
+    if register_exploration:
+        print(f"Register exploration: yes (monNetwork={mon_network})")
     print(f"Rows: {len(rows)}")
     print()
 
     merchants_map = _fetch_merchants_name_to_mid()
     ok = 0
     failed = 0
+    track_rows: list[dict[str, str]] = []
+
+    from integrations.autoserver.ec import (
+        _extract_campaign_id_from_create,
+        exploration_row_from_bulk_sheet_row,
+    )
 
     for idx, row in enumerate(rows, start=1):
         brand_raw = row["brand"].lower()
@@ -378,7 +402,7 @@ def main() -> None:
             ok += 1
             continue
 
-        http, body = _create_campaign(
+        http, body, camp_name = _create_campaign(
             brand=brand_raw,
             geo=geo_raw,
             tracking_url=track,
@@ -388,7 +412,20 @@ def main() -> None:
         )
         if http == 200:
             ok += 1
-            print(f"[{idx}/{len(rows)}] OK HTTP {http} mid={mid} body_keys={list(body)[:5] if isinstance(body, dict) else body}")
+            camp_id = _extract_campaign_id_from_create(body)
+            print(
+                f"[{idx}/{len(rows)}] OK HTTP {http} mid={mid} name={camp_name} "
+                f"campId={camp_id or '(pending sheet match)'}"
+            )
+            if register_exploration:
+                track_rows.append(
+                    exploration_row_from_bulk_sheet_row(
+                        {"brand": brand_raw, "geo": geo_raw, "url": hp, "hpfb": hpfb},
+                        camp_name=camp_name,
+                        camp_id=camp_id,
+                        mon_network=mon_network,
+                    )
+                )
         else:
             failed += 1
             print(f"[{idx}/{len(rows)}] FAIL HTTP {http} {str(body)[:300]}")
@@ -397,6 +434,16 @@ def main() -> None:
 
     print()
     print(f"Summary: rows={len(rows)} ok={ok} failed={failed} mode={'apply' if apply else 'dry-run'}")
+
+    if register_exploration and apply and track_rows:
+        from integrations.autoserver.ec import append_ec_exploration_tracking_rows
+
+        n_added, err = append_ec_exploration_tracking_rows(track_rows)
+        if err:
+            print(f"trackExploration append error: {err}")
+            sys.exit(1)
+        print(f"trackExploration: appended {n_added} new row(s).")
+
     if apply and failed:
         sys.exit(1)
 

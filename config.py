@@ -1018,3 +1018,45 @@ try:
 except Exception:
     SK_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD = 0.10
 
+# EC exploration WL sync — Keitaro SaleOur/LateSale (-EC tags) → trackExploration.wl + ECQualityWL.
+EC_EXPLORATION_WL_SYNC_ENABLED = (
+    os.getenv("EC_EXPLORATION_WL_SYNC_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+)
+EC_EXPLORATION_WL_SYNC_TZ = (
+    os.getenv("EC_EXPLORATION_WL_SYNC_TZ")
+    or os.getenv("SK_EXPLORATION_WL_SYNC_TZ")
+    or os.getenv("AUTOSERVER_SCHEDULER_TZ")
+    or "Asia/Jerusalem"
+).strip()
+try:
+    EC_EXPLORATION_WL_SYNC_HOUR_LOCAL = int(
+        (os.getenv("EC_EXPLORATION_WL_SYNC_HOUR_LOCAL") or str(SK_EXPLORATION_WL_SYNC_HOUR_LOCAL)).strip()
+    )
+except Exception:
+    EC_EXPLORATION_WL_SYNC_HOUR_LOCAL = SK_EXPLORATION_WL_SYNC_HOUR_LOCAL
+EC_EXPLORATION_WL_SYNC_HOUR_LOCAL = max(0, min(23, EC_EXPLORATION_WL_SYNC_HOUR_LOCAL))
+try:
+    EC_EXPLORATION_WL_SYNC_MINUTE = int(
+        (os.getenv("EC_EXPLORATION_WL_SYNC_MINUTE") or str(SK_EXPLORATION_WL_SYNC_MINUTE)).strip()
+    )
+except Exception:
+    EC_EXPLORATION_WL_SYNC_MINUTE = SK_EXPLORATION_WL_SYNC_MINUTE
+EC_EXPLORATION_WL_SYNC_MINUTE = max(0, min(59, EC_EXPLORATION_WL_SYNC_MINUTE))
+try:
+    EC_EXPLORATION_WL_LOOKBACK_DAYS = int(
+        (os.getenv("EC_EXPLORATION_WL_LOOKBACK_DAYS") or str(SK_EXPLORATION_WL_LOOKBACK_DAYS)).strip()
+    )
+except Exception:
+    EC_EXPLORATION_WL_LOOKBACK_DAYS = SK_EXPLORATION_WL_LOOKBACK_DAYS
+EC_EXPLORATION_WL_LOOKBACK_DAYS = max(1, min(90, EC_EXPLORATION_WL_LOOKBACK_DAYS))
+try:
+    EC_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD = float(
+        (
+            os.getenv("EC_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD")
+            or os.getenv("EC_EXPLORATION_WL_REACTIVATE_TARGET_BID")
+            or "0.10"
+        ).strip()
+    )
+except Exception:
+    EC_EXPLORATION_WL_REACTIVATE_TARGET_BID_USD = 0.10
+

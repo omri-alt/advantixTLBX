@@ -1580,6 +1580,10 @@ def ui_ec():
             bulk_type = "homepage"
         mode = (request.form.get("mode") or "dry-run").strip().lower()
         apply = mode == "apply"
+        register_exploration = (
+            (request.form.get("register_mode") or "").strip().lower() == "exploration"
+        )
+        mon_network = (request.form.get("mon_network") or "kl").strip().lower()
 
         if prefix and alias and tab:
             script = ROOT_DIR / "ec_bulk_open_from_sheet.py"
@@ -1594,8 +1598,12 @@ def ui_ec():
                 tab,
                 "--bulk-type",
                 bulk_type,
+                "--mon-network",
+                mon_network or "kl",
                 "--apply" if apply else "--dry-run",
             ]
+            if register_exploration and apply:
+                args.append("--register-exploration")
             proc = subprocess.run(args, cwd=str(ROOT_DIR), capture_output=True, text=True)
             output = (proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or "")
             bulk_open_result = {
@@ -1607,6 +1615,8 @@ def ui_ec():
                 "tab": tab,
                 "bulk_type": bulk_type,
                 "mode": "apply" if apply else "dry-run",
+                "register_exploration": register_exploration and apply,
+                "mon_network": mon_network or "kl",
             }
             _cache_clear("ec:")
 

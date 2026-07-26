@@ -1,3 +1,4 @@
+import logging
 import os
 import requests
 import hashlib
@@ -5,8 +6,11 @@ from datetime import datetime, timedelta
 import csv
 import time
 import json
+from typing import Any, Dict, List, Optional, Tuple
 from integrations.autoserver import kl_as as kl
 from integrations.autoserver import gdocs_as as gd
+
+logger = logging.getLogger(__name__)
 
 headers = {"Content-Type": "application/json"}
 feedid = '22974eb2-a9b8-4eb8-a0cf-735538fff4ea_self'
@@ -18,6 +22,222 @@ sources_SheetId = sheetid
 advkey = os.getenv("ECadvKey")
 authkey = os.getenv("ECauthKey")
 secretkey = os.getenv("ECsecretKey")
+
+TAB_EXPLORATION = "trackExploration"
+TAB_WL = "trackWL"
+
+# Required / bootstrap columns for EC exploration (legacy sheet may have more).
+HEADERS_EXPLORATION = [
+    "campName",
+    "campId",
+    "status",
+    "wl",
+    "potential30days",
+    "verify",
+    "explored30",
+    "budgetReachedYesterday",
+    "monUrl",
+    "monNetwork",
+    "geo",
+    "CpcLvlUp",
+    "cpcUpdate",
+    "startBudget",
+    "maxBudget",
+    "skipUnmon",
+]
+HEADERS_WL = [
+    "campName",
+    "campId",
+    "status",
+    "reviewstatus",
+    "average30",
+    "average7",
+    "yesterdayClicks",
+    "todayClicks",
+    "lastUpdate",
+    "budgetReachedYesterday",
+    "monUrl",
+    "monNetwork",
+    "geo",
+    "skipUnmon",
+]
+
+
+def _truthy_skip_unmon(raw: Any) -> bool:
+    s = str(raw or "").strip().lower()
+    return s in ("1", "true", "yes", "y", "v", "skip", "x")
+
+
+def _extract_campaign_id_from_create(body: Any) -> str:
+    """Best-effort campaign id from create-advertiser-campaign JSON."""
+    if not isinstance(body, dict):
+        return ""
+    for key in ("id", "campaign_id", "campaignId", "campId"):
+        v = body.get(key)
+        if v is not None and str(v).strip() and str(v).strip().lower() not in ("none", "null"):
+            # create payload also echoes merchant mid as ``id`` — prefer UUID-like / longer ids
+            s = str(v).strip()
+            if len(s) >= 20 or "-" in s:
+                return s
+    camps = body.get("campaigns")
+    if isinstance(camps, list) and camps:
+        c0 = camps[0]
+        if isinstance(c0, dict):
+            for key in ("id", "campaign_id", "campaignId"):
+                v = c0.get(key)
+                if v is not None and str(v).strip():
+                    return str(v).strip()
+    data = body.get("data")
+    if isinstance(data, dict):
+        return _extract_campaign_id_from_create(data)
+    return ""
+
+
+def exploration_row_from_bulk_sheet_row(
+    item: Dict[str, str],
+    *,
+    camp_name: str,
+    camp_id: str = "",
+    mon_network: str = "kl",
+    start_budget: str = "5",
+    max_budget: str = "5",
+) -> Dict[str, str]:
+    """
+    Build one ``trackExploration`` row after an EC bulk-open create.
+
+    ``item`` is a bulk input row (``brand``, ``geo``, ``url``, ``hpfb``).
+    ``camp_name`` must match the EC campaign name created by the bulk opener.
+    """
+    geo = str(item.get("geo") or "").strip().lower()[:2]
+    url = str(item.get("url") or "").strip()
+    if url and not url.lower().startswith("http"):
+        url = f"https://{url.lstrip('/')}"
+    return {
+        "campName": str(camp_name or "").strip(),
+        "campId": str(camp_id or "").strip(),
+        "status": "active",
+        "wl": "[]",
+        "potential30days": "0",
+        "verify": "[]",
+        "explored30": "0",
+        "budgetReachedYesterday": "",
+        "monUrl": url,
+        "monNetwork": (mon_network or "kl").strip().lower(),
+        "geo": geo,
+        "CpcLvlUp": "x",
+        "cpcUpdate": "",
+        "startBudget": str(start_budget),
+        "maxBudget": str(max_budget),
+        "skipUnmon": "",
+    }
+
+
+def append_ec_exploration_tracking_rows(rows: List[Dict[str, Any]]) -> Tuple[int, str]:
+    """
+    Append rows to ``trackExploration`` for campaign names / ids not already present.
+
+    Preserves existing sheet columns; ensures ``HEADERS_EXPLORATION`` exist.
+    Returns ``(added_count, error_message)``.
+    """
+    sid = (sheetid or "").strip()
+    if not sid:
+        return 0, "EC_SHEETS_SPREADSHEET_ID is not set"
+    if not rows:
+        return 0, ""
+    try:
+        gd.append_missing_headers_row1(sid, TAB_EXPLORATION, HEADERS_EXPLORATION, create_if_missing=False)
+        data = gd.read_sheet_withID(sid, TAB_EXPLORATION) or []
+    except Exception as e:
+        logger.exception("append_ec_exploration_tracking_rows: read failed")
+        return 0, str(e)
+
+    all_keys: List[str] = []
+    for r in data:
+        if not isinstance(r, dict):
+            continue
+        for k in r.keys():
+            if k not in all_keys:
+                all_keys.append(str(k))
+    for h in HEADERS_EXPLORATION:
+        if h not in all_keys:
+            all_keys.append(h)
+
+    existing_names = {
+        str(r.get("campName") or "").strip().lower()
+        for r in data
+        if isinstance(r, dict) and str(r.get("campName") or "").strip()
+    }
+    existing_ids = {
+        str(r.get("campId") or "").strip()
+        for r in data
+        if isinstance(r, dict) and str(r.get("campId") or "").strip()
+    }
+
+    added = 0
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("campName") or "").strip()
+        cid = str(raw.get("campId") or "").strip()
+        if not name:
+            continue
+        if name.lower() in existing_names:
+            continue
+        if cid and cid in existing_ids:
+            continue
+        row_out = {k: "" for k in all_keys}
+        for k, v in raw.items():
+            if k not in row_out:
+                all_keys.append(k)
+                for prev in data:
+                    if isinstance(prev, dict) and k not in prev:
+                        prev[k] = ""
+                row_out[k] = ""
+            row_out[k] = "" if v is None else str(v)
+        data.append(row_out)
+        existing_names.add(name.lower())
+        if cid:
+            existing_ids.add(cid)
+        added += 1
+
+    if not added:
+        return 0, ""
+
+    normalized: List[Dict[str, Any]] = []
+    for r in data:
+        if not isinstance(r, dict):
+            continue
+        nr = {k: ("" if r.get(k) is None else r.get(k)) for k in all_keys}
+        # Keep wl / verify JSON-ish strings; lists from prior hourlies become str later.
+        for listish in ("wl", "verify"):
+            v = nr.get(listish)
+            if isinstance(v, (list, dict)):
+                nr[listish] = json.dumps(v, ensure_ascii=False)
+        normalized.append(nr)
+
+    try:
+        gd.create_or_update_sheet_from_dicts_withId(sid, TAB_EXPLORATION, normalized)
+    except Exception as e:
+        logger.exception("append_ec_exploration_tracking_rows: write failed")
+        return 0, str(e)
+    return added, ""
+
+
+def _ec_monetization_check(mon_network: str, mon_url: str, geo: str) -> Tuple[Optional[bool], Optional[str]]:
+    """Same multi-feed unmon probe as SK exploration (kl / feeds / yadore / adexa / new / skip)."""
+    from integrations.autoserver.sk_optimizer import _monetization_for_network
+
+    return _monetization_for_network(mon_network, mon_url, geo)
+
+
+def _resolve_ec_mon_url(row: Dict[str, Any], camp_url: str = "") -> str:
+    u = (row.get("monUrl") or row.get("monURL") or "").strip()
+    if u:
+        return u
+    from integrations.autoserver.sk_optimizer import _hp_from_tracking_url
+
+    hp = _hp_from_tracking_url(str(camp_url or ""))
+    return (hp or "").strip()
 
 
 #1. 12.06 - functon open the JSON DB and returns it as a list of dictionaries
@@ -428,10 +648,17 @@ def update_track_sheet():
     campaigns = get_campaigns()
     # Update the track sheet
     for row in track_sheet:
+        matched = False
         for campaign in campaigns:
             if campaign['name'] == row['campName']:
                 row['campId'] = campaign['id']
-                row['status'] = campaign['status']
+                prev_status = str(row.get('status') or '').strip().lower()
+                api_status = str(campaign.get('status') or '').strip()
+                # Keep operator-facing paused-unmon when EC API still reports paused.
+                if prev_status == 'paused-unmon' and api_status.lower() == 'paused':
+                    row['status'] = 'paused-unmon'
+                else:
+                    row['status'] = api_status
                 while row['wl'].find("'") != -1 :
                     row['wl'] = row['wl'].replace("'", '"')
                 row['wl'] = json.loads(row['wl'])
@@ -466,7 +693,11 @@ def update_track_sheet():
                 except Exception:
                     row["budgetReachedYesterday"] = "No"
                 updated.append(row)
+                matched = True
                 break
+        if not matched:
+            # Keep bulk-registered rows until campName matches an EC campaign.
+            updated.append(row)
     gd.create_or_update_sheet_from_dicts_withId(sheetid, 'trackExploration',
                                                 updated)
     return updated
@@ -480,10 +711,16 @@ def update_trackWLsheet():
     campaigns = get_campaigns()
     # Update the track sheet
     for row in track_sheet:
+        matched = False
         for campaign in campaigns:
             if campaign['name'] == row['campName']:
                 row['campId'] = campaign['id']
-                row['status'] = campaign['status']
+                prev_status = str(row.get('status') or '').strip().lower()
+                api_status = str(campaign.get('status') or '').strip()
+                if prev_status == 'paused-unmon' and api_status.lower() == 'paused':
+                    row['status'] = 'paused-unmon'
+                else:
+                    row['status'] = api_status
                 row['reviewstatus'] = campaign['reviewstatus']
                 average30 , average7 ,yesterdayClicks , todayClicks = average_clicks(campaign['id'])
                 row['average30'] = average30
@@ -496,6 +733,10 @@ def update_trackWLsheet():
                 except Exception:
                     row["budgetReachedYesterday"] = "No"
                 updated.append(row)
+                matched = True
+                break
+        if not matched:
+            updated.append(row)
     gd.create_or_update_sheet_from_dicts_withId(sheetid,'trackWL', updated)
     checkUnmonWL()
     return
@@ -510,6 +751,75 @@ def blackListSources(campId, sourcesList):
     campData['blacklistsources'] = blacklist
     response = update_campaign(campId, campData)
     return response
+
+
+def whiteListSources(campId, sourcesList):
+    """Append sources to campaign ``whitelistsources`` (deduped), then PUT full campaign."""
+    campData = get_campaignById(campId)["campaigns"][0]
+    wl = list(campData.get("whitelistsources") or [])
+    existing = {str(x).strip() for x in wl if str(x).strip()}
+    for source in sourcesList:
+        s = str(source or "").strip()
+        if s and s not in existing:
+            wl.append(s)
+            existing.add(s)
+    campData["whitelistsources"] = wl
+    return update_campaign(campId, campData)
+
+
+def reactivate_sources_ec(
+    campId,
+    sourcesList,
+    *,
+    target_bid: float = 0.10,
+    also_whitelist: bool = True,
+):
+    """
+    Reactivate EC sources after blacklist / zero CPC.
+
+    Unlike SK (bidFactor), EC uses absolute ``cpcbysource`` bids and an explicit
+    ``blacklistsources`` list. This removes each source from the blacklist and sets
+    ``cpcbysource[source] = target_bid``. Optionally appends to ``whitelistsources``.
+    """
+    campData = get_campaignById(campId)["campaigns"][0]
+    blacklist = [str(x).strip() for x in (campData.get("blacklistsources") or []) if str(x).strip()]
+    bl_set = set(blacklist)
+    cpc = dict(campData.get("cpcbysource") or {})
+    wl = list(campData.get("whitelistsources") or [])
+    wl_set = {str(x).strip() for x in wl if str(x).strip()}
+    bid = float(target_bid) if target_bid and float(target_bid) > 0 else 0.10
+    touched: List[str] = []
+    for source in sourcesList:
+        s = str(source or "").strip()
+        if not s:
+            continue
+        if s in bl_set:
+            bl_set.discard(s)
+        cpc[s] = bid
+        if also_whitelist and s not in wl_set:
+            wl.append(s)
+            wl_set.add(s)
+        touched.append(s)
+    if not touched:
+        return {"ok": True, "reactivated": [], "response": None}
+    campData["blacklistsources"] = [x for x in blacklist if x in bl_set]
+    campData["cpcbysource"] = cpc
+    if also_whitelist:
+        campData["whitelistsources"] = wl
+    response = update_campaign(campId, campData)
+    return {"ok": True, "reactivated": touched, "target_bid": bid, "response": response}
+
+
+def activate_campaignWitId(campaign_id):
+    """Set campaign ``status`` to ``active`` (inverse of ``pause_campaignWitId``)."""
+    campaigns = get_campaigns()
+    for campaign in campaigns:
+        if campaign["id"] == campaign_id:
+            campaign["status"] = "active"
+            update_campaign(campaign["id"], campaign)
+            print(f"campaign {campaign['name']} was activated")
+            return
+    logger.warning("activate_campaignWitId: campaign %s not found", campaign_id)
 
 ################################################################
 ################################################################
@@ -643,47 +953,117 @@ def trackSheetDailySpend():
 
 ################################################################
 ################################################################
-def checkUnmonExploration():
-        track_sheet = gd.read_sheet_withID(sheetid, 'trackExploration')
-        for row in track_sheet:
-            if row['status'] == 'active':
-                monUrl = row['monUrl']
-                geo = row['geo']
-                if row['monNetwork'] in ['kl','KL','Kl']:
-                    response = kl.check_monetization(monUrl,geo)
-                elif row['monNetwork'] in ['adexa','Adexa','ADEXA','ADEX','adex','Adex']:
-                    response = True
-                else:
-                    response = True
+def _campaign_tracking_url(camp_id: Any) -> str:
+    """Best-effort tracking URL from EC get-advertiser-campaign(s) for hp= fallback."""
+    if not camp_id:
+        return ""
+    try:
+        data = get_campaignById(camp_id)
+    except Exception:
+        return ""
+    if isinstance(data, list) and data:
+        data = data[0]
+    if not isinstance(data, dict):
+        return ""
+    camps = data.get("campaigns")
+    if isinstance(camps, list) and camps and isinstance(camps[0], dict):
+        data = camps[0]
+    for key in ("trackingurl", "tracking_url", "trackingUrl", "url"):
+        v = data.get(key)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
 
-                if not response:
-                    pause_campaignWitId(row['campId'])
-                    print(f"campaign {row['campId']} was paused")
-                    logsSheet = gd.read_sheet_withID(sheetid, 'logs')
-                    logsSheet.append({ 'campId': row['campId'], 'campName': row['campName'], 'verify': f"campaign was paused due to unmonetization and monNetwork {row['monNetwork']}", 'date': datetime.now().strftime('%Y-%m-%d'), 'response': response})
-                    gd.create_or_update_sheet_from_dicts_withId(sheetid, 'logs', logsSheet)
-        return
+
+def checkUnmonExploration():
+    """
+    Pause active exploration campaigns that fail monetization for their ``monNetwork``.
+
+    Uses the same multi-feed probes as SK (``kl``, ``feed1``/``2``/``5``, Yadore, Adexa).
+    ``new`` / ``skip`` / ``skipUnmon`` skip the pause. Sets sheet status ``paused-unmon``.
+    """
+    track_sheet = gd.read_sheet_withID(sheetid, 'trackExploration')
+    changed = False
+    for row in track_sheet:
+        status = str(row.get('status') or '').strip().lower()
+        if status != 'active':
+            continue
+        if _truthy_skip_unmon(row.get('skipUnmon')):
+            continue
+        camp_id = row.get('campId')
+        mon_url = _resolve_ec_mon_url(row, _campaign_tracking_url(camp_id) if not (row.get('monUrl') or row.get('monURL')) else "")
+        geo = str(row.get('geo') or '').strip()
+        net = str(row.get('monNetwork') or 'kl').strip()
+        if not mon_url:
+            logger.warning(
+                "EC unmon skip %s: empty monUrl",
+                row.get('campName') or row.get('campId'),
+            )
+            continue
+        mon_ok, err_tag = _ec_monetization_check(net, mon_url, geo)
+        if err_tag in ('error', 'skip_unmon'):
+            continue
+        if mon_ok is not False:
+            continue
+        if not camp_id:
+            continue
+        pause_campaignWitId(camp_id)
+        row['status'] = 'paused-unmon'
+        changed = True
+        print(f"campaign {camp_id} was paused (unmon / monNetwork={net})")
+        logsSheet = gd.read_sheet_withID(sheetid, 'logs')
+        logsSheet.append({
+            'campId': camp_id,
+            'campName': row.get('campName'),
+            'verify': f"campaign was paused due to unmonetization and monNetwork {net}",
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'response': mon_ok,
+        })
+        gd.create_or_update_sheet_from_dicts_withId(sheetid, 'logs', logsSheet)
+    if changed:
+        gd.create_or_update_sheet_from_dicts_withId(sheetid, 'trackExploration', track_sheet)
+    return
+
 
 def checkUnmonWL():
-        track_sheet = gd.read_sheet_withID(sheetid, 'trackWL')
-        for row in track_sheet:
-            if row['status'] == 'active':
-                monUrl = row['monUrl']
-                geo = row['geo']
-                if row['monNetwork'] in ['kl','KL','Kl']:
-                    response = kl.check_monetization(monUrl,geo)
-                elif row['monNetwork'] in ['adexa','Adexa','ADEXA','ADEX','adex','Adex']:
-                    response = True
-                else:
-                    response = True
-
-                if not response:
-                    pause_campaignWitId(row['campId'])
-                    print(f"campaign {row['campId']} was paused")
-                    logsSheet = gd.read_sheet_withID(sheetid, 'logs')
-                    logsSheet.append({ 'campId': row['campId'], 'campName': row['campName'], 'verify': f"campaign was paused due to unmonetization and monNetwork {row['monNetwork']}", 'date': datetime.now().strftime('%Y-%m-%d'), 'response': response})
-                    gd.create_or_update_sheet_from_dicts_withId(sheetid, 'logs', logsSheet)
-        return
+    """Pause active WL campaigns that fail monetization (same probe rules as exploration)."""
+    track_sheet = gd.read_sheet_withID(sheetid, 'trackWL')
+    changed = False
+    for row in track_sheet:
+        status = str(row.get('status') or '').strip().lower()
+        if status != 'active':
+            continue
+        if _truthy_skip_unmon(row.get('skipUnmon')):
+            continue
+        camp_id = row.get('campId')
+        mon_url = _resolve_ec_mon_url(row, _campaign_tracking_url(camp_id) if not (row.get('monUrl') or row.get('monURL')) else "")
+        geo = str(row.get('geo') or '').strip()
+        net = str(row.get('monNetwork') or 'kl').strip()
+        if not mon_url:
+            continue
+        mon_ok, err_tag = _ec_monetization_check(net, mon_url, geo)
+        if err_tag in ('error', 'skip_unmon'):
+            continue
+        if mon_ok is not False:
+            continue
+        if not camp_id:
+            continue
+        pause_campaignWitId(camp_id)
+        row['status'] = 'paused-unmon'
+        changed = True
+        print(f"campaign {camp_id} was paused (unmon / monNetwork={net})")
+        logsSheet = gd.read_sheet_withID(sheetid, 'logs')
+        logsSheet.append({
+            'campId': camp_id,
+            'campName': row.get('campName'),
+            'verify': f"campaign was paused due to unmonetization and monNetwork {net}",
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'response': mon_ok,
+        })
+        gd.create_or_update_sheet_from_dicts_withId(sheetid, 'logs', logsSheet)
+    if changed:
+        gd.create_or_update_sheet_from_dicts_withId(sheetid, 'trackWL', track_sheet)
+    return
 
 #############################################################################################
 ############### Those are testing points for trackEXploration sheet functions ###############

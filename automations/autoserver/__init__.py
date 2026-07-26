@@ -10,6 +10,16 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
         "schedule": "Every hour",
     },
     {
+        "class_name": "ECExplorationWlSyncAuto",
+        "label": "EC exploration WL from Keitaro sales",
+        "schedule": "Daily (EC_EXPLORATION_WL_SYNC_* env; default same as SK)",
+    },
+    {
+        "class_name": "ECQualityWL",
+        "label": "ECQualityWL clicks/bid",
+        "schedule": "Every even hour",
+    },
+    {
         "class_name": "KLFIXoptimize",
         "label": "SK KLFIX new-source optimize",
         "schedule": "Every hour",
@@ -97,6 +107,8 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.klfix_optimize import KLFIXoptimize
     from automations.autoserver.klwl import KLWL
     from automations.autoserver.ecomnia_track_auto import EcomniaTrackAuto
+    from automations.autoserver.ec_exploration_wl_sync_auto import ECExplorationWlSyncAuto
+    from automations.autoserver.ec_quality_wl import ECQualityWL
     from automations.autoserver.nipuhim_unmon_repair import NipuhimUnmonRepair
     from automations.autoserver.pause_unmon_sk import PauseUnmonSK
     from automations.autoserver.quality_wl import QualityWL
@@ -104,6 +116,8 @@ def setup_automations(register_func: Callable[[Any], None]) -> None:
     from automations.autoserver.sk_exploration_wl_sync_auto import SKExplorationWlSyncAuto
 
     register_func(EcomniaTrackAuto())
+    register_func(ECExplorationWlSyncAuto())
+    register_func(ECQualityWL())
     register_func(KLFIXoptimize())
     register_func(PauseUnmonSK())
     register_func(SKExplorationOptimizer())

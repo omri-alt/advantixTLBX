@@ -271,6 +271,8 @@ python scripts/keitaro_feed_balance_checkmon_sync.py --campaign-id 60</pre>
           <summary>Ecomnia bulk open (<code>/ec</code>)</summary>
           <div class="help-acc-body">
             <p>Reads rows from the EC sheet (brand, geo, hp, fbhp) and creates campaigns using prefix + Keitaro alias. Tab defaults to <code>bulk</code>. Modes: <strong>Dry run</strong> / <strong>Apply</strong>.</p>
+            <p>Optional <strong>Add to trackExploration</strong> (apply only): appends one optimizer row per created campaign; set <strong>Monetization network</strong> for the <code>monNetwork</code> column (<code>kl</code>, feeds, Yadore/Adexa, or <code>new</code> / <code>skip</code> to bypass unmon pause). CLI: <code>ec_bulk_open_from_sheet.py --apply --register-exploration [--mon-network kl]</code>.</p>
+            <p><strong>EC exploration WL sync</strong> (daily cron): Keitaro <code>SaleOur</code>/<code>LateSale</code> with <code>sub_id_6</code> ending <code>-EC</code> → append converting sources to <code>trackExploration.wl</code> + campaign <code>whitelistsources</code>; reactivate via absolute <code>cpcbysource</code> (default $0.10, not SK bidFactor); append <code>ECQualityWL</code> rows. Even-hour job refreshes clicks/bid/status. CLI: <code>python cli/sync_ec_exploration_wl_from_sales.py [--dry-run]</code>.</p>
             <p><a href="{{ url_for('ui_ec') }}">Open bulk open →</a></p>
           </div>
         </details>

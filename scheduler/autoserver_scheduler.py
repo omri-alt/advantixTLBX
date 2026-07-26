@@ -133,6 +133,22 @@ def _run_sk_exploration_wl_sync_scheduled() -> None:
     logger.warning("SKExplorationWlSyncAuto not registered; skip WL sync cron")
 
 
+def _run_ec_exploration_wl_sync_scheduled() -> None:
+    """Daily Keitaro sales → EC ``trackExploration.wl`` + ``ECQualityWL``."""
+    from config import EC_EXPLORATION_WL_SYNC_ENABLED
+
+    if not EC_EXPLORATION_WL_SYNC_ENABLED:
+        logger.info("ECExplorationWlSyncAuto skipped (EC_EXPLORATION_WL_SYNC_ENABLED=0)")
+        return
+    _ensure_listeners()
+    for automation in _automation_listeners:
+        if automation.__class__.__name__ == "ECExplorationWlSyncAuto":
+            logger.info("=== ECExplorationWlSyncAuto daily cron ===")
+            automation._wrap_run("scheduler", automation._execute)
+            return
+    logger.warning("ECExplorationWlSyncAuto not registered; skip EC WL sync cron")
+
+
 def _run_close_blend_zp_scheduled() -> None:
     """Daily pause for mapped Zeropark Blend campaigns (``ZP BLEND campaignsID``)."""
     from config import ZEROPARK_BLEND_NIGHTLY_CLOSE_ENABLED
@@ -318,6 +334,9 @@ def start_autoserver_scheduler() -> None:
         EFFINITY_SALES_SCHEDULER_HOUR_LOCAL,
         EFFINITY_SALES_SCHEDULER_MINUTE,
         EFFINITY_SALES_SCHEDULER_TZ,
+        EC_EXPLORATION_WL_SYNC_HOUR_LOCAL,
+        EC_EXPLORATION_WL_SYNC_MINUTE,
+        EC_EXPLORATION_WL_SYNC_TZ,
         SK_EXPLORATION_WL_SYNC_HOUR_LOCAL,
         SK_EXPLORATION_WL_SYNC_MINUTE,
         SK_EXPLORATION_WL_SYNC_TZ,
@@ -345,6 +364,8 @@ def start_autoserver_scheduler() -> None:
         if name == "CloseNipuhimTrAuto":
             continue
         if name == "SKExplorationWlSyncAuto":
+            continue
+        if name == "ECExplorationWlSyncAuto":
             continue
         trigger_kwargs: dict[str, Any] = {"minute": 0}
         job_id = f"autoserver_hourly_{name}"
@@ -456,6 +477,25 @@ def start_autoserver_scheduler() -> None:
     try:
         from zoneinfo import ZoneInfo
 
+        ec_wl_tz = ZoneInfo(EC_EXPLORATION_WL_SYNC_TZ or "UTC")
+    except Exception:
+        logger.warning("Invalid EC_EXPLORATION_WL_SYNC_TZ %r; using UTC", EC_EXPLORATION_WL_SYNC_TZ)
+        from zoneinfo import ZoneInfo
+
+        ec_wl_tz = ZoneInfo("UTC")
+    _scheduler.add_job(
+        _run_ec_exploration_wl_sync_scheduled,
+        trigger="cron",
+        hour=int(EC_EXPLORATION_WL_SYNC_HOUR_LOCAL),
+        minute=int(EC_EXPLORATION_WL_SYNC_MINUTE),
+        timezone=ec_wl_tz,
+        id="ec_exploration_wl_sync_daily",
+        replace_existing=True,
+        max_instances=1,
+    )
+    try:
+        from zoneinfo import ZoneInfo
+
         effinity_tz = ZoneInfo(EFFINITY_SALES_SCHEDULER_TZ or "Asia/Jerusalem")
     except Exception:
         logger.warning(
@@ -493,6 +533,7 @@ def start_autoserver_scheduler() -> None:
                 "CloseBlendZpAuto",
                 "CloseNipuhimTrAuto",
                 "SKExplorationWlSyncAuto",
+                "ECExplorationWlSyncAuto",
             ):
                 continue
             _scheduler.add_job(
@@ -512,6 +553,7 @@ def start_autoserver_scheduler() -> None:
             "Zeropark Blend close at %02d:%02d %s; "
             "Trillion hub close at %02d:%02d %s; "
             "SK WL sync at %02d:%02d %s; "
+            "EC WL sync at %02d:%02d %s; "
             "Effinity MTD postbacks at %02d:%02d %s)"
         ),
         len(_automation_listeners) - 2,
@@ -528,6 +570,9 @@ def start_autoserver_scheduler() -> None:
         int(SK_EXPLORATION_WL_SYNC_HOUR_LOCAL),
         int(SK_EXPLORATION_WL_SYNC_MINUTE),
         SK_EXPLORATION_WL_SYNC_TZ,
+        int(EC_EXPLORATION_WL_SYNC_HOUR_LOCAL),
+        int(EC_EXPLORATION_WL_SYNC_MINUTE),
+        EC_EXPLORATION_WL_SYNC_TZ,
         int(EFFINITY_SALES_SCHEDULER_HOUR_LOCAL),
         int(EFFINITY_SALES_SCHEDULER_MINUTE),
         EFFINITY_SALES_SCHEDULER_TZ,
