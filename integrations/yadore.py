@@ -29,6 +29,24 @@ YADORE_KEITARO_RAIN_SHELL = "https://shopli.city/rainotest?rain="
 YADORE_DEEPLINK_PROJECT_FALLBACK = "WAF4IibbRqGG"
 
 
+def wrap_yadore_click_url_for_keitaro(click_url: str) -> str:
+    """
+    Wrap a Yadore product ``clickUrl`` (often ``/v2/r?e=…``) for Keitaro.
+
+    Appends ``placementId={subid}`` so conversion/detail can attribute sales back to
+    the Keitaro click. Without this, Yadore returns ``placementId: false`` and sales
+    cannot be postbacked into Keitaro.
+    """
+    raw = (click_url or "").strip()
+    if not raw:
+        return ""
+    if "placementId=" not in raw and "placementId%3D" not in raw.lower():
+        sep = "&" if "?" in raw else "?"
+        raw = f"{raw}{sep}placementId={{subid}}"
+    # Keep ``{subid}`` unencoded for Keitaro macros; encode the rest of the rain target.
+    return YADORE_KEITARO_RAIN_SHELL + quote(raw, safe=":/?&=%{}" )
+
+
 class YadoreClientError(Exception):
     def __init__(self, message: str, status_code: Optional[int] = None, response_body: Optional[str] = None):
         self.status_code = status_code

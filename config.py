@@ -272,6 +272,17 @@ def _parse_blend_potential_feeds() -> tuple[str, ...]:
 
 BLEND_POTENTIAL_FEEDS: tuple[str, ...] = _parse_blend_potential_feeds()
 
+# Adexa / Yadore conversion reports lag by a few days. Through this day-of-month (UTC),
+# potentialAdexa / potentialYadore use previous-month start → yesterday so continuous
+# Blend merchants stay eligible; from day+1 only the current calendar month is used.
+try:
+    BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS = int(
+        (os.getenv("BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS") or "3").strip()
+    )
+except Exception:
+    BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS = 3
+BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS = max(0, min(14, BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS))
+
 try:
     # Default high so daily populate does not silently skip monetized merchants that passed
     # blend_potential CR rules; lower BLEND_POPULATE_MAX_ADD only if you need a safety ceiling.

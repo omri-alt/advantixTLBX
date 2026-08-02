@@ -363,11 +363,30 @@ def run_blend_potential_sheets(
     end_str: str,
     feeds: tuple[str, ...] | None = None,
 ) -> bool:
-    """Refresh potentialKelkoo* sheets in the Blend spreadsheet."""
+    """Refresh potential* sheets in the Blend spreadsheet.
+
+    Adexa / Yadore use a delayed-conversion window (previous month through early
+    current month) unless callers need an explicit override — here we always apply
+    the delayed window for those feeds so continuous Blend merchants stay eligible.
+    """
+    from blend_potential_merchants import _delayed_feed_month_to_yesterday_range
+
     script = Path(__file__).resolve().parent / "blend_potential_merchants.py"
     ok = True
     for feed in feeds or _blend_potential_feeds_for_run():
-        cmd = [sys.executable, str(script), "--feed", feed, "--start", start_str, "--end", end_str]
+        feed_start, feed_end = start_str, end_str
+        if feed in ("adexa", "yadore"):
+            feed_start, feed_end = _delayed_feed_month_to_yesterday_range()
+        cmd = [
+            sys.executable,
+            str(script),
+            "--feed",
+            feed,
+            "--start",
+            feed_start,
+            "--end",
+            feed_end,
+        ]
         r = subprocess.run(cmd)
         ok = ok and (r.returncode == 0)
     return ok

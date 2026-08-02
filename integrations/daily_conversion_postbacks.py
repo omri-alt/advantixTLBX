@@ -493,20 +493,13 @@ def _yadore_click_actions(click: Dict[str, Any]) -> Optional[Tuple[str, str, boo
         # preferred over provider-side click ids for Keitaro postbacks.
         "placementId",
         "placement_id",
-        "publisherClickId",
-        "publisherClickID",
-        "clickId",
-        "clickID",
-        "placementClickId",
-        "trackingId",
-        "tracking_id",
         "subId",
         "subid",
-        "id",
+        "publisherClickId",
+        "publisherClickID",
     ):
-        v = click.get(k)
-        if v is not None and str(v).strip():
-            cid = str(v).strip()
+        cid = _yadore_usable_subid(click.get(k))
+        if cid:
             break
     if not cid:
         return None
@@ -562,6 +555,23 @@ def _yadore_click_actions(click: Dict[str, Any]) -> Optional[Tuple[str, str, boo
     return (cid, cpc, is_sale, sale_val)
 
 
+def _yadore_usable_subid(value: Any) -> str:
+    """
+    Return a Keitaro-usable placement/sub id, or ``\"\"``.
+
+    Yadore often returns boolean ``false`` when the offer URL omitted ``placementId``;
+    ``str(False) == \"False\"`` must not be treated as a real subid.
+    """
+    if value is None or value is False:
+        return ""
+    if isinstance(value, bool):
+        return ""
+    s = str(value).strip()
+    if not s or s.lower() in ("false", "none", "null", "0", "true"):
+        return ""
+    return s
+
+
 def _yadore_conversion_to_sale(conv: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
     """
     Parse ``/v2/conversion/detail`` row when ``sales`` >= 1.
@@ -569,6 +579,9 @@ def _yadore_conversion_to_sale(conv: Dict[str, Any]) -> Optional[Tuple[str, str,
     Returns ``(placementId/sub_id, payout, merchant_name, market)``.
     Yadore does not expose reliable per-sale payout on this endpoint — use ``0`` unless an
     explicit order/sale value field is present (never click ``revenue`` / CPC).
+
+    Only ``placementId`` (Keitaro ``{subid}``) is accepted for postbacks — never Yadore's
+    internal ``clickId`` hash (cannot match a Keitaro click).
     """
     try:
         sale_count = int(conv.get("sales") or 0)
@@ -579,16 +592,9 @@ def _yadore_conversion_to_sale(conv: Dict[str, Any]) -> Optional[Tuple[str, str,
 
     sub_id = ""
     for k in ("placementId", "placement_id", "subId", "subid"):
-        v = conv.get(k)
-        if v is not None and str(v).strip():
-            sub_id = str(v).strip()
+        sub_id = _yadore_usable_subid(conv.get(k))
+        if sub_id:
             break
-    if not sub_id:
-        for k in ("publisherClickId", "clickId", "click_id"):
-            v = conv.get(k)
-            if v is not None and str(v).strip():
-                sub_id = str(v).strip()
-                break
     if not sub_id:
         return None
 

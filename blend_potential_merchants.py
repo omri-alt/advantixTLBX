@@ -11,6 +11,8 @@ Defaults:
   - shows BOTH monetized and unmonetized merchants (column `kelkoo_monetization` — same name for all feeds)
   - conversion-rate column is `cr` as a percent string (e.g. "1.23%")
   - Kelkoo thresholds: static CR >= 0.3%, flex CR >= 1.0%; Adexa/Yadore use flex threshold (1.0%).
+  - Adexa/Yadore: through day 3 of the month (``BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS``),
+    report window starts at previous-month day 1 (conversion lag); from day 4, current month only.
 
 Usage:
   python blend_potential_merchants.py --feed kelkoo1
@@ -35,6 +37,7 @@ load_dotenv()
 
 from config import (
     BLEND_FEED_CHOICES,
+    BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS,
     BLEND_SHEETS_SPREADSHEET_ID,
     FEED1_API_KEY,
     FEED2_API_KEY,
@@ -67,10 +70,42 @@ def get_sheets_service():
 
 
 def _month_to_yesterday_range() -> Tuple[str, str]:
+    """Current calendar month through yesterday (on the 1st: full previous month)."""
     today = datetime.now(timezone.utc).date()
     yesterday = today - timedelta(days=1)
     if today.day == 1:
         start = yesterday.replace(day=1)
+        end = yesterday
+    else:
+        start = today.replace(day=1)
+        end = yesterday
+    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+
+
+def _delayed_feed_month_to_yesterday_range(
+    *,
+    carry_through_day: Optional[int] = None,
+) -> Tuple[str, str]:
+    """
+    Date window for Adexa / Yadore potential sheets (conversion reporting lag).
+
+    Through ``carry_through_day`` of the month (default from
+    ``BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS``, usually 3): previous month start → yesterday
+    so last-month performers stay Blend-eligible while early-month stats are still empty/lagged.
+
+    From day ``carry_through_day + 1``: current month start → yesterday only.
+    """
+    today = datetime.now(timezone.utc).date()
+    yesterday = today - timedelta(days=1)
+    carry = (
+        BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS
+        if carry_through_day is None
+        else int(carry_through_day)
+    )
+    carry = max(0, min(14, carry))
+    if today.day <= carry:
+        prev_month_last = today.replace(day=1) - timedelta(days=1)
+        start = prev_month_last.replace(day=1)
         end = yesterday
     else:
         start = today.replace(day=1)
@@ -589,7 +624,10 @@ def main() -> None:
 
     start, end = (args.start, args.end)
     if not start or not end:
-        start, end = _month_to_yesterday_range()
+        if args.feed in ("adexa", "yadore"):
+            start, end = _delayed_feed_month_to_yesterday_range()
+        else:
+            start, end = _month_to_yesterday_range()
 
     out_sheet = args.output or _default_output_sheet(args.feed)
     only_monetized = bool(args.only_monetized)
@@ -597,7 +635,10 @@ def main() -> None:
     service = get_sheets_service()
 
     if args.feed in ("adexa", "yadore"):
-        print(f"Blend potential ({args.feed}): {start} -> {end}")
+        print(
+            f"Blend potential ({args.feed}): {start} -> {end} "
+            f"(carry prev month through day {BLEND_POTENTIAL_DELAYED_FEED_CARRY_DAYS})"
+        )
         if args.feed == "adexa":
             run_potential_adexa(service, out_sheet, start, end, only_monetized=only_monetized)
         else:
