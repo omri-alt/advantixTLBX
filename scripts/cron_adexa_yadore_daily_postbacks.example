@@ -1,0 +1,8 @@
+# Adexa + Yadore daily click postbacks (skip feeds already completed today).
+# Copy to crontab if Flask/Gunicorn is not running 24/7.
+#
+# Default in-app schedule: 12:30 Asia/Jerusalem (ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_*).
+# Yadore sales remain on the separate 10:00 YADORE_SALES_SCHEDULER_* job.
+# Run log: data/adexa_yadore_daily_postbacks_run_log.json
+#
+# 30 12 * * * cd /path/to/KLblend && /usr/bin/python3 cli/run_adexa_yadore_daily_postbacks_scheduled.py >> runtime/logs/adexa_yadore_daily_postbacks.log 2>&1

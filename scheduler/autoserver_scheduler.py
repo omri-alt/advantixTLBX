@@ -215,6 +215,26 @@ def _run_kelkoo_daily_postbacks_scheduled() -> None:
     run_kelkoo_daily_postbacks_scheduled(triggered_by="cron")
 
 
+def _run_adexa_yadore_daily_postbacks_scheduled() -> None:
+    """Daily Adexa + Yadore click postbacks (default 12:30 Asia/Jerusalem)."""
+    from config import ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_ENABLED
+    from scheduler.adexa_yadore_daily_postbacks_scheduler import (
+        enabled_adexa_yadore_postback_feeds,
+        run_adexa_yadore_daily_postbacks_scheduled,
+    )
+
+    if not ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_ENABLED:
+        logger.info(
+            "Adexa/Yadore daily postbacks skipped (ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_ENABLED=0)"
+        )
+        return
+    if not enabled_adexa_yadore_postback_feeds():
+        logger.info("Adexa/Yadore daily postbacks skipped (no API keys)")
+        return
+    logger.info("=== Adexa/Yadore daily conversion postbacks cron ===")
+    run_adexa_yadore_daily_postbacks_scheduled(triggered_by="cron")
+
+
 def _hourly_signal_broadcast() -> None:
     """Legacy single-threaded broadcast (manual catch-up / trigger-all internals)."""
     hour = _current_scheduler_hour()
@@ -358,6 +378,9 @@ def start_autoserver_scheduler() -> None:
         KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL,
         KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE,
         KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
+        ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL,
+        ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE,
+        ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ,
         SK_EXPLORATION_WL_SYNC_HOUR_LOCAL,
         SK_EXPLORATION_WL_SYNC_MINUTE,
         SK_EXPLORATION_WL_SYNC_TZ,
@@ -562,6 +585,30 @@ def start_autoserver_scheduler() -> None:
         coalesce=True,
         misfire_grace_time=3600,
     )
+    try:
+        from zoneinfo import ZoneInfo
+
+        ay_pb_tz = ZoneInfo(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ or "Asia/Jerusalem")
+    except Exception:
+        logger.warning(
+            "Invalid ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ %r; using Asia/Jerusalem",
+            ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ,
+        )
+        from zoneinfo import ZoneInfo
+
+        ay_pb_tz = ZoneInfo("Asia/Jerusalem")
+    _scheduler.add_job(
+        _run_adexa_yadore_daily_postbacks_scheduled,
+        trigger="cron",
+        hour=int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
+        minute=int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE),
+        timezone=ay_pb_tz,
+        id="adexa_yadore_daily_conversion_postbacks",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
     _scheduler.add_job(
         _write_scheduler_heartbeat,
         trigger="interval",
@@ -600,7 +647,8 @@ def start_autoserver_scheduler() -> None:
             "SK WL sync at %02d:%02d %s; "
             "EC WL sync at %02d:%02d %s; "
             "Effinity MTD postbacks at %02d:%02d %s; "
-            "Kelkoo daily postbacks at %02d:%02d %s)"
+            "Kelkoo daily postbacks at %02d:%02d %s; "
+            "Adexa/Yadore daily postbacks at %02d:%02d %s)"
         ),
         len(_automation_listeners) - 2,
         int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES),
@@ -625,6 +673,9 @@ def start_autoserver_scheduler() -> None:
         int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
         int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
         KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
+        int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
+        int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE),
+        ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ,
     )
 
 

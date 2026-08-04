@@ -263,6 +263,48 @@ KELKOO_DAILY_POSTBACK_PENDING_PATH = _kd_pending or str(
     Path(__file__).resolve().parent / "runtime" / "kelkoo_daily_postbacks_pending.json"
 )
 
+# Adexa + Yadore daily conversion postbacks (clicks). Default: 12:30 Asia/Jerusalem.
+# Yadore sales stay on ``YADORE_SALES_SCHEDULER_*`` (default 10:00); this job covers
+# ``adexa`` + ``yadore`` click feeds and skips feeds that already succeeded today.
+ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_ENABLED = (
+    os.getenv("ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_ENABLED", "1").strip().lower()
+    not in ("0", "false", "no")
+)
+ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ = (
+    os.getenv("ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ")
+    or os.getenv("KELKOO_DAILY_POSTBACK_SCHEDULER_TZ")
+    or "Asia/Jerusalem"
+).strip()
+try:
+    ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = int(
+        (os.getenv("ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL") or "12").strip()
+    )
+except Exception:
+    ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = 12
+ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = max(
+    0, min(23, ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL)
+)
+try:
+    ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE = int(
+        (os.getenv("ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE") or "30").strip()
+    )
+except Exception:
+    ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE = 30
+ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE = max(
+    0, min(59, ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE)
+)
+_ay_log = (os.getenv("ADEXA_YADORE_DAILY_POSTBACK_RUN_LOG_PATH") or "").strip()
+ADEXA_YADORE_DAILY_POSTBACK_RUN_LOG_PATH = _ay_log or str(
+    Path(__file__).resolve().parent / "data" / "adexa_yadore_daily_postbacks_run_log.json"
+)
+try:
+    ADEXA_YADORE_DAILY_POSTBACK_RUN_LOG_MAX = int(
+        (os.getenv("ADEXA_YADORE_DAILY_POSTBACK_RUN_LOG_MAX") or "500").strip() or "500"
+    )
+except Exception:
+    ADEXA_YADORE_DAILY_POSTBACK_RUN_LOG_MAX = 500
+ADEXA_YADORE_DAILY_POSTBACK_RUN_LOG_MAX = max(10, min(5000, ADEXA_YADORE_DAILY_POSTBACK_RUN_LOG_MAX))
+
 # Legacy UTC hour (unused when ``LATE_CONVERSION_SCHEDULER_*`` is set); kept for env compatibility.
 try:
     KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = int((os.getenv("KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC") or "7").strip())
@@ -546,6 +588,14 @@ def kelkoo_api_key_for_postback_tag(feed_tag: str) -> str:
     idx = kelkoo_postback_tag_to_index(feed_tag)
     by_idx = {1: FEED1_API_KEY, 2: FEED2_API_KEY, 5: FEED5_API_KEY}
     return (by_idx.get(idx) or "").strip()
+
+
+def raw_report_geos_for_postback_tag(feed_tag: str) -> tuple[str, ...]:
+    """Per-feed raw-report geo list (``FEEDn_RAW_REPORT_GEOS`` or global default)."""
+    idx = kelkoo_postback_tag_to_index(feed_tag)
+    if idx <= 0:
+        return KELKOO_RAW_REPORT_GEOS
+    return raw_report_geos_for_feed_index(idx)
 
 
 def kelkoo_raw_report_uses_custom1_subid(*, feed_tag: str = "", feed_index: int = 0) -> bool:

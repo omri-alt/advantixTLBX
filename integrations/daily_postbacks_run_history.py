@@ -185,6 +185,9 @@ def feed_live_run_succeeded_today(
     True when a non-dry-run successful batch for this feed finished on the UTC calendar day
     (and optionally for the given report_date). Used to skip the 09:00 scheduler if the
     operator already ran postbacks manually earlier.
+
+    Partial Kelkoo runs (``summary.partial`` / non-empty ``pending_geos``) do **not** count
+    as success so hourly retries for missing countries keep going.
     """
     entry = load_last_runs().get(target.strip().lower())
     if not isinstance(entry, dict):
@@ -196,6 +199,13 @@ def feed_live_run_succeeded_today(
         return False
     if report_date and str(entry.get("report_date") or "") != str(report_date):
         return False
+    summ = entry.get("summary")
+    if isinstance(summ, dict):
+        if summ.get("partial"):
+            return False
+        pending = summ.get("pending_geos") or summ.get("not_ready")
+        if isinstance(pending, (list, tuple)) and len(pending) > 0:
+            return False
     return True
 
 

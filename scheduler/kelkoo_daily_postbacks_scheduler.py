@@ -3,7 +3,9 @@ Scheduled Kelkoo daily conversion postbacks (09:00 Asia/Jerusalem by default).
 
 1. Probe each feed+geo raw report (HTTP OK + parseable TSV = ready).
 2. Run postbacks for ready geos immediately.
-3. If some geos are still missing, schedule a retry in one hour (capped attempts).
+3. If only some countries are ready, keep those pending and schedule a +1h retry
+   (up to ``KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS``). Partial runs are not treated as
+   “succeeded today”, so retries continue until every configured geo is done.
 4. Append each attempt to ``data/kelkoo_daily_postbacks_run_log.json``.
 """
 from __future__ import annotations
@@ -103,9 +105,35 @@ def _clear_pending() -> None:
             _save_pending({})
 
 
-def default_kelkoo_postback_geos() -> List[str]:
-    from config import KELKOO_RAW_REPORT_GEOS
+def default_kelkoo_postback_geos(feed: str | None = None) -> List[str]:
+    """Candidate geos for a feed (``FEEDn_RAW_REPORT_GEOS``, discovery file, or global list)."""
+    import os
 
+    from config import (
+        KELKOO_RAW_REPORT_GEOS,
+        kelkoo_postback_tag_to_index,
+        raw_report_geos_for_postback_tag,
+    )
+
+    if feed:
+        idx = kelkoo_postback_tag_to_index(feed)
+        explicit = bool((os.getenv(f"FEED{idx}_RAW_REPORT_GEOS") or "").strip()) if idx else False
+        geos = raw_report_geos_for_postback_tag(feed)
+        if explicit and geos:
+            return [g.strip().lower() for g in geos if str(g).strip()]
+        # Feed2: prefer last API discovery so HTTP 400 markets are not treated as pending.
+        if (feed or "").strip().lower() == "kelkoo2":
+            disc = Path(__file__).resolve().parents[1] / "data" / "kelkoo2_enabled_raw_geos.json"
+            if disc.exists():
+                try:
+                    raw = json.loads(disc.read_text(encoding="utf-8"))
+                    eg = raw.get("enabled_geos") if isinstance(raw, dict) else None
+                    if isinstance(eg, list) and eg:
+                        return [str(g).strip().lower() for g in eg if str(g).strip()]
+                except Exception:
+                    logger.warning("Could not read %s", disc)
+        if geos:
+            return [g.strip().lower() for g in geos if str(g).strip()]
     if KELKOO_RAW_REPORT_GEOS:
         return [g.strip().lower() for g in KELKOO_RAW_REPORT_GEOS if str(g).strip()]
     return list(_FALLBACK_GEOS)
@@ -133,7 +161,8 @@ def probe_kelkoo_geo_report(
     Check whether Kelkoo raw report data is available for one geo.
 
     ``ready`` — HTTP 200 and parseable TSV (0 data rows still counts as ready).
-    ``not_ready`` — HTTP error, empty body, network failure, or non-TSV payload.
+    ``not_ready`` — HTTP 200 but empty/bad body, 5xx, or transient failure (retry).
+    ``unavailable`` — geo not enabled on this feed (HTTP 400/404); do not retry.
     """
     from integrations.daily_conversion_postbacks import fetch_kelkoo_raw_tsv
 
@@ -148,6 +177,14 @@ def probe_kelkoo_geo_report(
             "reason": f"request error: {e}"[:400],
         }
 
+    if status in (400, 404):
+        return {
+            "status": "unavailable",
+            "geo": geo,
+            "http_status": status,
+            "reason": f"HTTP {status} (geo not enabled on this feed)",
+            "body_preview": (body or "")[:200],
+        }
     if status != 200:
         return {
             "status": "not_ready",
@@ -212,6 +249,45 @@ def _geo_already_done(state_path: Path, feed: str, report_date: str, geo: str) -
         return False
     gs = geos.get(geo) or {}
     return isinstance(gs, dict) and gs.get("status") == "done"
+
+
+def _incomplete_geos(state_path: Path, feed: str, report_date: str, geos: Sequence[str]) -> List[str]:
+    """Geos that still need a successful postback pass for this feed/date."""
+    return [g for g in geos if not _geo_already_done(state_path, feed, report_date, g)]
+
+
+def _pending_geos_for_feed(pending_doc: Dict[str, Any], feed: str, report_date: str) -> List[str]:
+    if str(pending_doc.get("report_date") or "") != report_date:
+        return []
+    raw = (pending_doc.get("pending_by_feed") or {}).get(feed)
+    if not isinstance(raw, list):
+        return []
+    return [str(g).strip().lower() for g in raw if str(g).strip()]
+
+
+
+def _enabled_geos_hint(pending_doc: Dict[str, Any], feed: str, report_date: str) -> List[str]:
+    """Enabled geos remembered from an earlier probe / last-run for this feed+date."""
+    if str(pending_doc.get("report_date") or "") == report_date:
+        raw = (pending_doc.get("enabled_by_feed") or {}).get(feed)
+        if isinstance(raw, list) and raw:
+            return [str(g).strip().lower() for g in raw if str(g).strip()]
+    try:
+        from integrations.daily_postbacks_run_history import load_last_runs
+
+        entry = load_last_runs().get(feed)
+        if (
+            isinstance(entry, dict)
+            and str(entry.get("report_date") or "") == report_date
+            and isinstance(entry.get("summary"), dict)
+        ):
+            raw2 = entry["summary"].get("enabled_geos")
+            if isinstance(raw2, list) and raw2:
+                return [str(g).strip().lower() for g in raw2 if str(g).strip()]
+    except Exception:
+        pass
+    return []
+
 
 
 def _schedule_retry_job(*, report_date: str, attempt: int, dry_run: bool) -> Dict[str, Any]:
@@ -343,10 +419,14 @@ def run_kelkoo_daily_postbacks_scheduled(
             for fk, gl in raw_pend.items():
                 if isinstance(gl, list):
                     pending_by_feed[str(fk)] = [str(g).strip().lower() for g in gl if str(g).strip()]
-        all_geos = default_kelkoo_postback_geos()
+        candidate_geos_override = None
     else:
         pending_by_feed = {}
-        all_geos = [g.strip().lower() for g in (geos or default_kelkoo_postback_geos()) if str(g).strip()]
+        candidate_geos_override = (
+            [g.strip().lower() for g in geos if str(g).strip()]
+            if geos is not None
+            else None
+        )
 
     if not _run_lock.acquire(blocking=False):
         logger.warning("Kelkoo daily postbacks: another run in progress; skipping")
@@ -369,12 +449,20 @@ def run_kelkoo_daily_postbacks_scheduled(
                 feed_summaries[feed] = {"ok": False, "error": "missing_api_key"}
                 continue
 
+            feed_geos = (
+                list(candidate_geos_override)
+                if candidate_geos_override is not None
+                else default_kelkoo_postback_geos(feed)
+            )
+
             if not dry_run and not pending_only:
                 from integrations.daily_postbacks_run_history import feed_live_run_succeeded_today
 
-                if feed_live_run_succeeded_today(feed, report_date=date_s):
+                file_pending = _pending_geos_for_feed(pending_doc, feed, date_s)
+                # Success today already means enabled geos finished (HTTP 400 ignored).
+                if feed_live_run_succeeded_today(feed, report_date=date_s) and not file_pending:
                     logger.info(
-                        "Kelkoo daily postbacks %s %s: already succeeded today — skipping",
+                        "Kelkoo daily postbacks %s %s: already succeeded today (enabled geos) — skipping",
                         feed,
                         date_s,
                     )
@@ -383,22 +471,33 @@ def run_kelkoo_daily_postbacks_scheduled(
                         "skipped_already_ran_today": True,
                         "ready": [],
                         "not_ready": [],
-                        "already_done": [],
+                        "already_done": list(feed_geos),
                         "probes": {},
                         "postback_summary": None,
                     }
                     continue
 
+            # Prefer previously discovered enabled geos (HTTP 200) so feed2 does not
+            # keep re-queueing markets that return HTTP 400 on this account.
+            enabled_hint = _enabled_geos_hint(pending_doc, feed, date_s)
             if pending_only:
                 geo_candidates = list(pending_by_feed.get(feed) or [])
+                scope_for_incomplete = enabled_hint or feed_geos
+                for g in _incomplete_geos(state_path, feed, date_s, scope_for_incomplete):
+                    if g not in geo_candidates:
+                        geo_candidates.append(g)
             else:
-                geo_candidates = list(all_geos)
+                geo_candidates = list(feed_geos)
 
             ready: List[str] = []
             not_ready: List[str] = []
+            unavailable: List[str] = []
             already_done: List[str] = []
             probes: Dict[str, Any] = {}
             processed_summary: Optional[Dict[str, Any]] = None
+            waiting: List[str] = []
+            enabled_scope: List[str] = []
+            feed_complete = False
 
             from integrations.daily_postbacks_run_history import feed_run_marker
 
@@ -413,8 +512,11 @@ def run_kelkoo_daily_postbacks_scheduled(
                         "http_status": probe.get("http_status"),
                         "reason": probe.get("reason"),
                     }
-                    if probe.get("status") == "ready":
+                    st = str(probe.get("status") or "")
+                    if st == "ready":
                         ready.append(geo)
+                    elif st == "unavailable":
+                        unavailable.append(geo)
                     else:
                         not_ready.append(geo)
 
@@ -437,51 +539,93 @@ def run_kelkoo_daily_postbacks_scheduled(
                         no_resume=False,
                         session=session,
                     )
-                    if not dry_run:
-                        try:
-                            from integrations.daily_postbacks_run_history import record_last_run
 
-                            record_last_run(
-                                feed,
-                                date_s,
-                                dry_run=False,
-                                ok=bool(processed_summary.get("ok")),
-                                summary=processed_summary,
-                                batch_exit_code=0 if processed_summary.get("ok") else 1,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "Kelkoo daily postbacks: last-run history write failed for %s", feed
-                            )
+                # Scope = geos enabled on this feed today (HTTP 200). HTTP 400 geos are
+                # unavailable and must not block completion or hourly retries.
+                enabled_scope = sorted(set(ready) | set(not_ready) | set(already_done))
+                if not enabled_scope:
+                    # No HTTP 200 responses yet (all unavailable or empty candidate list).
+                    enabled_scope = []
+                still_incomplete = [
+                    g for g in enabled_scope if not _geo_already_done(state_path, feed, date_s, g)
+                ]
+                waiting = sorted(set(not_ready) | set(still_incomplete))
+                feed_complete = bool(enabled_scope) and len(waiting) == 0
+                if not dry_run and (ready or feed_complete or waiting):
+                    try:
+                        from integrations.daily_postbacks_run_history import record_last_run
 
-            if not_ready:
-                next_pending[feed] = not_ready
+                        summ_for_history = dict(processed_summary or {})
+                        summ_for_history["partial"] = bool(enabled_scope) and not feed_complete
+                        summ_for_history["pending_geos"] = waiting
+                        summ_for_history["enabled_geos"] = list(enabled_scope)
+                        summ_for_history["unavailable_geos"] = list(unavailable)
+                        summ_for_history["ready_geos_this_attempt"] = list(ready)
+                        summ_for_history["attempt"] = attempt
+                        record_last_run(
+                            feed,
+                            date_s,
+                            dry_run=False,
+                            ok=bool(feed_complete and (processed_summary or {}).get("ok", True)),
+                            summary=summ_for_history,
+                            batch_exit_code=0 if feed_complete else 1,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Kelkoo daily postbacks: last-run history write failed for %s", feed
+                        )
+
+            if waiting:
+                next_pending[feed] = waiting
 
             feed_summaries[feed] = {
-                "ok": True if processed_summary is None else bool(processed_summary.get("ok")),
+                "ok": bool(
+                    feed_complete
+                    and (True if processed_summary is None else bool(processed_summary.get("ok")))
+                ),
+                "partial": bool(enabled_scope) and not feed_complete,
                 "ready": ready,
-                "not_ready": not_ready,
+                "not_ready": waiting,
+                "unavailable": unavailable,
+                "enabled_geos": enabled_scope,
                 "already_done": already_done,
                 "probes": probes,
                 "postback_summary": processed_summary,
             }
-            if not_ready:
+            if waiting:
                 logger.info(
-                    "Kelkoo daily postbacks %s %s attempt=%s: still waiting on %s",
+                    "Kelkoo daily postbacks %s %s attempt=%s: still waiting on %s — will retry hourly",
                     feed,
                     date_s,
                     attempt,
-                    ",".join(not_ready),
+                    ",".join(waiting),
+                )
+            elif feed_complete:
+                logger.info(
+                    "Kelkoo daily postbacks %s %s attempt=%s: all geos complete",
+                    feed,
+                    date_s,
+                    attempt,
                 )
 
         retry_info: Optional[Dict[str, Any]] = None
         abandoned: Dict[str, List[str]] = {}
         if next_pending:
+            enabled_by_feed: Dict[str, List[str]] = {}
+            for fk, summ in feed_summaries.items():
+                if isinstance(summ, dict) and summ.get("enabled_geos"):
+                    enabled_by_feed[fk] = list(summ.get("enabled_geos") or [])
+            # Keep prior enabled hints for feeds not touched this attempt.
+            prior_en = pending_doc.get("enabled_by_feed") if isinstance(pending_doc.get("enabled_by_feed"), dict) else {}
+            for fk, gl in prior_en.items():
+                if fk not in enabled_by_feed and isinstance(gl, list):
+                    enabled_by_feed[fk] = [str(g).strip().lower() for g in gl if str(g).strip()]
             _save_pending(
                 {
                     "report_date": date_s,
                     "attempt": attempt,
                     "pending_by_feed": next_pending,
+                    "enabled_by_feed": enabled_by_feed,
                     "updated_at_utc": _utc_now(),
                     "dry_run": bool(dry_run),
                 }

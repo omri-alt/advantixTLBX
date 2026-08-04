@@ -1212,11 +1212,14 @@ def run_daily_conversion_postbacks_batch(
 
         with feed_run_marker(t, report_date=report_date, triggered_by="batch"):
             if t in KELKOO_POSTBACK_FEED_TAGS:
+                from config import raw_report_geos_for_postback_tag
+
+                feed_geos = list(raw_report_geos_for_postback_tag(t)) or list(geos)
                 out = run_kelkoo_feed_postbacks(
                     t,
                     report_date,
                     state_path=state_path,
-                    geos=geos,
+                    geos=feed_geos,
                     only_geo=only_geo,
                     dry_run=dry_run,
                     no_resume=no_resume,
