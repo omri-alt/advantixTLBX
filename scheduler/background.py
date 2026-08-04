@@ -65,6 +65,7 @@ def start_background_schedulers() -> None:
     from scheduler.kelkoo_late_sales_scheduler import start_kelkoo_late_sales_scheduler
     from scheduler.yadore_sales_scheduler import start_yadore_sales_scheduler
     from scheduler.effinity_sales_scheduler import start_effinity_sales_scheduler
+    from scheduler.kelkoo_daily_postbacks_scheduler import start_kelkoo_daily_postbacks_scheduler
     from integrations.overview_snapshot import (
         start_daily_overview_scheduler,
         start_overview_snapshot_bootstrap,
@@ -77,6 +78,7 @@ def start_background_schedulers() -> None:
         ("Kelkoo late-sales prep", start_kelkoo_late_sales_scheduler),
         ("Yadore daily sales postbacks", start_yadore_sales_scheduler),
         ("Effinity daily sales postbacks", start_effinity_sales_scheduler),
+        ("Kelkoo daily conversion postbacks", start_kelkoo_daily_postbacks_scheduler),
         ("Overview snapshot", start_daily_overview_scheduler),
         ("Overview bootstrap", start_overview_snapshot_bootstrap),
         ("Blend cap progress", start_blend_cap_progress_scheduler),

@@ -10,7 +10,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from config import KELKOO_POSTBACK_FEED_TAGS, KELKOO_RAW_REPORT_GEOS
 from integrations.daily_conversion_postback_state import load_state
 from integrations.daily_conversion_postbacks import default_report_date_str
-from integrations.daily_postbacks_run_history import load_last_runs, postback_sources_enabled
+from integrations.daily_postbacks_run_history import (
+    feed_today_status,
+    load_last_runs,
+    postback_sources_enabled,
+)
 
 _DATE_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -196,6 +200,7 @@ def build_dashboard_cards(state_path: Path) -> List[Dict[str, Any]]:
             }
 
         display_ts = last_at or state_ts
+        day_status = feed_today_status(key)
 
         cards.append(
             {
@@ -207,6 +212,7 @@ def build_dashboard_cards(state_path: Path) -> List[Dict[str, Any]]:
                 "primary_date": primary,
                 "kelkoo": kelkoo_extra,
                 "flat": flat_extra,
+                "day_status": day_status,
             }
         )
     return cards
@@ -242,4 +248,5 @@ def feed_detail_context(
         "report_date": rd,
         "kelkoo_detail": kelkoo_detail,
         "flat_detail": flat_detail,
+        "day_status": feed_today_status(feed_key),
     }

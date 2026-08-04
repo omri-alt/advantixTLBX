@@ -210,6 +210,59 @@ except Exception:
     EFFINITY_SALES_SCHEDULER_MINUTE = 15
 EFFINITY_SALES_SCHEDULER_MINUTE = max(0, min(59, EFFINITY_SALES_SCHEDULER_MINUTE))
 
+# Kelkoo daily click/sale postbacks (raw report → Keitaro). Probe per geo, process ready
+# countries immediately, retry missing geos hourly. Default: 09:00 Asia/Jerusalem.
+KELKOO_DAILY_POSTBACK_SCHEDULER_ENABLED = (
+    os.getenv("KELKOO_DAILY_POSTBACK_SCHEDULER_ENABLED", "1").strip().lower()
+    not in ("0", "false", "no")
+)
+KELKOO_DAILY_POSTBACK_SCHEDULER_TZ = (
+    os.getenv("KELKOO_DAILY_POSTBACK_SCHEDULER_TZ") or "Asia/Jerusalem"
+).strip()
+try:
+    KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = int(
+        (os.getenv("KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL") or "9").strip()
+    )
+except Exception:
+    KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = 9
+KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = max(0, min(23, KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL))
+try:
+    KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE = int(
+        (os.getenv("KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE") or "0").strip()
+    )
+except Exception:
+    KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE = 0
+KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE = max(0, min(59, KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE))
+try:
+    KELKOO_DAILY_POSTBACK_RETRY_INTERVAL_MINUTES = int(
+        (os.getenv("KELKOO_DAILY_POSTBACK_RETRY_INTERVAL_MINUTES") or "60").strip()
+    )
+except Exception:
+    KELKOO_DAILY_POSTBACK_RETRY_INTERVAL_MINUTES = 60
+KELKOO_DAILY_POSTBACK_RETRY_INTERVAL_MINUTES = max(15, min(360, KELKOO_DAILY_POSTBACK_RETRY_INTERVAL_MINUTES))
+try:
+    KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS = int(
+        (os.getenv("KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS") or "6").strip()
+    )
+except Exception:
+    KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS = 6
+KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS = max(1, min(24, KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS))
+_kd_log = (os.getenv("KELKOO_DAILY_POSTBACK_RUN_LOG_PATH") or "").strip()
+KELKOO_DAILY_POSTBACK_RUN_LOG_PATH = _kd_log or str(
+    Path(__file__).resolve().parent / "data" / "kelkoo_daily_postbacks_run_log.json"
+)
+try:
+    KELKOO_DAILY_POSTBACK_RUN_LOG_MAX = int(
+        (os.getenv("KELKOO_DAILY_POSTBACK_RUN_LOG_MAX") or "500").strip() or "500"
+    )
+except Exception:
+    KELKOO_DAILY_POSTBACK_RUN_LOG_MAX = 500
+KELKOO_DAILY_POSTBACK_RUN_LOG_MAX = max(10, min(5000, KELKOO_DAILY_POSTBACK_RUN_LOG_MAX))
+_kd_pending = (os.getenv("KELKOO_DAILY_POSTBACK_PENDING_PATH") or "").strip()
+KELKOO_DAILY_POSTBACK_PENDING_PATH = _kd_pending or str(
+    Path(__file__).resolve().parent / "runtime" / "kelkoo_daily_postbacks_pending.json"
+)
+
 # Legacy UTC hour (unused when ``LATE_CONVERSION_SCHEDULER_*`` is set); kept for env compatibility.
 try:
     KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC = int((os.getenv("KELKOO_LATE_SALES_SCHEDULER_HOUR_UTC") or "7").strip())

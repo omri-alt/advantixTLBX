@@ -197,6 +197,24 @@ def _run_effinity_mtd_postbacks_scheduled() -> None:
     run_effinity_daily_postbacks()
 
 
+def _run_kelkoo_daily_postbacks_scheduled() -> None:
+    """Daily Kelkoo raw-report postbacks with per-geo readiness + hourly retries."""
+    from config import KELKOO_DAILY_POSTBACK_SCHEDULER_ENABLED
+    from scheduler.kelkoo_daily_postbacks_scheduler import (
+        enabled_kelkoo_postback_feeds,
+        run_kelkoo_daily_postbacks_scheduled,
+    )
+
+    if not KELKOO_DAILY_POSTBACK_SCHEDULER_ENABLED:
+        logger.info("Kelkoo daily postbacks skipped (KELKOO_DAILY_POSTBACK_SCHEDULER_ENABLED=0)")
+        return
+    if not enabled_kelkoo_postback_feeds():
+        logger.info("Kelkoo daily postbacks skipped (no feed API keys)")
+        return
+    logger.info("=== Kelkoo daily conversion postbacks cron ===")
+    run_kelkoo_daily_postbacks_scheduled(triggered_by="cron")
+
+
 def _hourly_signal_broadcast() -> None:
     """Legacy single-threaded broadcast (manual catch-up / trigger-all internals)."""
     hour = _current_scheduler_hour()
@@ -337,6 +355,9 @@ def start_autoserver_scheduler() -> None:
         EC_EXPLORATION_WL_SYNC_HOUR_LOCAL,
         EC_EXPLORATION_WL_SYNC_MINUTE,
         EC_EXPLORATION_WL_SYNC_TZ,
+        KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL,
+        KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE,
+        KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
         SK_EXPLORATION_WL_SYNC_HOUR_LOCAL,
         SK_EXPLORATION_WL_SYNC_MINUTE,
         SK_EXPLORATION_WL_SYNC_TZ,
@@ -517,6 +538,30 @@ def start_autoserver_scheduler() -> None:
         coalesce=True,
         misfire_grace_time=3600,
     )
+    try:
+        from zoneinfo import ZoneInfo
+
+        kelkoo_pb_tz = ZoneInfo(KELKOO_DAILY_POSTBACK_SCHEDULER_TZ or "Asia/Jerusalem")
+    except Exception:
+        logger.warning(
+            "Invalid KELKOO_DAILY_POSTBACK_SCHEDULER_TZ %r; using Asia/Jerusalem",
+            KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
+        )
+        from zoneinfo import ZoneInfo
+
+        kelkoo_pb_tz = ZoneInfo("Asia/Jerusalem")
+    _scheduler.add_job(
+        _run_kelkoo_daily_postbacks_scheduled,
+        trigger="cron",
+        hour=int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
+        minute=int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
+        timezone=kelkoo_pb_tz,
+        id="kelkoo_daily_conversion_postbacks",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
     _scheduler.add_job(
         _write_scheduler_heartbeat,
         trigger="interval",
@@ -554,7 +599,8 @@ def start_autoserver_scheduler() -> None:
             "Trillion hub close at %02d:%02d %s; "
             "SK WL sync at %02d:%02d %s; "
             "EC WL sync at %02d:%02d %s; "
-            "Effinity MTD postbacks at %02d:%02d %s)"
+            "Effinity MTD postbacks at %02d:%02d %s; "
+            "Kelkoo daily postbacks at %02d:%02d %s)"
         ),
         len(_automation_listeners) - 2,
         int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES),
@@ -576,6 +622,9 @@ def start_autoserver_scheduler() -> None:
         int(EFFINITY_SALES_SCHEDULER_HOUR_LOCAL),
         int(EFFINITY_SALES_SCHEDULER_MINUTE),
         EFFINITY_SALES_SCHEDULER_TZ,
+        int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
+        int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
+        KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
     )
 
 

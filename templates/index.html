@@ -88,6 +88,7 @@
     .pb-banner.pb-on { display: flex; }
     .pb-banner.level-all { background: rgba(34, 197, 94, 0.14); border-color: rgba(34, 197, 94, 0.35); color: #dcfce7; }
     .pb-banner.level-partial { background: rgba(234, 179, 8, 0.12); border-color: rgba(234, 179, 8, 0.35); color: #fef9c3; }
+    .pb-banner.level-running { background: rgba(234, 179, 8, 0.14); border-color: rgba(234, 179, 8, 0.4); color: #fef08a; }
     .pb-banner.level-none { background: rgba(239, 68, 68, 0.12); border-color: rgba(248, 113, 113, 0.35); color: #fecaca; }
     .pb-banner.level-new { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: #e0f2fe; }
     .pb-banner .pb-msg { flex: 1; }
@@ -567,6 +568,7 @@
 
     function prefixIcon(level) {
       if (level === "all") return "✅ ";
+      if (level === "running") return "⏳ ";
       if (level === "partial") return "⚠️ ";
       return "❌ ";
     }

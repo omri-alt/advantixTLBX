@@ -48,6 +48,30 @@
     .pill.warn { background: rgba(245, 158, 11, 0.1); border-color: #92400e; color: #fcd34d; }
     .stat-line { font-size: 13px; color: #cbd5e1; margin-top: 6px; }
     .badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; margin-bottom: 4px; }
+    .day-status {
+      display: block;
+      margin: 0 0 12px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+    .day-status.level-ok {
+      background: rgba(34, 197, 94, 0.14);
+      border-color: rgba(34, 197, 94, 0.35);
+      color: #dcfce7;
+    }
+    .day-status.level-running {
+      background: rgba(234, 179, 8, 0.14);
+      border-color: rgba(234, 179, 8, 0.4);
+      color: #fef08a;
+    }
+    .day-status.level-none {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(248, 113, 113, 0.35);
+      color: #fecaca;
+    }
   </style>
 </head>
 <body>
@@ -55,11 +79,15 @@
   <div><a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#daily-postbacks">Help</a></div>
   {{ tool_header("Daily conversion postbacks", "Kelkoo / Adexa / Yadore / Shopnomix GET postbacks + resume state.", "daily-postbacks", state_path_display) }}
 
-  <div class="tile-grid">
+  <div class="tile-grid" id="postback-tile-grid">
     {% for f in feeds %}
-    <a class="tile" href="{{ url_for('ui_kelkoo_daily_postbacks_feed', feed_key=f.key) }}">
+    <a class="tile" href="{{ url_for('ui_kelkoo_daily_postbacks_feed', feed_key=f.key) }}" data-feed-key="{{ f.key }}">
       <div class="badge">Feed</div>
       <h2>{{ f.title }}</h2>
+      {% set ds = f.day_status or {} %}
+      <span class="day-status level-{{ ds.level or 'none' }}" data-day-status>
+        {{ ds.message or "Didn't run today" }}
+      </span>
       <div class="ts">
         Last activity: <strong>{{ f.last_run_at or "—" }}</strong>
         {% if f.last_run_from_history %}<span class="muted">(run logged)</span>{% endif %}
@@ -92,5 +120,38 @@
     </a>
     {% endfor %}
   </div>
+  <script>
+  (function() {
+    var statusUrl = {{ url_for("api_postback_status") | tojson }};
+    var grid = document.getElementById("postback-tile-grid");
+    if (!grid) return;
+
+    function applyStatuses(feeds) {
+      if (!feeds || !feeds.length) return;
+      var byKey = {};
+      feeds.forEach(function(f) { if (f && f.key) byKey[f.key] = f; });
+      grid.querySelectorAll("[data-feed-key]").forEach(function(tile) {
+        var key = tile.getAttribute("data-feed-key");
+        var st = byKey[key];
+        if (!st) return;
+        var el = tile.querySelector("[data-day-status]");
+        if (!el) return;
+        el.textContent = st.message || "Didn't run today";
+        el.className = "day-status level-" + (st.level || "none");
+      });
+    }
+
+    function poll() {
+      fetch(statusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(function(data) {
+          applyStatuses(data.feeds || []);
+          window.setTimeout(poll, data.any_running ? 5000 : 30000);
+        })
+        .catch(function() { window.setTimeout(poll, 30000); });
+    }
+    poll();
+  })();
+  </script>
 </body>
 </html>

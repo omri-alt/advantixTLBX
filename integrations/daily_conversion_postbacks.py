@@ -1205,76 +1205,65 @@ def run_daily_conversion_postbacks_batch(
         )
     )
 
+    from integrations.daily_postbacks_run_history import feed_run_marker
+
     for t in targets:
         from config import KELKOO_POSTBACK_FEED_TAGS
 
-        if t in KELKOO_POSTBACK_FEED_TAGS:
-            out = run_kelkoo_feed_postbacks(
-                t,
-                report_date,
-                state_path=state_path,
-                geos=geos,
-                only_geo=only_geo,
-                dry_run=dry_run,
-                no_resume=no_resume,
-                session=session,
-            )
+        with feed_run_marker(t, report_date=report_date, triggered_by="batch"):
+            if t in KELKOO_POSTBACK_FEED_TAGS:
+                out = run_kelkoo_feed_postbacks(
+                    t,
+                    report_date,
+                    state_path=state_path,
+                    geos=geos,
+                    only_geo=only_geo,
+                    dry_run=dry_run,
+                    no_resume=no_resume,
+                    session=session,
+                )
+            elif t == "adexa":
+                out = run_adexa_postbacks(
+                    report_date,
+                    state_path=state_path,
+                    dry_run=dry_run,
+                    no_resume=no_resume,
+                    session=session,
+                )
+            elif t == "yadore":
+                out = run_yadore_postbacks(
+                    report_date,
+                    state_path=state_path,
+                    dry_run=dry_run,
+                    no_resume=no_resume,
+                    session=session,
+                )
+            elif t == "yadore_sales":
+                out = run_yadore_conversion_sale_postbacks(
+                    report_date,
+                    state_path=state_path,
+                    dry_run=dry_run,
+                    no_resume=no_resume,
+                    session=session,
+                )
+            elif t == "effinity":
+                out = run_effinity_mtd_postbacks(report_date, dry_run=dry_run)
+            elif t == "shopnomix":
+                out = run_shopnomix_postbacks(
+                    report_date,
+                    state_path=state_path,
+                    dry_run=dry_run,
+                    no_resume=no_resume,
+                    session=session,
+                )
+            else:
+                logger.error("Unknown --only %r", t)
+                rc = 2
+                results.append({"target": t, "summary": {"ok": False, "error": f"unknown target {t!r}"}})
+                continue
             results.append({"target": t, "summary": out})
             if not out.get("ok"):
                 rc = 1
-        elif t == "adexa":
-            out = run_adexa_postbacks(
-                report_date,
-                state_path=state_path,
-                dry_run=dry_run,
-                no_resume=no_resume,
-                session=session,
-            )
-            results.append({"target": t, "summary": out})
-            if not out.get("ok"):
-                rc = 1
-        elif t == "yadore":
-            out = run_yadore_postbacks(
-                report_date,
-                state_path=state_path,
-                dry_run=dry_run,
-                no_resume=no_resume,
-                session=session,
-            )
-            results.append({"target": t, "summary": out})
-            if not out.get("ok"):
-                rc = 1
-        elif t == "yadore_sales":
-            out = run_yadore_conversion_sale_postbacks(
-                report_date,
-                state_path=state_path,
-                dry_run=dry_run,
-                no_resume=no_resume,
-                session=session,
-            )
-            results.append({"target": t, "summary": out})
-            if not out.get("ok"):
-                rc = 1
-        elif t == "effinity":
-            out = run_effinity_mtd_postbacks(report_date, dry_run=dry_run)
-            results.append({"target": t, "summary": out})
-            if not out.get("ok"):
-                rc = 1
-        elif t == "shopnomix":
-            out = run_shopnomix_postbacks(
-                report_date,
-                state_path=state_path,
-                dry_run=dry_run,
-                no_resume=no_resume,
-                session=session,
-            )
-            results.append({"target": t, "summary": out})
-            if not out.get("ok"):
-                rc = 1
-        else:
-            logger.error("Unknown --only %r", t)
-            rc = 2
-            results.append({"target": t, "summary": {"ok": False, "error": f"unknown target {t!r}"}})
 
     out: Dict[str, Any] = {
         "ok": rc == 0,

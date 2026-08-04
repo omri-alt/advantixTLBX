@@ -22,12 +22,42 @@
     .bad { color: #f87171; }
     label { display: inline-block; margin-top: 8px; }
     h1 { margin-top: 8px; }
+    .day-status {
+      display: block;
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      max-width: 1100px;
+    }
+    .day-status.level-ok {
+      background: rgba(34, 197, 94, 0.14);
+      border-color: rgba(34, 197, 94, 0.35);
+      color: #dcfce7;
+    }
+    .day-status.level-running {
+      background: rgba(234, 179, 8, 0.14);
+      border-color: rgba(234, 179, 8, 0.4);
+      color: #fef08a;
+    }
+    .day-status.level-none {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(248, 113, 113, 0.35);
+      color: #fecaca;
+    }
   </style>
 </head>
 <body>
   {% from "macros/page_header.html" import tool_header %}
   <div><a href="{{ url_for('ui_kelkoo_daily_postbacks_hub') }}">All feeds</a> · <a href="/">Home</a> · <a href="{{ url_for('ui_help') }}#daily-postbacks">Help</a></div>
   {{ tool_header(title, "Per-feed postback run + resume rows.", "daily-postbacks", "?date=YYYY-MM-DD") }}
+
+  {% set ds = day_status or {} %}
+  <div class="day-status level-{{ ds.level or 'none' }}" id="feed-day-status" data-feed-key="{{ feed_key }}">
+    {{ ds.message or "Didn't run today" }}
+  </div>
 
   <div class="card">
     <h3 style="margin-top:0;color:#93c5fd;">Last run (logged)</h3>
@@ -135,5 +165,32 @@
     {% endif %}
     {% endif %}
   </div>
+  <script>
+  (function() {
+    var statusUrl = {{ url_for("api_postback_status") | tojson }};
+    var el = document.getElementById("feed-day-status");
+    if (!el) return;
+    var feedKey = el.getAttribute("data-feed-key") || "";
+
+    function poll() {
+      fetch(statusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(function(data) {
+          var feeds = data.feeds || [];
+          var st = null;
+          for (var i = 0; i < feeds.length; i++) {
+            if (feeds[i] && feeds[i].key === feedKey) { st = feeds[i]; break; }
+          }
+          if (st) {
+            el.textContent = st.message || "Didn't run today";
+            el.className = "day-status level-" + (st.level || "none");
+          }
+          window.setTimeout(poll, (data.any_running || (st && st.level === "running")) ? 5000 : 30000);
+        })
+        .catch(function() { window.setTimeout(poll, 30000); });
+    }
+    poll();
+  })();
+  </script>
 </body>
 </html>
