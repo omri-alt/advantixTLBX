@@ -26,6 +26,8 @@ def _nipuhim_sheet_for_feed(date_str: str, feed_key: str) -> Optional[str]:
         return f"{date_str}_offers_2"
     if fk == "kelkoo5":
         return f"{date_str}_offers_5"
+    if fk == "kelkoo4":
+        return f"{date_str}_offers_4"
     return None
 
 
@@ -90,7 +92,7 @@ def _merchant_counts_from_chosen_artifacts(
 def nipuhim_feed_geo_merchant_counts(
     *,
     date_str: Optional[str] = None,
-    feed_keys: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5"),
+    feed_keys: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4"),
 ) -> Tuple[Dict[str, Dict[str, int]], List[str]]:
     """
     Distinct merchant count per feed+geo from today's Nipuhim offers tabs.
@@ -217,7 +219,7 @@ def nipuhim_feed_active_geos(
     *,
     date_str: Optional[str] = None,
     max_offers_per_geo: int = 60,
-    feed_keys: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5"),
+    feed_keys: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4"),
 ) -> Tuple[Dict[str, FrozenSet[str]], List[str]]:
     """
     Geos with at least one store-link row on today's ``{date}_offers_*`` tab per feed.

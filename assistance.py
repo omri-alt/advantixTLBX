@@ -327,6 +327,24 @@ def build_kelkoo_feed5_action_payload(geo: str, merchant_or_product_url: str) ->
     )
 
 
+
+def build_kelkoo_feed4_action_payload(geo: str, merchant_or_product_url: str) -> str:
+    """
+    Kelkoo feed 4 (tag kelkoo4 / Keitaro feed8) — same shape as feed2, different host.
+
+    Template offer ``KL feed 4`` (Keitaro):
+    ``rainotest?rain=https://visit-sites.com/klk-merchant2?geo=…&merchantUrl=…&pub_click_id={subid}``
+    """
+    geo = (geo or "").strip().lower()[:2]
+    if not geo:
+        raise ValueError("geo is required for Kelkoo feed4 offers")
+    encoded = quote(merchant_or_product_url or "https://example.com/placeholder", safe="")
+    return (
+        "https://shopli.city/rainotest?rain=https://visit-sites.com/klk-merchant2"
+        f"?geo={geo}&merchantUrl={encoded}&pub_click_id={{subid}}"
+    )
+
+
 def build_nipuhim_feed5_action_payload(geo: str, merchant_or_product_url: str) -> str:
     """Alias for Nipuhim feed5 sync (same template as Blend kelkoo5)."""
     return build_kelkoo_feed5_action_payload(geo, merchant_or_product_url)
@@ -336,10 +354,13 @@ def kelkoo_keitaro_action_payload(geo: str, merchant_url: str, feed_tag: str) ->
     """
     Keitaro offer URL for Kelkoo Blend kelkoo1/kelkoo2 (shopli rain + encoded merchantUrl).
     kelkoo5 uses ``build_kelkoo_feed5_action_payload()`` (intentix path + encoded merchantUrl).
+    kelkoo4 uses ``build_kelkoo_feed4_action_payload()`` (visit-sites klk-merchant2, like feed2).
     """
     ft = (feed_tag or "").strip().lower()
     if ft in ("kelkoo5", "feed5", "5"):
         return build_kelkoo_feed5_action_payload(geo, merchant_url)
+    if ft in ("kelkoo4", "feed8", "4", "8"):
+        return build_kelkoo_feed4_action_payload(geo, merchant_url)
     if ft in ("kelkoo2", "feed2", "2"):
         acc = (FEED2_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID_2 or "").strip()
         return build_offer_action_payload(geo, merchant_url, account_id=acc, feed=2)
@@ -373,6 +394,12 @@ def build_nipuhim_v2_action_payload(
     geo = (geo or "").strip().lower()[:2]
     if feed == 5:
         return build_nipuhim_feed5_action_payload(geo, product_url)
+    if feed == 4:
+        encoded4 = quote(product_url or "https://example.com/placeholder", safe="")
+        return (
+            "https://visit-sites.com/klk-merchant2"
+            f"?geo={geo}&merchantUrl={encoded4}&pub_click_id={{subid}}"
+        )
     encoded = quote(product_url or "https://example.com/placeholder", safe="")
     if feed == 2:
         return (

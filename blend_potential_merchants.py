@@ -42,6 +42,7 @@ from config import (
     FEED1_API_KEY,
     FEED2_API_KEY,
     FEED2_MERCHANTS_GEOS,
+    FEED4_API_KEY,
     FEED5_API_KEY,
     FEED5_MERCHANTS_GEOS,
     YADORE_REPORT_DETAIL_MARKETS,
@@ -119,6 +120,8 @@ def _api_key_for_feed(feed: str) -> str:
         return FEED1_API_KEY
     if f == "kelkoo2":
         return FEED2_API_KEY
+    if f == "kelkoo4":
+        return FEED4_API_KEY
     if f == "kelkoo5":
         return FEED5_API_KEY
     return ""
@@ -129,6 +132,7 @@ def _default_output_sheet(feed: str) -> str:
     return {
         "kelkoo1": "potentialKelkoo1",
         "kelkoo2": "potentialKelkoo2",
+        "kelkoo4": "potentialKelkoo4",
         "kelkoo5": "potentialKelkoo5",
         "adexa": "potentialAdexa",
         "yadore": "potentialYadore",

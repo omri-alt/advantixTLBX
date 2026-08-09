@@ -72,11 +72,12 @@ KEITARO_HUB_CAMPAIGN_ID = int((os.getenv("KEITARO_HUB_CAMPAIGN_ID") or "94").str
 KEITARO_HUB_BLEND_PCT = int((os.getenv("KEITARO_HUB_BLEND_PCT") or "50").strip() or "50")
 KEITARO_HUB_NIPUHIM_PCT = int((os.getenv("KEITARO_HUB_NIPUHIM_PCT") or "50").strip() or "50")
 # Comma list of feed keys that receive hub traffic (others stay attached at share 0).
-# Default: Kelkoo trio only until adexa/yadore/shopnomix are wired in daily sync.
+# Default: Kelkoo feeds only until adexa/yadore/shopnomix are wired in daily sync.
+# ``kelkoo4`` = 4th Kelkoo publisher (Keitaro child aliases blendFeed8 / nipuhFeed8).
 KEITARO_HUB_ACTIVE_FEEDS = tuple(
     x.strip().lower()
     for x in (
-        os.getenv("KEITARO_HUB_ACTIVE_FEEDS") or "kelkoo1,kelkoo2,kelkoo5"
+        os.getenv("KEITARO_HUB_ACTIVE_FEEDS") or "kelkoo1,kelkoo2,kelkoo5,kelkoo4"
     ).split(",")
     if x.strip()
 )
@@ -358,11 +359,13 @@ def _parse_blend_potential_feeds() -> tuple[str, ...]:
     ``potentialAdexa``, ``potentialYadore``) and ``populate_blend_from_potential``.
     Default includes all four feeds; missing API keys for a feed are skipped in the daily workflow.
     """
-    raw = (os.getenv("BLEND_POTENTIAL_FEEDS") or "kelkoo1,kelkoo2,kelkoo5,adexa,yadore").strip().lower()
+    raw = (
+        os.getenv("BLEND_POTENTIAL_FEEDS") or "kelkoo1,kelkoo2,kelkoo5,kelkoo4,adexa,yadore"
+    ).strip().lower()
     parts = [p.strip() for p in raw.split(",") if p.strip()]
-    allowed = {"kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore"}
+    allowed = {"kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4", "adexa", "yadore"}
     out = tuple(p for p in parts if p in allowed)
-    return out if out else ("kelkoo1", "kelkoo2", "adexa", "yadore")
+    return out if out else ("kelkoo1", "kelkoo2", "kelkoo4", "adexa", "yadore")
 
 
 BLEND_POTENTIAL_FEEDS: tuple[str, ...] = _parse_blend_potential_feeds()
@@ -708,6 +711,21 @@ FEED5_KELKOO_ACCOUNT_ID = (
 )
 FEED5_KELKOO_PUBLISHER_SUB_ID = (
     os.getenv("FEED5_KELKOO_PUBLISHER_SUB_ID") or "intentix"
+).strip()
+
+# 4th Kelkoo publisher (tag kelkoo4 / Keitaro feed8). Offer URLs use visit-sites
+# klk-merchant2 (Keitaro template ``KL feed 4``); account id optional/unused.
+FEED4_KELKOO_ACCOUNT_ID = (
+    os.getenv("FEED4_KELKOO_ACCOUNT_ID")
+    or os.getenv("FEED8_KELKOO_ACCOUNT_ID")
+    or _read_env_fallback("FEED4_KELKOO_ACCOUNT_ID")
+    or _read_env_fallback("FEED8_KELKOO_ACCOUNT_ID")
+    or ""
+).strip()
+FEED4_KELKOO_PUBLISHER_SUB_ID = (
+    os.getenv("FEED4_KELKOO_PUBLISHER_SUB_ID")
+    or os.getenv("FEED8_KELKOO_PUBLISHER_SUB_ID")
+    or "shoplicity"
 ).strip()
 
 

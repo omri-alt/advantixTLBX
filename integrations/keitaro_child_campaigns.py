@@ -12,12 +12,14 @@ from config import KEITARO_HUB_STATE_PATH
 ACCOUNT_TO_NIPUHIM_FEED_KEY: Dict[int, str] = {
     1: "kelkoo1",
     2: "kelkoo2",
+    4: "kelkoo4",
     5: "kelkoo5",
 }
 
 ACCOUNT_TO_FEED_PREFIX: Dict[int, str] = {
     1: "feed1",
     2: "feed2",
+    4: "feed8",
     5: "feed5",
 }
 
@@ -56,10 +58,10 @@ def nipuhim_child_campaign_id_for_account(
     *,
     state_path: Optional[str] = None,
 ) -> tuple[int, str, str]:
-    """Return (campaign_id, feed_key, feed_prefix) for Kelkoo account 1/2/5."""
+    """Return (campaign_id, feed_key, feed_prefix) for Kelkoo account 1/2/4/5."""
     feed_key = ACCOUNT_TO_NIPUHIM_FEED_KEY.get(int(account))
     if not feed_key:
-        raise ValueError(f"Nipuhim v2 sync supports account 1, 2, or 5 only (got {account})")
+        raise ValueError(f"Nipuhim v2 sync supports account 1, 2, 4, or 5 only (got {account})")
     feed_prefix = ACCOUNT_TO_FEED_PREFIX[int(account)]
     cid = nipuhim_child_campaign_id(feed_key, state_path=state_path)
     return cid, feed_key, feed_prefix

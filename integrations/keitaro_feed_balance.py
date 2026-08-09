@@ -290,13 +290,17 @@ def _offer_name_to_feed_key(name: str) -> Optional[str]:
         return "feed2"
     if "feed 5" in n or "feed5" in n or n.startswith("kl feed 5"):
         return "feed5"
-    # 4th Kelkoo publisher (API FEED4 / tag kelkoo4); feed4 slot is Adexa.
+    # 4th Kelkoo publisher (API FEED4 / tag kelkoo4). Template offer ``KL feed 4``
+    # uses visit-sites.com/klk-merchant2; checkmon slot is feed8 (feed4 = Adexa).
     if (
         "feed 8" in n
         or "feed8" in n
         or n.startswith("kl feed 8")
+        or n.startswith("kl feed 4")
+        or "kl feed 4" in n
         or "kelkoo4" in n
         or "kelkoo 4" in n
+        or "klk-merchant2" in n
     ):
         return "feed8"
     if "adexa" in n or "feed4" in n:

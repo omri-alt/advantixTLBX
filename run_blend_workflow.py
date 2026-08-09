@@ -30,7 +30,7 @@ def main() -> None:
     p.add_argument(
         "--feed",
         default="both",
-        choices=["kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore", "both", "all"],
+        choices=["kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4", "adexa", "yadore", "both", "all"],
         help="Potential source: kelkoo*/adexa/yadore; both=kelkoo1+kelkoo2; all=BLEND_POTENTIAL_FEEDS from .env (default includes kelkoo5).",
     )
     p.add_argument("--geo", default=None, help="Passed to blend_sync_from_sheet.")

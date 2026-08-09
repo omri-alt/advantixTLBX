@@ -1,8 +1,11 @@
 """
 Keitaro hub campaign (Domain / id 94): route bought traffic to per-feed child campaigns.
 
-Creates or reuses child campaigns (Blend + Nipuhim × kelkoo1/2/5, adexa, yadore, shopnomix),
+Creates or reuses child campaigns (Blend + Nipuhim × kelkoo1/2/5/4, adexa, yadore, shopnomix),
 hub campaign-link offers, and wires geo desktop/mobile streams on the hub.
+
+``kelkoo4`` is the 4th Kelkoo publisher (API ``FEED4``); Keitaro campaign names use
+``feed8`` because ``feed4`` is already Adexa in checkmon / brand flows.
 
 Nipuhim children clone from Nipuh (HrQBXp): country flows with static PLA product URLs.
 They are separate from KL-Main-feed* campaigns (dynamic oadest routing).
@@ -39,20 +42,23 @@ from integrations.keitaro import KeitaroClient, KeitaroClientError
 logger = logging.getLogger(__name__)
 
 # kelkoo5 is the third Kelkoo account in this repo (user-facing "kelkoo3").
+# kelkoo4 is the 4th publisher (Keitaro aliases BLEND-feed8 / NIPUHIM-feed8).
 HUB_FEED_KEYS: Tuple[str, ...] = (
     "kelkoo1",
     "kelkoo2",
     "kelkoo5",
+    "kelkoo4",
     "adexa",
     "yadore",
     "shopnomix",
 )
 
-# Per-type feed weights (sum 100). Kelkoo trio mirrors Nipuhim 65/25/10; others equal.
+# Per-type feed weights (sum 100). Kelkoo shares include warm-up slot for kelkoo4.
 DEFAULT_FEED_WEIGHTS: Dict[str, int] = {
-    "kelkoo1": 40,
+    "kelkoo1": 35,
     "kelkoo2": 15,
     "kelkoo5": 6,
+    "kelkoo4": 5,
     "adexa": 13,
     "yadore": 13,
     "shopnomix": 13,
@@ -76,6 +82,8 @@ CHILD_SPECS: Tuple[ChildCampaignSpec, ...] = (
     ChildCampaignSpec("blend", "kelkoo1", "BLEND-feed1", "blendFeed1", clone_from_campaign_id=2),
     ChildCampaignSpec("blend", "kelkoo2", "BLEND-feed2", "blendFeed2", clone_from_campaign_id=2),
     ChildCampaignSpec("blend", "kelkoo5", "BLEND-feed5", "blendFeed5", clone_from_campaign_id=2),
+    # 4th Kelkoo publisher — Keitaro "feed8" (feed4 = Adexa).
+    ChildCampaignSpec("blend", "kelkoo4", "BLEND-feed8", "blendFeed8", clone_from_campaign_id=2),
     ChildCampaignSpec("blend", "adexa", "BLEND-adexa", "blendAdexa", clone_from_campaign_id=2),
     ChildCampaignSpec("blend", "yadore", "BLEND-yadore", "blendYadore", clone_from_campaign_id=2),
     ChildCampaignSpec("blend", "shopnomix", "BLEND-shopnomix", "blendShopnomix", clone_from_campaign_id=2),
@@ -100,6 +108,13 @@ CHILD_SPECS: Tuple[ChildCampaignSpec, ...] = (
         "kelkoo5",
         "NIPUHIM-feed5",
         "nipuhFeed5",
+        clone_from_campaign_id=KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID,
+    ),
+    ChildCampaignSpec(
+        "nipuhim",
+        "kelkoo4",
+        "NIPUHIM-feed8",
+        "nipuhFeed8",
         clone_from_campaign_id=KEITARO_NIPUHIM_HUB_TEMPLATE_CAMPAIGN_ID,
     ),
     ChildCampaignSpec(

@@ -91,11 +91,12 @@ BLEND_CAMPAIGN_ALIAS = "9Xq9dSMh"
 POTENTIAL_TAB_BY_FEED: Dict[str, str] = {
     "kelkoo1": "potentialKelkoo1",
     "kelkoo2": "potentialKelkoo2",
+    "kelkoo4": "potentialKelkoo4",
     "kelkoo5": "potentialKelkoo5",
     "adexa": "potentialAdexa",
     "yadore": "potentialYadore",
 }
-KNOWN_BLEND_FEED_TAGS: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore")
+KNOWN_BLEND_FEED_TAGS: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo4", "kelkoo5", "adexa", "yadore")
 
 # Keitaro offer shells: inner URLs are percent-encoded as the ``rain`` query value.
 BLEND_ADEXA_RAIN_SHELL = "https://shopli.city/raino?rain="
@@ -473,6 +474,8 @@ def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> st
     ft = (feed_tag or "").strip().lower()
     if ft == "kelkoo5":
         return build_kelkoo_feed5_action_payload(geo, _blend_merchant_url_https(offer_url))
+    if ft == "kelkoo4":
+        return kelkoo_keitaro_action_payload(geo, _blend_merchant_url_https(offer_url), ft)
     if ft in ("kelkoo1", "kelkoo2"):
         return kelkoo_keitaro_action_payload(geo, offer_url, ft)
     if ft == "adexa":
@@ -644,7 +647,7 @@ def _suppress_auto_v_rows_without_mtd_sales(
             kept.append(r)
             continue
         sales = int((perf_map.get(str(r.merchant_id)) or {}).get("sales", 0) or 0)
-        if sales <= 0 and feed_tag in ("kelkoo1", "kelkoo2", "kelkoo5"):
+        if sales <= 0 and feed_tag in ("kelkoo1", "kelkoo2", "kelkoo4", "kelkoo5"):
             pot_sales = int(
                 (potential_sales.get(feed_tag) or {}).get((r.geo, str(r.merchant_id)), 0) or 0
             )

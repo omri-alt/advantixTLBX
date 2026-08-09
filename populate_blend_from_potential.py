@@ -51,6 +51,7 @@ BLEND_DEFAULT_CLICK_CAP = 50.0
 POTENTIAL_SHEET_BY_FEED: Dict[str, str] = {
     "kelkoo1": "potentialKelkoo1",
     "kelkoo2": "potentialKelkoo2",
+    "kelkoo4": "potentialKelkoo4",
     "kelkoo5": "potentialKelkoo5",
     "adexa": "potentialAdexa",
     "yadore": "potentialYadore",

@@ -19,6 +19,7 @@ HUB_BLEND_FEED_KEYS: Tuple[str, ...] = (
     "kelkoo1",
     "kelkoo2",
     "kelkoo5",
+    "kelkoo4",
     "adexa",
     "yadore",
     "shopnomix",
