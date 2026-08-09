@@ -22,6 +22,7 @@ FEED_META: Tuple[Tuple[str, str], ...] = (
     ("kelkoo1", "Kelkoo feed 1"),
     ("kelkoo2", "Kelkoo feed 2"),
     ("kelkoo5", "Kelkoo feed 5"),
+    ("kelkoo4", "Kelkoo feed 4 (feed8 / 70% net)"),
     ("adexa", "Adexa (feed 4)"),
     ("yadore", "Yadore clicks (feed 3)"),
     ("yadore_sales", "Yadore sales (feed 3)"),

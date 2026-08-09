@@ -176,7 +176,25 @@ def _parse_kelkoo_row(row: Dict[str, str], feed: str) -> Optional[Tuple[str, boo
     cpc = (row.get("leadEstimatedRevenueInUsd") or "0").strip() or "0"
     if not click_id or not lead_valid:
         return None
+    from config import kelkoo_postback_revenue_share
+
+    share = kelkoo_postback_revenue_share(feed_tag=feed)
+    if share != 1.0:
+        sale_value_usd = _apply_revenue_share(sale_value_usd, share)
+        cpc = _apply_revenue_share(cpc, share)
     return (click_id, lead_valid, sale, sale_value_usd, cpc)
+
+
+def _apply_revenue_share(amount: str, share: float) -> str:
+    """Scale a money string by ``share`` (e.g. 0.7 for 70% net)."""
+    try:
+        v = float(str(amount or "0").strip() or "0")
+    except (TypeError, ValueError):
+        return "0"
+    out = v * float(share)
+    # Keep compact decimals; strip trailing zeros.
+    s = f"{out:.6f}".rstrip("0").rstrip(".")
+    return s or "0"
 
 
 def run_kelkoo_feed_postbacks(
@@ -1155,7 +1173,7 @@ def run_daily_conversion_postbacks_batch(
     if only_l in ("", "all"):
         targets = postback_sources_enabled()
         if not targets:
-            targets = ["kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore"]
+            targets = ["kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4", "adexa", "yadore"]
     else:
         targets = [only_l]
 

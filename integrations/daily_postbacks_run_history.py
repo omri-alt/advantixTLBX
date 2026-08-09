@@ -217,6 +217,7 @@ def postback_sources_enabled() -> list[str]:
         EFFINITY_API_KEY,
         FEED1_API_KEY,
         FEED2_API_KEY,
+        FEED4_API_KEY,
         FEED5_API_KEY,
         YADORE_API_KEY,
         shopnomix_reporting_enabled,
@@ -229,6 +230,8 @@ def postback_sources_enabled() -> list[str]:
         out.append("kelkoo2")
     if (FEED5_API_KEY or "").strip():
         out.append("kelkoo5")
+    if (FEED4_API_KEY or "").strip():
+        out.append("kelkoo4")
     if (ADEXA_SITE_ID or "").strip() and (ADEXA_API_KEY or "").strip():
         out.append("adexa")
     if (YADORE_API_KEY or "").strip():
@@ -245,6 +248,7 @@ _SOURCE_LABELS = {
     "kelkoo1": "Kelkoo feed 1",
     "kelkoo2": "Kelkoo feed 2",
     "kelkoo5": "Kelkoo feed 5",
+    "kelkoo4": "Kelkoo feed 4 (feed8 / 70% net)",
     "adexa": "Adexa",
     "yadore": "Yadore (clicks)",
     "yadore_sales": "Yadore (sales)",

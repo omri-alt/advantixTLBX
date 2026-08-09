@@ -290,6 +290,15 @@ def _offer_name_to_feed_key(name: str) -> Optional[str]:
         return "feed2"
     if "feed 5" in n or "feed5" in n or n.startswith("kl feed 5"):
         return "feed5"
+    # 4th Kelkoo publisher (API FEED4 / tag kelkoo4); feed4 slot is Adexa.
+    if (
+        "feed 8" in n
+        or "feed8" in n
+        or n.startswith("kl feed 8")
+        or "kelkoo4" in n
+        or "kelkoo 4" in n
+    ):
+        return "feed8"
     if "adexa" in n or "feed4" in n:
         return "feed4"
     if "yad" in n or "yadore" in n or "feed3" in n:
@@ -478,6 +487,7 @@ _FEED_LABELS = {
     "feed1": "kelkoo1",
     "feed2": "kelkoo2",
     "feed5": "kelkoo5",
+    "feed8": "kelkoo4",
     "feed3": "yadore",
     "feed4": "adexa",
     "feed6": "shopnomix",
@@ -623,6 +633,7 @@ def _feed_results_from_checkmon(
     k1 = checks.get("k1") or {}
     k2 = checks.get("k2") or {}
     k5 = checks.get("k5") or {}
+    k4 = checks.get("k4") or {}
     y = checks.get("yadore") or {}
     y_fields = _yadore_checkmon_fields(y)
     ax = checks.get("ax") or {}
@@ -649,6 +660,7 @@ def _feed_results_from_checkmon(
         "feed1": {"found": bool(k1.get("found")), "detail": str(k1.get("estimatedCpc") or ""), "note": ""},
         "feed2": {"found": bool(k2.get("found")), "detail": str(k2.get("estimatedCpc") or ""), "note": ""},
         "feed5": {"found": bool(k5.get("found")), "detail": str(k5.get("estimatedCpc") or ""), "note": ""},
+        "feed8": {"found": bool(k4.get("found")), "detail": str(k4.get("estimatedCpc") or ""), "note": "kelkoo4"},
         "feed4": {
             "found": bool(ax.get("found")),
             "detail": ax_extra,

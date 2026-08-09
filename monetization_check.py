@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dotenv import load_dotenv
 load_dotenv()
 
-from config import FEED1_API_KEY, FEED2_API_KEY, FEED5_API_KEY, shopnomix_monetization_enabled
+from config import FEED1_API_KEY, FEED2_API_KEY, FEED4_API_KEY, FEED5_API_KEY, shopnomix_monetization_enabled
 from integrations.kelkoo_search import kelkoo_merchant_link_check as kelkoo_check
 from integrations.yadore import merchant_monetization_check as yadore_merchant_check, YadoreClientError
 from integrations.adexa import merchant_monetization_check as adexa_merchant_check, AdexaClientError, normalize_merchant_homepage_url
@@ -151,6 +151,11 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
             return {"found": False, "estimatedCpc": "", "note": "no FEED5_API_KEY"}
         return kelkoo_check(url, geo, FEED5_API_KEY)
 
+    def _k4() -> Dict[str, Any]:
+        if not (FEED4_API_KEY or "").strip():
+            return {"found": False, "estimatedCpc": "", "note": "no FEED4_API_KEY"}
+        return kelkoo_check(url, geo, FEED4_API_KEY)
+
     def _yadore() -> Dict[str, Any]:
         try:
             return yadore_merchant_check(url, geo)
@@ -200,6 +205,8 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
         futures[ex.submit(_k2)] = "k2"
         if (FEED5_API_KEY or "").strip():
             futures[ex.submit(_k5)] = "k5"
+        if (FEED4_API_KEY or "").strip():
+            futures[ex.submit(_k4)] = "k4"
         futures[ex.submit(_yadore)] = "yadore"
         futures[ex.submit(_ax)] = "ax"
         if shopnomix_monetization_enabled():
@@ -213,7 +220,7 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
         try:
             out[key] = fut.result()
         except Exception as e:
-            if key == "k1" or key == "k2":
+            if key in ("k1", "k2", "k4", "k5"):
                 out[key] = {"found": False, "estimatedCpc": ""}
             elif key in ("yadore",):
                 out[key] = {

@@ -572,21 +572,33 @@ if not FEED5_API_KEY:
     ).strip()
 FEED5_API_KEY = (FEED5_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
 
+# 4th Kelkoo publisher (Blend/postback tag ``kelkoo4``; Keitaro checkmon slot ``feed8`` —
+# ``feed4`` is already Adexa). ``FEED8_API_KEY`` is accepted as an alias.
+FEED4_API_KEY = (
+    os.getenv("FEED4_API_KEY")
+    or os.getenv("FEED8_API_KEY")
+    or _read_env_fallback("FEED4_API_KEY")
+    or _read_env_fallback("FEED8_API_KEY")
+    or ""
+).strip().lstrip("= ").strip().strip('"').strip("'")
+
 # argparse / UI feed tags for Blend tooling
-BLEND_FEED_CHOICES: tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "adexa", "yadore")
+BLEND_FEED_CHOICES: tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4", "adexa", "yadore")
 
 # Daily conversion postbacks UI / CLI (Kelkoo per-geo + Adexa/Yadore flat)
-KELKOO_POSTBACK_FEED_TAGS: tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5")
+KELKOO_POSTBACK_FEED_TAGS: tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4")
 
 
 def kelkoo_postback_tag_to_index(feed_tag: str) -> int:
-    """Map postback source tag to Kelkoo feed index (1, 2, 5, …)."""
-    return {"kelkoo1": 1, "kelkoo2": 2, "kelkoo5": 5}.get((feed_tag or "").strip().lower(), 0)
+    """Map postback source tag to Kelkoo feed index (1, 2, 4, 5, …)."""
+    return {"kelkoo1": 1, "kelkoo2": 2, "kelkoo4": 4, "kelkoo8": 4, "kelkoo5": 5}.get(
+        (feed_tag or "").strip().lower(), 0
+    )
 
 
 def kelkoo_api_key_for_postback_tag(feed_tag: str) -> str:
     idx = kelkoo_postback_tag_to_index(feed_tag)
-    by_idx = {1: FEED1_API_KEY, 2: FEED2_API_KEY, 5: FEED5_API_KEY}
+    by_idx = {1: FEED1_API_KEY, 2: FEED2_API_KEY, 4: FEED4_API_KEY, 5: FEED5_API_KEY}
     return (by_idx.get(idx) or "").strip()
 
 
@@ -599,10 +611,55 @@ def raw_report_geos_for_postback_tag(feed_tag: str) -> tuple[str, ...]:
 
 
 def kelkoo_raw_report_uses_custom1_subid(*, feed_tag: str = "", feed_index: int = 0) -> bool:
-    """Kelkoo2 raw TSV uses ``custom1`` for Keitaro subid; other feeds use ``publisherClickId``."""
-    if feed_index == 2 or (feed_tag or "").strip().lower() == "kelkoo2":
+    """
+    Some Kelkoo raw TSVs carry Keitaro subid in ``custom1`` (feed2 / feed4 by default);
+    others use ``publisherClickId``. Override with ``FEEDn_RAW_USES_CUSTOM1=0|1``.
+    """
+    tag = (feed_tag or "").strip().lower()
+    idx = feed_index or kelkoo_postback_tag_to_index(tag)
+    if idx > 0:
+        raw = (os.getenv(f"FEED{idx}_RAW_USES_CUSTOM1") or "").strip().lower()
+        if raw in ("1", "true", "yes"):
+            return True
+        if raw in ("0", "false", "no"):
+            return False
+    if idx == 2 or tag == "kelkoo2":
+        return True
+    # New 4th Kelkoo (kelkoo4 / feed8): same custom1 convention as feed2 unless overridden.
+    if idx == 4 or tag in ("kelkoo4", "kelkoo8"):
         return True
     return False
+
+
+def kelkoo_postback_revenue_share(*, feed_tag: str = "", feed_index: int = 0) -> float:
+    """
+    Multiply raw-report CPC / sale USD before firing postbacks (our net share).
+
+    ``FEED4_POSTBACK_REVENUE_SHARE`` defaults to ``0.7`` (70% net). Other feeds default to ``1.0``
+    unless ``FEEDn_POSTBACK_REVENUE_SHARE`` is set. Alias: ``FEED8_POSTBACK_REVENUE_SHARE``.
+    """
+    tag = (feed_tag or "").strip().lower()
+    idx = feed_index or kelkoo_postback_tag_to_index(tag)
+    raw = ""
+    if idx > 0:
+        raw = (os.getenv(f"FEED{idx}_POSTBACK_REVENUE_SHARE") or "").strip()
+        if not raw and idx == 4:
+            raw = (os.getenv("FEED8_POSTBACK_REVENUE_SHARE") or "").strip()
+    if not raw and tag in ("kelkoo4", "kelkoo8"):
+        raw = (
+            os.getenv("FEED4_POSTBACK_REVENUE_SHARE")
+            or os.getenv("FEED8_POSTBACK_REVENUE_SHARE")
+            or "0.7"
+        ).strip()
+    if not raw:
+        return 1.0
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return 1.0
+    if v <= 0:
+        return 1.0
+    return min(v, 1.0)
 
 
 def discover_kelkoo_feed_api_keys() -> tuple[tuple[int, str], ...]:
@@ -623,6 +680,8 @@ def discover_kelkoo_feed_api_keys() -> tuple[tuple[int, str], ...]:
     # ``KLFEED3_API_KEY`` / resolved ``FEED5_API_KEY`` when ``FEED5_API_KEY`` env name is unset
     if (FEED5_API_KEY or "").strip() and not any(n == 5 for n, _ in found):
         found.append((5, (FEED5_API_KEY or "").strip()))
+    if (FEED4_API_KEY or "").strip() and not any(n == 4 for n, _ in found):
+        found.append((4, (FEED4_API_KEY or "").strip()))
     if found:
         found.sort(key=lambda x: x[0])
     if not found:
