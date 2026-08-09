@@ -320,8 +320,11 @@ def hub_feed_weights() -> Dict[str, int]:
     return {fk: (DEFAULT_FEED_WEIGHTS[fk] if fk in active else 0) for fk in HUB_FEED_KEYS}
 
 
+# Hub campaign 94 resolves these macros on its own click, then sends the visitor to the
+# child campaign. ``external_id={subid}`` passes campaign 94's click id into the child so
+# child S2S postbacks can join back to the hub click for discrepancy measurement.
 HUB_CHILD_CAMPAIGN_URL_MACROS = (
-    "keyword={keyword}&cost={adv_price}&external_id={clickid}"
+    "keyword={keyword}&cost={adv_price}&external_id={subid}"
     "&sub_id_1={hp}&sub_id_2={geo}&sub_id_3={oadest}&sub_id_4={traffic_type}"
     "&sub_id_5={sub_id}&sub_id_6={brand}&sub_id_7={pubid}&sub_id_8={ctrl_fetch_dest}"
     "&sub_id_9={domain}&sub_id_10={ctrl_ab}&sub_id_11={campaignId}&sub_id_12={campaignName}"
@@ -336,7 +339,7 @@ def wrap_hub_child_click_url(inner_url: str) -> str:
     Wrap child campaign click URL for traffic sources (SK/ZP/EC pattern).
 
     Inner URL keeps Keitaro macros unencoded, e.g.
-    ``https://shopli.city/raini?rain=https://trck.shopli.city/alias?external_id={clickid}...``
+    ``https://shopli.city/raini?rain=https://trck.shopli.city/alias?external_id={subid}...``
     """
     inner = (inner_url or "").strip()
     if not inner:
