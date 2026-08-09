@@ -34,7 +34,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import unquote
 
 import requests
@@ -211,6 +211,54 @@ def _format_wl(items: List[str]) -> str:
     if not items:
         return "[]"
     return "[" + ", ".join(f"'{s}'" for s in items) + "]"
+
+
+def _merge_wl_lists(*lists: List[str]) -> List[str]:
+    """Preserve first-seen order while unioning multiple ``wl`` lists."""
+    out: List[str] = []
+    seen: Set[str] = set()
+    for lst in lists:
+        for raw in lst or []:
+            sub = str(raw or "").strip()
+            if not sub or sub in seen:
+                continue
+            seen.add(sub)
+            out.append(sub)
+    return out
+
+
+def _union_exploration_wl_from_fresh_sheet(
+    sheet_id: str,
+    rows: List[Dict[str, Any]],
+) -> int:
+    """
+    Re-read ``SKtrackExploration`` and union ``wl`` into ``rows`` before a full rewrite.
+
+    Prevents the hourly optimizer from wiping concurrent WL-sync appends (QualityWL can
+    land while exploration ``wl`` is still missing the same subId).
+    """
+    try:
+        fresh = gd.read_sheet_withID(sheet_id, TAB_EXPLORATION)
+    except Exception as e:
+        logger.warning("SK exploration: wl union re-read failed: %s", e)
+        return 0
+    by_cid: Dict[str, List[str]] = {}
+    for r in fresh or []:
+        cid = str(r.get("campaignId") or r.get("campId") or "").strip()
+        if cid:
+            by_cid[cid] = _parse_wl(r.get("wl"))
+    repaired = 0
+    for row in rows:
+        cid = str(row.get("campaignId") or row.get("campId") or "").strip()
+        if not cid:
+            continue
+        ours = _parse_wl(row.get("wl"))
+        merged = _merge_wl_lists(ours, by_cid.get(cid) or [])
+        if merged == ours:
+            continue
+        row["wl"] = _format_wl(merged)
+        repaired += 1
+    return repaired
 
 
 def _sk_campaign_cpc(campaign_id: int) -> Optional[float]:
@@ -1331,6 +1379,12 @@ def checkUnmonExploration_SK() -> None:
         _mark_status_sync_done("exploration", today)
 
     if changed and rows:
+        wl_unioned = _union_exploration_wl_from_fresh_sheet(sheet_id, rows)
+        if wl_unioned:
+            logger.info(
+                "SK exploration: unioned wl for %s campaign(s) before sheet write",
+                wl_unioned,
+            )
         gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_EXPLORATION, rows)
     _sk_tools_workbook_log(
         "",

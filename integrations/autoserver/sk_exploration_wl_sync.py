@@ -64,6 +64,8 @@ from integrations.autoserver.sk_optimizer import (
 
     _format_wl,
 
+    _merge_wl_lists,
+
     _normalize_exploration_sheet_row,
 
     _parse_wl,
@@ -353,7 +355,7 @@ def append_quality_wl_rows(
 
             {"campaign_id": r["CampaignID"], "sub_id": r["SUBID"], "label": r.get("", "")}
 
-            for r in appended_rows[:50]
+            for r in appended_rows
 
         ],
 
@@ -643,9 +645,13 @@ def _write_exploration_wl_patches(sheet_id: str, patches: Dict[str, Dict[str, st
 
     Merge ``wl`` / ``logs`` / ``lastAction`` onto a fresh sheet read, then rewrite.
 
-    Avoids clobbering concurrent optimizer updates to other columns and reduces races
 
-    where an optimizer write after our read would otherwise drop ``wl`` changes.
+
+    ``wl`` is unioned (never shrunk) so concurrent optimizer edits and this sync both keep
+
+    their sources. Avoids clobbering other columns and reduces races where an optimizer
+
+    write after our read would otherwise drop ``wl`` changes.
 
     """
 
@@ -669,11 +675,29 @@ def _write_exploration_wl_patches(sheet_id: str, patches: Dict[str, Dict[str, st
 
             continue
 
-        for key, value in patch.items():
+        fresh_wl = _parse_wl(row.get("wl"))
 
-            if str(row.get(key) or "") != str(value or ""):
+        patch_wl = _parse_wl(patch.get("wl"))
 
-                row[key] = value
+        merged_wl = _merge_wl_lists(fresh_wl, patch_wl)
+
+        merged_wl_s = _format_wl(merged_wl)
+
+        if merged_wl_s != str(row.get("wl") or ""):
+
+            row["wl"] = merged_wl_s
+
+            changed = True
+
+        for key in ("logs", "lastAction"):
+
+            if key not in patch:
+
+                continue
+
+            if str(row.get(key) or "") != str(patch.get(key) or ""):
+
+                row[key] = patch[key]
 
                 changed = True
 
@@ -1090,6 +1114,32 @@ def sync_exploration_wl_from_keitaro_sales(
 
 
         if not to_add and not to_reactivate:
+
+            # Still ensure QualityWL rows for converting sources already on WL.
+
+            if cid_raw:
+
+                for sub in sale_subs_norm:
+
+                    if not sub:
+
+                        continue
+
+                    sub6 = sub6_by_sub.get(sub, "")
+
+                    wl_label = _quality_wl_label_from_sub_id_6(
+
+                        sub6,
+
+                        str(row.get("brand") or ""),
+
+                        str(row.get("geo") or ""),
+
+                        cname,
+
+                    )
+
+                    quality_wl_candidates.append((cid_raw, sub, wl_label))
 
             continue
 
