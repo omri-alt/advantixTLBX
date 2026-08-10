@@ -1004,6 +1004,28 @@ if not YADORE_PROJECT_ID:
     YADORE_PROJECT_ID = _read_env_fallback("YADORE_PROJECT_ID")
 YADORE_PROJECT_ID = (YADORE_PROJECT_ID or "").strip().lstrip("= ").strip().strip('"').strip("'")
 
+# Yadore placements: the default publisher site is coupon-inclusive (``YADORE_IS_COUPONING`` above);
+# the ``NO_COUPON`` pair is a separate Yadore account/placement used to re-probe offers that only
+# return results without couponing (see ``scripts/yadore_sk_no_coupon_rerun_audit.py``).
+YADORE_PLACEMENT_ID = (os.getenv("YADORE_PLACEMENT_ID") or "").strip()
+if not YADORE_PLACEMENT_ID:
+    YADORE_PLACEMENT_ID = _read_env_fallback("YADORE_PLACEMENT_ID")
+YADORE_PLACEMENT_ID = (YADORE_PLACEMENT_ID or "").strip().lstrip("= ").strip().strip('"').strip("'")
+
+YADORE_NO_COUPON_API_KEY = (os.getenv("YADORE_NO_COUPON_API_KEY") or "").strip()
+if not YADORE_NO_COUPON_API_KEY:
+    YADORE_NO_COUPON_API_KEY = _read_env_fallback("YADORE_NO_COUPON_API_KEY")
+YADORE_NO_COUPON_API_KEY = (
+    (YADORE_NO_COUPON_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
+)
+
+YADORE_NO_COUPON_PLACEMENT_ID = (os.getenv("YADORE_NO_COUPON_PLACEMENT_ID") or "").strip()
+if not YADORE_NO_COUPON_PLACEMENT_ID:
+    YADORE_NO_COUPON_PLACEMENT_ID = _read_env_fallback("YADORE_NO_COUPON_PLACEMENT_ID")
+YADORE_NO_COUPON_PLACEMENT_ID = (
+    (YADORE_NO_COUPON_PLACEMENT_ID or "").strip().lstrip("= ").strip().strip('"').strip("'")
+)
+
 # Blend → Keitaro (``blend_sync_from_sheet``): Yadore offer URL uses ``{sub_id_3}`` / ``{sub_id_2}`` / ``{subid}``
 # (rain inner) when true; otherwise merchant + market from the Blend sheet row are embedded in ``url=`` / ``market=``.
 _yad_blend_sub = (os.getenv("BLEND_YADORE_OFFER_USE_SUB_MACROS") or "").strip().lower()
