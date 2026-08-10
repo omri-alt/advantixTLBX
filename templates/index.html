@@ -181,6 +181,33 @@
       </div>
     </section>
 
+    <section class="blend-cap" id="domain-demand-widget" aria-live="polite">
+      <details class="bc-panel" id="domain-demand-details" open>
+        <summary>
+          <span class="bc-summary-title">Domain demand fill (hub 94)</span>
+          <span class="bc-summary-stats" id="domain-demand-summary-line">Loading…</span>
+          <button type="button" class="btn btn-sm" id="domain-demand-refresh-btn" title="Refresh delivered clicks from Keitaro">Refresh</button>
+        </summary>
+        <div class="bc-panel-body">
+          <p class="muted" style="margin:10px 0;font-size:13px;max-width:860px;">
+            Live Trillion domain traffic into Keitaro hub campaign 94 vs today’s demand bill (replaces the old Mehilot / Zeropark plan widget).
+            <span class="bc-pill green" style="vertical-align:middle;">≥90%</span>
+            <span class="bc-pill yellow" style="vertical-align:middle;">50–89%</span>
+            <span class="bc-pill red" style="vertical-align:middle;">&lt;50%</span>
+            <a href="{{ url_for('ui_help') }}#domain-demand" style="color:#6b7280;font-size:12px;margin-left:6px;">?</a>
+          </p>
+          <div class="bc-actions" style="margin-bottom:10px;">
+            <span class="muted" id="domain-demand-totals" style="font-size:12px;"></span>
+            <span class="muted" id="domain-demand-meta"></span>
+          </div>
+          <div id="domain-demand-err" class="bc-err" style="display:none;"></div>
+          <div class="blend-cap-table-wrap">
+            <div id="domain-demand-body" class="bc-empty">Loading domain demand…</div>
+          </div>
+        </div>
+      </details>
+    </section>
+
     <section class="blend-cap" id="blend-cap-widget" aria-live="polite">
       <details class="bc-panel" id="blend-cap-details">
         <summary>
@@ -305,7 +332,7 @@
     var refreshBtn = document.getElementById("overview-refresh-btn");
     var snapHintEl = document.getElementById("overview-snap-hint");
     var ovTz = {{ overview_snapshot_tz | tojson }};
-    var ovHr = {{ overview_snapshot_hour | int }};
+    var ovHrs = {{ overview_snapshot_hours | tojson }};
     var overviewUrl = {{ url_for("api_overview") | tojson }};
     var refreshUrl = {{ url_for("api_overview_refresh") | tojson }};
     var refreshStatusUrl = {{ url_for("api_overview_refresh_status") | tojson }};
@@ -322,10 +349,14 @@
     if (!rangesEl || !failEl) return;
 
     if (snapHintEl) {
+      var hrs = Array.isArray(ovHrs) && ovHrs.length ? ovHrs : [11, 16];
+      var times = hrs.map(function(h) {
+        return String(h).padStart(2, "0") + ":00";
+      }).join(" and ");
       snapHintEl.textContent =
-        "Page reads the saved snapshot (instant). Daily rebuild at " +
-        String(ovHr).padStart(2, "0") +
-        ":00 " +
+        "Page reads the saved snapshot (instant). Auto rebuild at " +
+        times +
+        " " +
         ovTz +
         ". Use the button only when you want fresh API numbers.";
     }
@@ -642,6 +673,191 @@
       banner.setAttribute("hidden", "hidden");
       banner.className = "pb-banner";
     });
+  })();
+  </script>
+  <script>
+  (function() {
+    var metaEl = document.getElementById("domain-demand-meta");
+    var totalsEl = document.getElementById("domain-demand-totals");
+    var summaryLine = document.getElementById("domain-demand-summary-line");
+    var bodyEl = document.getElementById("domain-demand-body");
+    var errEl = document.getElementById("domain-demand-err");
+    var refreshBtn = document.getElementById("domain-demand-refresh-btn");
+    var apiUrl = {{ url_for("api_domain_demand_progress") | tojson }};
+    var refreshUrl = {{ url_for("api_domain_demand_progress_refresh") | tojson }};
+    var pollMs = 20 * 60 * 1000;
+    var lastData = null;
+
+    if (!metaEl || !bodyEl) return;
+
+    function esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function barWidth(pct) {
+      if (pct == null || isNaN(pct)) return 0;
+      return Math.max(0, Math.min(100, pct));
+    }
+
+    function fmtFill(block) {
+      if (!block) return "—";
+      var pct = block.fill_pct;
+      var d = block.demand_clicks || 0;
+      var g = block.delivered_clicks || 0;
+      if (!d && !g) return "—";
+      return g + "/" + d + (pct != null ? " (" + pct + "%)" : "");
+    }
+
+    function renderSummary(data) {
+      var parts = [];
+      if (data && data.calendar_day) parts.push(data.calendar_day);
+      if (data && data.status === "awaiting_daily") {
+        parts.push("awaiting morning bill");
+      } else {
+        var segs = (data && data.segments) || [];
+        var counts = { green: 0, yellow: 0, red: 0 };
+        segs.forEach(function(s) {
+          if ((s.demand_clicks || 0) <= 0) return;
+          var lvl = s.level || "none";
+          if (counts[lvl] != null) counts[lvl] += 1;
+        });
+        parts.push("green " + counts.green + " · yellow " + counts.yellow + " · red " + counts.red);
+        if (data && data.trillion_hint) parts.push("hub " + data.trillion_hint);
+      }
+      if (data && data.updated_at) {
+        parts.push("updated " + String(data.updated_at).replace("T", " ").replace("Z", " UTC"));
+      }
+      if (summaryLine) summaryLine.textContent = parts.join(" · ");
+    }
+
+    function renderTotals(data) {
+      if (!totalsEl) return;
+      var t = (data && data.totals) || {};
+      totalsEl.textContent =
+        "Hub " + fmtFill(t.hub) +
+        " · Nipuhim " + fmtFill(t.nipuhim) +
+        " · Blend " + fmtFill(t.blend);
+    }
+
+    function renderTable(data) {
+      if (data && data.status === "awaiting_daily") {
+        bodyEl.className = "bc-empty";
+        bodyEl.textContent = (data.message || "Awaiting morning domain-demand bill.") +
+          " Refresh after the daily workflow runs.";
+        return;
+      }
+      var segs = ((data && data.segments) || []).filter(function(s) {
+        return (s.demand_clicks || 0) > 0 || (s.delivered_clicks || 0) > 0;
+      });
+      if (!segs.length) {
+        bodyEl.className = "bc-empty";
+        bodyEl.textContent = "No geo × device demand segments yet.";
+        return;
+      }
+      var rows = segs.map(function(s) {
+        var pct = s.fill_pct;
+        var lvl = s.level || "none";
+        var bw = barWidth(pct);
+        return (
+          "<tr>" +
+          "<td>" + esc((s.geo || "").toUpperCase()) + "</td>" +
+          "<td>" + esc(s.device || "") + "</td>" +
+          '<td class="num">' + esc(s.demand_clicks) + "</td>" +
+          '<td class="num">' + esc(s.delivered_clicks) + "</td>" +
+          '<td class="num">' + esc(s.remaining) + "</td>" +
+          '<td class="num">' + (pct != null ? esc(pct) + "%" : "—") + "</td>" +
+          "<td><span class=\"bc-pill " + esc(lvl) + "\">" + esc(lvl) + "</span></td>" +
+          "<td><div class=\"bc-bar\"><span class=\"" + esc(lvl) + "\" style=\"width:" + bw + "%\"></span></div></td>" +
+          "<td>" + esc(s.trillion_status || "—") + "</td>" +
+          "<td>" + esc(s.trillion_hint || "") + "</td>" +
+          "</tr>"
+        );
+      }).join("");
+      bodyEl.className = "";
+      bodyEl.innerHTML =
+        "<table><thead><tr>" +
+        "<th>Geo</th><th>Device</th>" +
+        '<th class="num">Demand</th><th class="num">Delivered</th><th class="num">Left</th><th class="num">Filled</th>' +
+        "<th>Level</th><th>Progress</th><th>Trillion</th><th>Hint</th>" +
+        "</tr></thead><tbody>" + rows + "</tbody></table>";
+    }
+
+    function renderMeta(data) {
+      var parts = [];
+      if (data && data.hub_campaign_id) parts.push("campaign " + data.hub_campaign_id);
+      if (data && data.stale) parts.push("stale cache");
+      if (data && data.refresh_queued) parts.push("background refresh queued");
+      metaEl.textContent = parts.join(" · ") || "";
+    }
+
+    function renderErrors(data) {
+      var errs = (data && data.errors) || [];
+      if (!errs.length) {
+        errEl.style.display = "none";
+        errEl.textContent = "";
+        return;
+      }
+      errEl.style.display = "block";
+      errEl.textContent = errs.join(" · ");
+    }
+
+    function paint(data) {
+      lastData = data;
+      renderSummary(data);
+      renderTotals(data);
+      renderMeta(data);
+      renderErrors(data);
+      renderTable(data);
+    }
+
+    function load() {
+      return fetch(apiUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function(r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function(data) { paint(data); })
+        .catch(function(e) {
+          metaEl.textContent = "Could not load";
+          bodyEl.className = "bc-empty";
+          bodyEl.textContent = "Failed to load: " + (e && e.message ? e.message : String(e));
+        });
+    }
+
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        refreshBtn.disabled = true;
+        metaEl.textContent = "Refreshing…";
+        fetch(refreshUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { Accept: "application/json" },
+        })
+          .then(function(r) {
+            if (!r.ok) {
+              return r.json().catch(function() { return {}; }).then(function(j) {
+                throw new Error(j.error || ("HTTP " + r.status));
+              });
+            }
+            return r.json();
+          })
+          .then(function(data) { paint(data); })
+          .catch(function(e) {
+            errEl.style.display = "block";
+            errEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
+            return load();
+          })
+          .finally(function() { refreshBtn.disabled = false; });
+      });
+    }
+
+    load();
+    setInterval(load, pollMs);
   })();
   </script>
   <script>

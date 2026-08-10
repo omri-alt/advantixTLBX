@@ -12,12 +12,28 @@
     .muted { color: #9ca3af; }
     .status-success { color: #22c55e; font-weight: 700; }
     .status-failed { color: #9ca3af; font-weight: 700; }
-    input[type="text"] { width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px; }
-    button { padding: 8px 12px; background: #22c55e; border: 1px solid #16a34a; border-radius: 6px; color: #052e16; font-weight: 700; cursor: pointer; }
-    button:hover { background: #16a34a; }
-    pre { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px; max-height: 420px; overflow: auto; white-space: pre-wrap; }
+    input[type="text"], input[type="date"] {
+      width: 520px; max-width: 100%; padding: 8px; background: #0f172a;
+      border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;
+    }
+    select {
+      width: 520px; max-width: 100%; padding: 8px; background: #0f172a;
+      border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;
+    }
+    button[type="submit"] {
+      padding: 10px 18px; background: #22c55e; border: 1px solid #16a34a;
+      border-radius: 8px; color: #052e16; font-weight: 700; cursor: pointer;
+    }
+    button[type="submit"]:hover { background: #16a34a; }
+    pre {
+      background: #0f172a; border: 1px solid #334155; border-radius: 6px;
+      padding: 10px; max-height: 420px; overflow: auto; white-space: pre-wrap;
+    }
     .stages { margin: 12px 0; padding: 0; list-style: none; }
-    .stages li { padding: 6px 10px; margin: 4px 0; border-radius: 6px; background: #0f172a; border: 1px solid #334155; font-size: 13px; }
+    .stages li {
+      padding: 6px 10px; margin: 4px 0; border-radius: 6px;
+      background: #0f172a; border: 1px solid #334155; font-size: 13px;
+    }
     .stages .stage-success { border-color: #166534; color: #86efac; }
     .stages .stage-failed { border-color: #7f1d1d; color: #fca5a5; }
     .stages .stage-running { border-color: #1d4ed8; color: #93c5fd; }
@@ -26,12 +42,69 @@
     a { color: #86efac; text-decoration: none; }
     a:hover { text-decoration: underline; }
     .run-finished { cursor: help; border-bottom: 1px dotted rgba(154, 164, 178, 0.55); }
+
+    .wf-panel {
+      margin: 16px 0; padding: 14px 16px; border: 1px solid #27324a;
+      border-radius: 12px; background: #121a2b; max-width: 720px;
+    }
+    .wf-panel h3 {
+      margin: 0 0 10px; font-size: 0.95rem; font-weight: 700; color: #cbd5e1;
+    }
+    .wf-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px;
+    }
+    @media (max-width: 640px) {
+      .wf-grid { grid-template-columns: 1fr; }
+    }
+    .wf-field label {
+      display: block; font-size: 12px; color: #9ca3af; margin-bottom: 4px;
+    }
+    .wf-field input[type="text"],
+    .wf-field input[type="date"],
+    .wf-field select { width: 100%; max-width: 100%; }
+    .wf-toggles { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 12px; }
+    .wf-toggle {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 13px; color: #e5e7eb; cursor: pointer;
+    }
+    .wf-toggle input { accent-color: #22c55e; }
+    .seg {
+      display: flex; flex-wrap: wrap; gap: 0; border: 1px solid #334155;
+      border-radius: 8px; overflow: hidden; width: fit-content; max-width: 100%;
+    }
+    .seg label {
+      margin: 0; padding: 8px 12px; font-size: 12px; font-weight: 600;
+      background: #0f172a; color: #94a3b8; cursor: pointer; border-right: 1px solid #334155;
+    }
+    .seg label:last-child { border-right: 0; }
+    .seg input { position: absolute; opacity: 0; pointer-events: none; }
+    .seg input:checked + span { color: #eaf1fb; }
+    .seg label:has(input:checked) {
+      background: #1e3a5f; color: #eaf1fb;
+    }
+    .seg label span { pointer-events: none; }
+    .wf-subpanel {
+      margin-top: 12px; padding: 12px; border: 1px solid #27324a;
+      border-radius: 8px; background: #0f172a;
+    }
+    .wf-subpanel[hidden] { display: none !important; }
+    .wf-actions { margin-top: 16px; }
+    .wf-advanced {
+      margin: 16px 0; max-width: 720px; border: 1px solid #27324a;
+      border-radius: 12px; background: #121a2b; padding: 0 14px 12px;
+    }
+    .wf-advanced > summary {
+      cursor: pointer; padding: 12px 0; font-size: 13px; font-weight: 600; color: #94a3b8;
+    }
+    .wf-advanced .muted { font-size: 12px; margin: 0 0 8px; }
   </style>
 </head>
 <body>
   <div><a href="/">Back to dashboard</a> · <a href="{{ url_for('ui_help') }}">Help</a></div>
   {% if workflow_key == "daily" %}
-    {{ tool_header(workflow.title, "Kelkoo day: feeds, offers, Keitaro, Blend, sales.", "daily", "e.g. --skip-keitaro --geo uk") }}
+    {{ tool_header(workflow.title, "Kelkoo day: feeds, offers, Keitaro, Blend, sales.", "daily", "use controls below") }}
+  {% elif workflow_key == "daily-legacy" %}
+    {{ tool_header(workflow.title, "Same daily steps, single process (fallback).", "daily", "use controls below") }}
   {% elif workflow_key == "keitaro-sync" %}
     {{ tool_header(workflow.title, "Offers sheet → Keitaro only.", "keitaro-sync", "e.g. --date 2026-03-08") }}
   {% elif workflow_key == "blend" %}
@@ -49,18 +122,23 @@
   {% endif %}
 
   <form method="post" class="row">
+    {% if workflow_key not in ('daily', 'daily-legacy') %}
     <label for="args_template">Args template (optional)</label><br>
-    <select id="args_template" name="args_template" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+    <select id="args_template" name="args_template">
       {% if workflow.args_templates %}
         {% for t in workflow.args_templates %}
           <option value="{{ t.value | e }}">{{ t.label }}</option>
         {% endfor %}
+      {% else %}
+        <option value="">Default (no args)</option>
       {% endif %}
     </select>
+    {% endif %}
+
     {% if workflow_key == 'blend' %}
     <div style="height: 12px;"></div>
     <label for="blend_feed">Potential sheet source</label><br>
-    <select id="blend_feed" name="blend_feed" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
+    <select id="blend_feed" name="blend_feed">
       <option value="both" selected>Both Kelkoo (kelkoo1 + kelkoo2)</option>
       <option value="all">All (BLEND_POTENTIAL_FEEDS from .env)</option>
       <option value="kelkoo1">Kelkoo feed 1</option>
@@ -71,136 +149,182 @@
       <option value="yadore">Yadore (potentialYadore)</option>
     </select>
     {% endif %}
+
     {% if workflow_key == 'blend-keitaro-sync' %}
     <div style="height: 12px;"></div>
     <label for="blend_sync_geo">Country (optional)</label><br>
     <input id="blend_sync_geo" name="blend_sync_geo" type="text" placeholder="e.g. uk, fr — blank = all geos" style="width: 320px;">
     {% endif %}
+
     {% if workflow_key == 'keitaro-detach-merchant' %}
     <div style="height: 12px;"></div>
     <label for="detach_geo">Country (required, 2 letters)</label><br>
     <input id="detach_geo" name="detach_geo" type="text" placeholder="e.g. es" style="width: 120px;" maxlength="2" autocomplete="off">
     <div style="height: 12px;"></div>
     <label for="detach_merchant_ids">Kelkoo merchant id(s)</label><br>
-    <input id="detach_merchant_ids" name="detach_merchant_ids" type="text" placeholder="e.g. 15248713 or 15248713,99887766" style="width: 520px; max-width: 100%;">
+    <input id="detach_merchant_ids" name="detach_merchant_ids" type="text" placeholder="e.g. 15248713 or 15248713,99887766">
     <div style="height: 10px;"></div>
     <label><input type="checkbox" name="detach_dry_run" value="on"> Dry run (no Keitaro writes)</label>
     {% endif %}
+
     {% if workflow_key in ('daily', 'daily-legacy') %}
-    <div style="height: 12px;"></div>
-    <label for="daily_geo">Country rerun (optional)</label><br>
-    <input id="daily_geo" name="daily_geo" type="text" placeholder="e.g. uk, fr, de" style="width: 220px;">
+    <section class="wf-panel" aria-label="Run scope">
+      <h3>Run scope</h3>
+      <div class="wf-grid">
+        <div class="wf-field">
+          <label for="daily_geo">Countries (optional)</label>
+          <input id="daily_geo" name="daily_geo" type="text" placeholder="e.g. uk,fr,de — blank = all" autocomplete="off">
+        </div>
+        <div class="wf-field">
+          <label for="daily_date">Date (optional)</label>
+          <input id="daily_date" name="daily_date" type="date">
+        </div>
+      </div>
+      <div class="wf-toggles">
+        <label class="wf-toggle">
+          <input type="checkbox" name="daily_skip_keitaro" value="on">
+          Skip Keitaro sync
+        </label>
+        <label class="wf-toggle">
+          <input type="checkbox" name="daily_blend_sync" value="off">
+          Skip Blend sheet → Keitaro (7b)
+        </label>
+      </div>
+      <p class="muted" style="margin:10px 0 0;font-size:12px;">
+        Blank countries = full geo set. Nipuhim/Blend hub children follow <code>.env</code>
+        (<code>NIPUHIM_BLEND_V2_ENABLED</code> / <code>BLEND_HUB_V2_ENABLED</code>.
+      </p>
+    </section>
 
-    <div style="height: 12px;"></div>
-    <label for="daily_nipuhim_v2">Nipuhim v2 sync → NIPUHIM-feed* (step 6b)</label><br>
-    <select id="daily_nipuhim_v2" name="daily_nipuhim_v2" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
-      <option value="on" selected>On (default — populates hub children; legacy HrQBXp still synced in step 6)</option>
-      <option value="off">Off (skip Nipuhim v2; HrQBXp only)</option>
-      <option value="force">Force on (even if NIPUHIM_BLEND_V2_ENABLED=0)</option>
-    </select>
-    <p class="muted" style="margin:6px 0 0;font-size:12px;">Traffic still goes to HrQBXp until cutover next week. Step 6b fills NIPUHIM-feed* for validation.</p>
+    <section class="wf-panel" aria-label="Merchant tools">
+      <h3>Merchant tools</h3>
+      <div class="seg" role="radiogroup" aria-label="Merchant mode">
+        <label><input type="radio" name="daily_merchant_mode" value="none" checked> <span>Normal</span></label>
+        <label><input type="radio" name="daily_merchant_mode" value="manual"> <span>Manual ID</span></label>
+        <label><input type="radio" name="daily_merchant_mode" value="platform"> <span>Platform rank</span></label>
+        <label><input type="radio" name="daily_merchant_mode" value="swap"> <span>Swap merchant</span></label>
+      </div>
 
-    <div style="height: 12px;"></div>
-    <label for="daily_blend_v2">Blend v2 sync → BLEND-feed* (step 7c)</label><br>
-    <select id="daily_blend_v2" name="daily_blend_v2" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
-      <option value="on" selected>On (default — hub children; legacy Blend campaign still synced in 7b)</option>
-      <option value="off">Off (legacy Blend only)</option>
-      <option value="force">Force on (even if BLEND_HUB_V2_ENABLED=0)</option>
-    </select>
+      <div id="daily_manual_fields" class="wf-subpanel" hidden>
+        <div class="wf-grid">
+          <div class="wf-field">
+            <label for="daily_manual_feed">Feed</label>
+            <select id="daily_manual_feed" name="daily_manual_feed" style="width:100%;">
+              <option value="1" selected>Feed 1</option>
+              <option value="2">Feed 2</option>
+            </select>
+          </div>
+          <div class="wf-field">
+            <label for="daily_manual_geo">Geo</label>
+            <input id="daily_manual_geo" name="daily_manual_geo" type="text" placeholder="uk" maxlength="2" autocomplete="off">
+          </div>
+          <div class="wf-field" style="grid-column: 1 / -1;">
+            <label for="daily_manual_ids">Merchant ID(s)</label>
+            <input id="daily_manual_ids" name="daily_manual_ids" type="text" placeholder="15248713 or 15248713,99887766">
+          </div>
+        </div>
+        <p class="muted" style="margin:8px 0 0;font-size:12px;">Maps to <code>--merchant-override feed:geo=ids</code>.</p>
+      </div>
 
-    <div style="height: 12px;"></div>
-    <label for="daily_blend_sync">Blend sheet → Keitaro sync (step 7b)</label><br>
-    <select id="daily_blend_sync" name="daily_blend_sync" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
-      <option value="on" selected>On (default)</option>
-      <option value="off">Off (skip blend_sync_from_sheet)</option>
-    </select>
+      <div id="daily_platform_fields" class="wf-subpanel" hidden>
+        <div class="wf-grid">
+          <div class="wf-field">
+            <label for="daily_platform_feed">Feed</label>
+            <select id="daily_platform_feed" name="daily_platform_feed" style="width:100%;">
+              <option value="1" selected>Feed 1</option>
+              <option value="2">Feed 2</option>
+            </select>
+          </div>
+          <div class="wf-field">
+            <label for="daily_platform_geo">Geo</label>
+            <input id="daily_platform_geo" name="daily_platform_geo" type="text" placeholder="uk" maxlength="2" autocomplete="off">
+          </div>
+          <div class="wf-field">
+            <label for="daily_platform_rank">Rank</label>
+            <select id="daily_platform_rank" name="daily_platform_rank" style="width:100%;">
+              <option value="2" selected>2 (next best)</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+            </select>
+          </div>
+        </div>
+        <p class="muted" style="margin:8px 0 0;font-size:12px;">Maps to <code>--merchant-auto-override feed:geo:rank</code>.</p>
+      </div>
 
-    <div style="height: 12px;"></div>
-    <label for="daily_merchant_mode">Merchant switch mode (optional)</label><br>
-    <select id="daily_merchant_mode" name="daily_merchant_mode" style="width: 520px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
-      <option value="none" selected>None (use normal merchant pick rules)</option>
-      <option value="manual">Manual (user selects merchant ID)</option>
-      <option value="platform">Platform auto-pick (next best / rank)</option>
-    </select>
+      <div id="daily_swap_fields" class="wf-subpanel" hidden>
+        <div class="wf-grid">
+          <div class="wf-field">
+            <label for="daily_swap_feed">Feed</label>
+            <select id="daily_swap_feed" name="daily_swap_feed" style="width:100%;">
+              <option value="1" selected>Feed 1</option>
+              <option value="2">Feed 2</option>
+            </select>
+          </div>
+          <div class="wf-field">
+            <label for="daily_swap_geo">Geo</label>
+            <input id="daily_swap_geo" name="daily_swap_geo" type="text" placeholder="es" maxlength="2" autocomplete="off">
+          </div>
+          <div class="wf-field">
+            <label for="daily_swap_old_merchant">Skip merchant id</label>
+            <input id="daily_swap_old_merchant" name="daily_swap_old_merchant" type="text" placeholder="15248713">
+          </div>
+          <div class="wf-field">
+            <label for="daily_swap_new_merchant">Replacement id</label>
+            <input id="daily_swap_new_merchant" name="daily_swap_new_merchant" type="text" placeholder="99887766">
+          </div>
+        </div>
+        <p class="muted" style="margin:8px 0 0;font-size:12px;">
+          Fast path: <code>--offers-and-keitaro-only --merchant-skip-replace …</code> (PLA + Keitaro only for that country).
+        </p>
+      </div>
+    </section>
 
-    <div id="daily_manual_fields" style="display:none; margin-top:10px;">
-      <label for="daily_manual_feed">Manual override feed</label><br>
-      <select id="daily_manual_feed" name="daily_manual_feed" style="width: 220px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
-        <option value="1" selected>Feed 1</option>
-        <option value="2">Feed 2</option>
-      </select>
-      <div style="height: 8px;"></div>
-      <label for="daily_manual_geo">Manual override geo</label><br>
-      <input id="daily_manual_geo" name="daily_manual_geo" type="text" placeholder="e.g. uk" style="width: 140px;">
-      <div style="height: 8px;"></div>
-      <label for="daily_manual_ids">Manual merchant ID(s)</label><br>
-      <input id="daily_manual_ids" name="daily_manual_ids" type="text" placeholder="e.g. 15248713 or 15248713,99887766" style="width: 520px;">
+    <details class="wf-advanced">
+      <summary>Advanced (rare CLI flags)</summary>
+      <p class="muted">
+        Hub v2 stages follow <code>.env</code>. To override for one run, paste
+        <code>--skip-nipuhim-v2</code>, <code>--skip-blend-v2</code>, <code>--nipuhim-v2</code>, or <code>--blend-v2</code> here.
+      </p>
+      <label for="extra_args" class="muted" style="display:block;margin-bottom:4px;">Command args</label>
+      <input id="extra_args" name="extra_args" type="text" placeholder="{{ workflow.args_hint }}" style="width:100%;max-width:100%;">
+    </details>
+
+    <div class="wf-actions">
+      <button type="submit">Play</button>
     </div>
 
-    <div id="daily_platform_fields" style="display:none; margin-top:10px;">
-      <label for="daily_platform_feed">Platform auto-pick feed</label><br>
-      <select id="daily_platform_feed" name="daily_platform_feed" style="width: 220px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
-        <option value="1" selected>Feed 1</option>
-        <option value="2">Feed 2</option>
-      </select>
-      <div style="height: 8px;"></div>
-      <label for="daily_platform_geo">Platform auto-pick geo</label><br>
-      <input id="daily_platform_geo" name="daily_platform_geo" type="text" placeholder="e.g. uk" style="width: 140px;">
-      <div style="height: 8px;"></div>
-      <label for="daily_platform_rank">Platform rank</label><br>
-      <select id="daily_platform_rank" name="daily_platform_rank" style="width: 220px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
-        <option value="2" selected>2 (next best)</option>
-        <option value="3">3</option>
-        <option value="4">4</option>
-        <option value="5">5</option>
-      </select>
-    </div>
-
-    <div style="height: 14px;"></div>
-    <label><input type="checkbox" name="daily_merchant_swap" value="on"> Replace one merchant for PLA (fast path: offers + Keitaro only)</label>
-    <p class="muted" style="margin:6px 0 0;font-size:12px;">Swaps the skipped id for the substitute in the picked list, refetches PLA, merges that country into today’s offers tabs, then syncs Keitaro. Feed/geo must match where the bad merchant was chosen.</p>
-    <div id="daily_swap_fields" style="margin-top:10px;">
-      <label for="daily_swap_feed">Feed</label><br>
-      <select id="daily_swap_feed" name="daily_swap_feed" style="width: 220px; max-width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 6px;">
-        <option value="1" selected>Feed 1</option>
-        <option value="2">Feed 2</option>
-      </select>
-      <div style="height: 8px;"></div>
-      <label for="daily_swap_geo">Country (2 letters)</label><br>
-      <input id="daily_swap_geo" name="daily_swap_geo" type="text" placeholder="e.g. es" style="width: 120px;" maxlength="2" autocomplete="off">
-      <div style="height: 8px;"></div>
-      <label for="daily_swap_old_merchant">Merchant id to skip (remove from selection)</label><br>
-      <input id="daily_swap_old_merchant" name="daily_swap_old_merchant" type="text" placeholder="e.g. 15248713" style="width: 220px;">
-      <div style="height: 8px;"></div>
-      <label for="daily_swap_new_merchant">Replacement merchant id (PLA for this id)</label><br>
-      <input id="daily_swap_new_merchant" name="daily_swap_new_merchant" type="text" placeholder="e.g. 99887766" style="width: 220px;">
-    </div>
-    {% endif %}
+    {% else %}
     <div style="height: 8px;"></div>
     <label for="extra_args">Command args (optional)</label><br>
     <input id="extra_args" name="extra_args" type="text" placeholder="{{ workflow.args_hint }}">
     <button type="submit">Play</button>
+    {% endif %}
   </form>
+
   <script>
     (function() {
-      const sel = document.getElementById('args_template');
-      const input = document.getElementById('extra_args');
+      var sel = document.getElementById('args_template');
+      var input = document.getElementById('extra_args');
       if (!sel || !input) return;
       sel.addEventListener('change', function() {
         input.value = sel.value || '';
       });
     })();
     (function() {
-      const modeSel = document.getElementById('daily_merchant_mode');
-      const manual = document.getElementById('daily_manual_fields');
-      const platform = document.getElementById('daily_platform_fields');
-      if (!modeSel || !manual || !platform) return;
-      const syncModeView = function() {
-        const m = (modeSel.value || 'none').toLowerCase();
-        manual.style.display = (m === 'manual') ? 'block' : 'none';
-        platform.style.display = (m === 'platform') ? 'block' : 'none';
+      var radios = document.querySelectorAll('input[name="daily_merchant_mode"]');
+      var manual = document.getElementById('daily_manual_fields');
+      var platform = document.getElementById('daily_platform_fields');
+      var swap = document.getElementById('daily_swap_fields');
+      if (!radios.length || !manual || !platform || !swap) return;
+      var syncModeView = function() {
+        var m = 'none';
+        radios.forEach(function(r) { if (r.checked) m = r.value; });
+        manual.hidden = m !== 'manual';
+        platform.hidden = m !== 'platform';
+        swap.hidden = m !== 'swap';
       };
-      modeSel.addEventListener('change', syncModeView);
+      radios.forEach(function(r) { r.addEventListener('change', syncModeView); });
       syncModeView();
     })();
   </script>
@@ -211,7 +335,7 @@
       Status: <span class="status-{{ last_run.status }}">{{ last_run.status }}</span><br>
       {% if last_run.engine == 'daily_v2' %}
       Engine: staged v2{% if last_run.run_id %} · run <code>{{ last_run.run_id }}</code>{% endif %}<br>
-      {% if last_run.current_stage %}Current stage: <code>{{ last_run.current_stage }}</code><br>{% endif %}
+      {% if last_run.current_stage %}Current stage: <code>{{ last_run.current_stage }}</code>{% endif %}<br>
       {% endif %}
       Started: {{ last_run.started_at_utc }}<br>
       Finished: {{ last_run | workflow_run_time }}<br>

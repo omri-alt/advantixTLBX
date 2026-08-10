@@ -39,6 +39,7 @@ from config import (
     DAILY_CONVERSION_POSTBACK_STATE_PATH,
     OVERVIEW_SNAPSHOT_TZ,
     OVERVIEW_SNAPSHOT_HOUR,
+    OVERVIEW_SNAPSHOT_HOURS,
     shopnomix_monetization_enabled,
 )
 from workflows.campaign_setup import run_create_campaign_workflow
@@ -484,25 +485,8 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             "Nipuhim v2 (NIPUHIM-feed*), Blend — one subprocess per stage."
         ),
         "group": "daily-automations",
-        "args_hint": "Optional args, e.g. --date 2026-03-08 --skip-keitaro (country/blend sync use controls below)",
-        "args_templates": [
-            {"label": "Default (no args)", "value": ""},
-            {"label": "Skip Keitaro (legacy + v2)", "value": "--skip-keitaro"},
-            {"label": "Skip Nipuhim v2 only", "value": "--skip-nipuhim-v2"},
-            {"label": "Skip Blend v2 only", "value": "--skip-blend-v2"},
-            {"label": "Feed1 traffic only", "value": "--feed1-traffic-only"},
-            {"label": "Skip Blend sync to Keitaro", "value": "--skip-blend-sync"},
-            {"label": "UK+FR offers rerun (merge geos)", "value": "--geo uk,fr"},
-            {"label": "Merchant override (example)", "value": "--geo uk --merchant-override 1:uk=15248713"},
-            {"label": "Platform picks next best (example)", "value": "--geo uk --merchant-auto-override 1:uk"},
-            {"label": "Offers + Keitaro only (fast)", "value": "--offers-and-keitaro-only --geo uk"},
-            {
-                "label": "Replace merchant PLA (offers-only, example)",
-                "value": "--offers-and-keitaro-only --merchant-skip-replace 1:es:11111111=22222222",
-            },
-            {"label": "Date + Skip Keitaro (example)", "value": "--date 2026-03-08 --skip-keitaro"},
-            {"label": "Date only (example)", "value": "--date 2026-03-08"},
-        ],
+        "args_hint": "Rare flags only, e.g. --dry-run --skip-late-sales --feed1-traffic-only",
+        "args_templates": [],
     },
     "daily-legacy": {
         "title": "Daily workflow (legacy single-process)",
@@ -513,16 +497,8 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             "Legacy Keitaro (HrQBXp) + optional Nipuhim v2. Use if staged v2 has issues."
         ),
         "group": "daily-automations",
-        "args_hint": "Same flags as v2 staged (country / blend / Nipuhim v2 use controls below)",
-        "args_templates": [
-            {"label": "Default (no args)", "value": ""},
-            {"label": "Skip Keitaro (legacy + v2)", "value": "--skip-keitaro"},
-            {"label": "Skip Nipuhim v2 only", "value": "--skip-nipuhim-v2"},
-            {"label": "Skip Blend v2 only", "value": "--skip-blend-v2"},
-            {"label": "Feed1 traffic only", "value": "--feed1-traffic-only"},
-            {"label": "Offers + Keitaro only (fast)", "value": "--offers-and-keitaro-only --geo uk"},
-            {"label": "Date only (example)", "value": "--date 2026-03-08"},
-        ],
+        "args_hint": "Rare flags only, e.g. --dry-run --skip-late-sales --feed1-traffic-only",
+        "args_templates": [],
     },
     "keitaro-sync-v2": {
         "title": "Nipuhim v2 Keitaro sync",
@@ -1077,6 +1053,7 @@ def ui_home():
         groups=out_groups,
         overview_snapshot_tz=OVERVIEW_SNAPSHOT_TZ,
         overview_snapshot_hour=OVERVIEW_SNAPSHOT_HOUR,
+        overview_snapshot_hours=list(OVERVIEW_SNAPSHOT_HOURS),
     )
 
 
@@ -2265,47 +2242,36 @@ def ui_workflow(workflow_key: str):
                 parts.append("--dry-run")
             extra_args = " ".join(parts + ([extra_args] if extra_args else [])).strip()
         if workflow_key in ("daily", "daily-legacy"):
-            dg = (request.form.get("daily_geo") or "").strip()
-            # Remove a manually-typed --geo; the dedicated control wins when set.
-            extra_args = re.sub(
-                r"--geo\s+\S+",
-                "",
-                extra_args,
-                flags=re.IGNORECASE,
-            )
+            # Dedicated controls win over anything pasted in Advanced args.
+            extra_args = re.sub(r"--geo\s+\S+", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--date\s+\S+", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--skip-keitaro\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--skip-blend-sync\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--merchant-override\s+\S+", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--merchant-auto-override\s+\S+", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--merchant-skip-replace\s+\S+", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--offers-and-keitaro-only\b", "", extra_args, flags=re.IGNORECASE)
             extra_args = " ".join(extra_args.split())
+
+            dg = (request.form.get("daily_geo") or "").strip().lower().replace(" ", "")
             if dg:
                 extra_args = f"--geo {dg} {extra_args}".strip()
 
+            dd = (request.form.get("daily_date") or "").strip()
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", dd):
+                extra_args = f"--date {dd} {extra_args}".strip()
+
+            if (request.form.get("daily_skip_keitaro") or "").strip().lower() in (
+                "1",
+                "on",
+                "yes",
+                "true",
+            ):
+                extra_args = f"--skip-keitaro {extra_args}".strip()
+
             blend_sync_mode = (request.form.get("daily_blend_sync") or "on").strip().lower()
-            # Normalize user args to a single source of truth.
-            extra_args = re.sub(r"--skip-blend-sync\b", "", extra_args, flags=re.IGNORECASE)
-            extra_args = " ".join(extra_args.split())
             if blend_sync_mode == "off":
                 extra_args = f"--skip-blend-sync {extra_args}".strip()
-
-            nipuhim_v2_mode = (request.form.get("daily_nipuhim_v2") or "on").strip().lower()
-            extra_args = re.sub(r"--skip-nipuhim-v2\b", "", extra_args, flags=re.IGNORECASE)
-            extra_args = re.sub(r"--nipuhim-v2\b", "", extra_args, flags=re.IGNORECASE)
-            extra_args = " ".join(extra_args.split())
-            if nipuhim_v2_mode == "off":
-                extra_args = f"--skip-nipuhim-v2 {extra_args}".strip()
-            elif nipuhim_v2_mode == "force":
-                extra_args = f"--nipuhim-v2 {extra_args}".strip()
-
-            blend_v2_mode = (request.form.get("daily_blend_v2") or "on").strip().lower()
-            extra_args = re.sub(r"--skip-blend-v2\b", "", extra_args, flags=re.IGNORECASE)
-            extra_args = re.sub(r"--blend-v2\b", "", extra_args, flags=re.IGNORECASE)
-            extra_args = " ".join(extra_args.split())
-            if blend_v2_mode == "off":
-                extra_args = f"--skip-blend-v2 {extra_args}".strip()
-            elif blend_v2_mode == "force":
-                extra_args = f"--blend-v2 {extra_args}".strip()
-
-            # Normalize merchant override flags; dropdown mode controls become source of truth.
-            extra_args = re.sub(r"--merchant-override\s+\S+", "", extra_args, flags=re.IGNORECASE)
-            extra_args = re.sub(r"--merchant-auto-override\s+\S+", "", extra_args, flags=re.IGNORECASE)
-            extra_args = " ".join(extra_args.split())
 
             mode = (request.form.get("daily_merchant_mode") or "none").strip().lower()
             if mode == "manual":
@@ -2324,20 +2290,22 @@ def ui_workflow(workflow_key: str):
                     pr = 2
                 if pf in ("1", "2") and len(pg) == 2:
                     extra_args = f"--merchant-auto-override {pf}:{pg}:{pr} {extra_args}".strip()
-
-            extra_args = re.sub(r"--merchant-skip-replace\s+\S+", "", extra_args, flags=re.IGNORECASE)
-            extra_args = " ".join(extra_args.split())
-            swap_on = (request.form.get("daily_merchant_swap") or "").strip().lower() in ("1", "on", "yes", "true")
-            swap_feed = (request.form.get("daily_swap_feed") or "1").strip()
-            swap_geo = (request.form.get("daily_swap_geo") or "").strip().lower()[:2]
-            swap_old = re.sub(r"\D", "", (request.form.get("daily_swap_old_merchant") or "").strip())
-            swap_new = re.sub(r"\D", "", (request.form.get("daily_swap_new_merchant") or "").strip())
-            if swap_on:
-                if swap_feed in ("1", "2") and len(swap_geo) == 2 and swap_old and swap_new and swap_old != swap_new:
-                    extra_args = re.sub(r"--offers-and-keitaro-only\b", "", extra_args, flags=re.IGNORECASE)
-                    extra_args = " ".join(extra_args.split())
+            elif mode == "swap":
+                swap_feed = (request.form.get("daily_swap_feed") or "1").strip()
+                swap_geo = (request.form.get("daily_swap_geo") or "").strip().lower()[:2]
+                swap_old = re.sub(r"\D", "", (request.form.get("daily_swap_old_merchant") or "").strip())
+                swap_new = re.sub(r"\D", "", (request.form.get("daily_swap_new_merchant") or "").strip())
+                if (
+                    swap_feed in ("1", "2")
+                    and len(swap_geo) == 2
+                    and swap_old
+                    and swap_new
+                    and swap_old != swap_new
+                ):
                     spec = f"{swap_feed}:{swap_geo}:{swap_old}={swap_new}"
-                    extra_args = f"--offers-and-keitaro-only --merchant-skip-replace {spec} {extra_args}".strip()
+                    extra_args = (
+                        f"--offers-and-keitaro-only --merchant-skip-replace {spec} {extra_args}"
+                    ).strip()
         # Run workflow pages in background to avoid nginx/gateway timeout on long jobs.
         current_run = _run_workflow_in_background(workflow_key, extra_args)
     last_run = current_run or _load_last_run(workflow_key)
@@ -2444,6 +2412,26 @@ def api_blend_cap_progress_refresh():
 
     try:
         payload = refresh_blend_cap_progress(reason="api")
+        return jsonify({**payload, "refreshed": True})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e), "refreshed": False}), 500
+
+
+@app.route("/api/domain-demand-progress", methods=["GET"])
+def api_domain_demand_progress():
+    """Hub campaign 94 domain-demand fill by geo × device (cached)."""
+    from integrations.domain_demand_progress import get_api_payload
+
+    return jsonify(get_api_payload(allow_background_refresh=True))
+
+
+@app.route("/api/domain-demand-progress/refresh", methods=["POST"])
+def api_domain_demand_progress_refresh():
+    """Force refresh of domain-demand delivered clicks + sheet write."""
+    from integrations.domain_demand_progress import refresh_domain_demand_progress
+
+    try:
+        payload = refresh_domain_demand_progress(reason="api")
         return jsonify({**payload, "refreshed": True})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e), "refreshed": False}), 500

@@ -3,7 +3,8 @@ Persisted overview dashboard data (``/api/overview`` reads from disk; rebuild is
 
 - **Manual / scheduled rebuild:** ``queue_overview_refresh()`` spawns ``cli/refresh_overview_snapshot.py``
   in a separate process (Gunicorn worker timeouts must not kill the rebuild).
-- **Daily fire:** background thread sleeps until next ``OVERVIEW_SNAPSHOT_HOUR`` in ``OVERVIEW_SNAPSHOT_TZ``.
+- **Scheduled fire:** background thread sleeps until the next hour in ``OVERVIEW_SNAPSHOT_HOURS``
+  (default 11:00 and 16:00) in ``OVERVIEW_SNAPSHOT_TZ`` (default Asia/Jerusalem).
 
 For multi-worker deployments, set ``OVERVIEW_SCHEDULER_ENABLED=0`` on all but one worker and use cron +
 ``python cli/refresh_overview_snapshot.py`` instead.
@@ -19,7 +20,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -306,24 +307,50 @@ def read_snapshot_for_api() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         return None, None
 
 
-def _seconds_until_scheduled_fire() -> float:
-    from config import OVERVIEW_SNAPSHOT_HOUR, OVERVIEW_SNAPSHOT_TZ
+def _overview_tz():
+    from config import OVERVIEW_SNAPSHOT_TZ
 
     try:
         from zoneinfo import ZoneInfo
 
-        tz = ZoneInfo(OVERVIEW_SNAPSHOT_TZ or "UTC")
+        return ZoneInfo(OVERVIEW_SNAPSHOT_TZ or "Asia/Jerusalem")
     except Exception:
         if (OVERVIEW_SNAPSHOT_TZ or "").upper() not in ("", "UTC"):
             logger.warning("Invalid OVERVIEW_SNAPSHOT_TZ %r; using UTC", OVERVIEW_SNAPSHOT_TZ)
-        tz = timezone.utc
-    hour = int(OVERVIEW_SNAPSHOT_HOUR)
-    hour = max(0, min(23, hour))
+        return timezone.utc
+
+
+def _overview_hours() -> List[int]:
+    from config import OVERVIEW_SNAPSHOT_HOUR, OVERVIEW_SNAPSHOT_HOURS
+
+    hours = [int(h) for h in (OVERVIEW_SNAPSHOT_HOURS or []) if 0 <= int(h) <= 23]
+    if not hours:
+        hours = [max(0, min(23, int(OVERVIEW_SNAPSHOT_HOUR)))]
+    return sorted(set(hours))
+
+
+def _seconds_until_scheduled_fire() -> float:
+    """Seconds until the next scheduled hour:minute=0 in overview TZ."""
+    tz = _overview_tz()
+    hours = _overview_hours()
     now = datetime.now(tz)
-    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-    if now >= target:
-        target += timedelta(days=1)
-    return max(1.0, (target - now).total_seconds())
+    best: Optional[datetime] = None
+    for day_offset in (0, 1):
+        day = (now + timedelta(days=day_offset)).date()
+        for hour in hours:
+            target = datetime(
+                day.year, day.month, day.day, hour, 0, 0, 0, tzinfo=tz
+            )
+            if target <= now:
+                continue
+            if best is None or target < best:
+                best = target
+        if best is not None and day_offset == 0:
+            break
+    if best is None:
+        # Should not happen with at least one hour; fall back to +24h.
+        best = now + timedelta(days=1)
+    return max(1.0, (best - now).total_seconds())
 
 
 def _scheduler_loop() -> None:
@@ -374,7 +401,7 @@ def start_overview_snapshot_bootstrap() -> None:
 def start_daily_overview_scheduler() -> None:
     from config import (
         OVERVIEW_SCHEDULER_ENABLED,
-        OVERVIEW_SNAPSHOT_HOUR,
+        OVERVIEW_SNAPSHOT_HOURS,
         OVERVIEW_SNAPSHOT_TZ,
     )
 
@@ -384,8 +411,9 @@ def start_daily_overview_scheduler() -> None:
     if os.getenv("FLASK_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         return
     threading.Thread(target=_scheduler_loop, name="overview-snapshot-scheduler", daemon=True).start()
+    hours_txt = ", ".join(f"{int(h):02d}:00" for h in OVERVIEW_SNAPSHOT_HOURS)
     logger.info(
-        "Overview snapshot scheduler started (daily at %02d:00 %s)",
-        int(OVERVIEW_SNAPSHOT_HOUR),
+        "Overview snapshot scheduler started (%s %s)",
+        hours_txt,
         OVERVIEW_SNAPSHOT_TZ,
     )

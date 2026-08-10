@@ -928,13 +928,44 @@ TRILLION_API_KEY = KEYTR
 
 # Overview snapshot (``GET /api/overview`` reads from disk; rebuild via ``POST /api/overview/refresh`` or scheduler)
 OVERVIEW_SNAPSHOT_PATH = (os.getenv("OVERVIEW_SNAPSHOT_PATH") or "").strip()
-OVERVIEW_SNAPSHOT_TZ = (os.getenv("OVERVIEW_SNAPSHOT_TZ") or "UTC").strip()
-_ov_h = (os.getenv("OVERVIEW_SNAPSHOT_HOUR") or "8").strip()
-try:
-    OVERVIEW_SNAPSHOT_HOUR = int(_ov_h)
-except ValueError:
-    OVERVIEW_SNAPSHOT_HOUR = 8
-OVERVIEW_SNAPSHOT_HOUR = max(0, min(23, OVERVIEW_SNAPSHOT_HOUR))
+OVERVIEW_SNAPSHOT_TZ = (os.getenv("OVERVIEW_SNAPSHOT_TZ") or "Asia/Jerusalem").strip()
+
+
+def _parse_overview_snapshot_hours() -> list[int]:
+    """Hours (0–23) in ``OVERVIEW_SNAPSHOT_TZ`` when the homepage overview rebuilds.
+
+    Prefer ``OVERVIEW_SNAPSHOT_HOURS`` (comma-separated, e.g. ``11,16``).
+    Fall back to legacy ``OVERVIEW_SNAPSHOT_HOUR`` (single hour).
+    Default: 11:00 and 16:00 Israel time.
+    """
+    raw_multi = (os.getenv("OVERVIEW_SNAPSHOT_HOURS") or "").strip()
+    if raw_multi:
+        hours: list[int] = []
+        for part in raw_multi.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                h = int(part)
+            except ValueError:
+                continue
+            if 0 <= h <= 23 and h not in hours:
+                hours.append(h)
+        if hours:
+            return sorted(hours)
+    raw_single = (os.getenv("OVERVIEW_SNAPSHOT_HOUR") or "").strip()
+    if raw_single:
+        try:
+            h = int(raw_single)
+            return [max(0, min(23, h))]
+        except ValueError:
+            pass
+    return [11, 16]
+
+
+OVERVIEW_SNAPSHOT_HOURS = _parse_overview_snapshot_hours()
+# Legacy single-hour alias (first scheduled hour) for older callers / templates.
+OVERVIEW_SNAPSHOT_HOUR = OVERVIEW_SNAPSHOT_HOURS[0]
 OVERVIEW_SCHEDULER_ENABLED = (os.getenv("OVERVIEW_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no"))
 # At process start: ``missing`` = build snapshot in background only if file absent; ``always`` = always rebuild once; ``off`` = never.
 OVERVIEW_SNAPSHOT_BOOTSTRAP = (os.getenv("OVERVIEW_SNAPSHOT_BOOTSTRAP") or "missing").strip().lower()

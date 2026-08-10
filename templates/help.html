@@ -41,6 +41,7 @@
     <aside class="help-sidebar" id="help-sidebar">
       <div class="help-nav-h">Navigate</div>
       <a href="#overview">Overview</a>
+      <a href="#domain-demand">Domain demand</a>
       <a href="#daily-automations">Daily automations</a>
       <a href="#kelkoo">Kelkoo</a>
       <a href="#blend">Blend</a>
@@ -68,7 +69,26 @@
                 <tr><td><code>POST /api/overview/refresh</code></td><td>Rebuild snapshot from live APIs.</td></tr>
               </tbody>
             </table>
-            <p><strong>Caveat:</strong> Daily rebuild also runs on a background schedule (<code>OVERVIEW_SCHEDULER_ENABLED</code>, <code>OVERVIEW_SNAPSHOT_HOUR</code>).</p>
+            <p><strong>Caveat:</strong> Auto rebuild runs twice daily by default at <strong>11:00</strong> and <strong>16:00</strong> <code>Asia/Jerusalem</code> (<code>OVERVIEW_SCHEDULER_ENABLED</code>, <code>OVERVIEW_SNAPSHOT_HOURS</code>, <code>OVERVIEW_SNAPSHOT_TZ</code>). Legacy single-hour: <code>OVERVIEW_SNAPSHOT_HOUR</code>.</p>
+            <p><a href="{{ url_for('ui_home') }}">Open Control Center →</a></p>
+          </div>
+        </details>
+      </section>
+
+      <section class="help-group help-section" id="domain-demand" data-help-search="domain demand hub 94 trillion fill mehilot zeropark nipuhim blend">
+        <h2>Domain demand fill</h2>
+        <details class="help-acc" open data-help-search="domain demand hub trillion">
+          <summary>Homepage widget (hub campaign 94)</summary>
+          <div class="help-acc-body">
+            <p>Shows live fill of the domain-demand bill for traffic into Keitaro hub <strong>94</strong> (Trillion domain buying — successor to the old Mehilot / Zeropark plan view). Demand lines come from the morning daily workflow; delivered clicks refresh from Keitaro without rebuilding demand.</p>
+            <table>
+              <thead><tr><th>Action</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET /api/domain-demand-progress</code></td><td>Cached summary + geo × device segments (stale cache may queue a background refresh).</td></tr>
+                <tr><td><code>POST /api/domain-demand-progress/refresh</code></td><td>Refresh delivered clicks and write the domain-demand sheet.</td></tr>
+              </tbody>
+            </table>
+            <p><strong>Caveat:</strong> After nightly rollover the live bill is empty until the morning daily run — the widget shows <code>awaiting_daily</code>. Sheet: <code>DOMAIN_DEMAND_SHEET_ID</code>.</p>
             <p><a href="{{ url_for('ui_home') }}">Open Control Center →</a></p>
           </div>
         </details>
@@ -95,13 +115,19 @@
               </tbody>
             </table>
             {% endif %}
-            {% if key == "daily" %}
-            <p><strong>Workflow UI fields:</strong> Country rerun → <code>--geo</code>; Blend step 7b on/off; merchant mode maps to <code>--merchant-override</code> / <code>--merchant-auto-override</code> (manual wins if both).</p>
+            {% if key == "daily" or key == "daily-legacy" %}
+            <p><strong>Workflow UI:</strong></p>
+            <ul>
+              <li><strong>Run scope</strong> — countries → <code>--geo</code>; date → <code>--date</code>; toggles for <code>--skip-keitaro</code> and <code>--skip-blend-sync</code>.</li>
+              <li><strong>Merchant tools</strong> — Normal | Manual ID (<code>--merchant-override</code>) | Platform rank (<code>--merchant-auto-override</code>) | Swap merchant (<code>--offers-and-keitaro-only --merchant-skip-replace</code>).</li>
+              <li><strong>Advanced</strong> — rare free-text flags. Nipuhim/Blend hub v2 follow <code>NIPUHIM_BLEND_V2_ENABLED</code> / <code>BLEND_HUB_V2_ENABLED</code>; override with <code>--skip-nipuhim-v2</code> / <code>--skip-blend-v2</code> / force flags only when needed.</li>
+            </ul>
             <table>
               <thead><tr><th>Flag</th><th>Description</th><th>Example</th></tr></thead>
               <tbody>
                 <tr><td><code>--skip-keitaro</code></td><td>Skip Nipuhim + Blend Keitaro sync.</td><td><code>--skip-keitaro</code></td></tr>
                 <tr><td><code>--skip-blend</code></td><td>Skip entire Blend block.</td><td><code>--skip-blend</code></td></tr>
+                <tr><td><code>--skip-blend-sync</code></td><td>Skip Blend sheet → Keitaro (step 7b) only.</td><td></td></tr>
                 <tr><td><code>--feed1-traffic-only</code></td><td>Feed1 Keitaro only, then Blend as configured.</td><td></td></tr>
                 <tr><td><code>--single-merchant-per-geo</code></td><td>Legacy one merchant per geo for PLA.</td><td></td></tr>
                 <tr><td><code>--skip-sales-report</code></td><td>Skip MTD <code>SalesMTD_*</code> sheet refresh in late-conversion step.</td><td></td></tr>
@@ -115,6 +141,8 @@
                 <tr><td><code>--merchant-skip-replace</code></td><td>After picks: replace <code>old</code> with <code>new</code> in that geo’s merchant list for that feed, then PLA as usual. Repeatable. With <code>--offers-and-keitaro-only</code>, geo in the flag is merged into offers tabs without needing <code>--geo</code>.</td><td><code>--offers-and-keitaro-only --merchant-skip-replace 1:es:111=222</code></td></tr>
                 <tr><td><code>--offers-and-keitaro-only</code></td><td>Skips monthly log 0a, Blend potential 0b, tab delete 0; no fresh feed fixim download; steps 3–6 only.</td><td></td></tr>
                 <tr><td><code>--date</code></td><td>Run for a specific date tab context when supported.</td><td><code>--date 2026-03-08</code></td></tr>
+                <tr><td><code>--skip-nipuhim-v2</code> / <code>--nipuhim-v2</code></td><td>Override env for Nipuhim hub children (Advanced only).</td><td></td></tr>
+                <tr><td><code>--skip-blend-v2</code> / <code>--blend-v2</code></td><td>Override env for Blend hub children (Advanced only).</td><td></td></tr>
               </tbody>
             </table>
             <p><strong>Order (summary):</strong> monthly log → Blend potential (optional) → tab cleanup → feeds → fixim → merchants → PLA → combined sheet → Keitaro → Blend → sales report → late-sales. See <code>CLAUDE.md</code> for detail.</p>
