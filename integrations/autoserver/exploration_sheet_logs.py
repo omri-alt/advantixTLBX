@@ -53,24 +53,55 @@ def append_exploration_log_row(
     Durable mode: append directly (no full-sheet read + rewrite) with light retry on
     transient quota/rate failures.
     """
+    append_exploration_log_rows(
+        spreadsheet_id,
+        [
+            {
+                "camp_id": camp_id,
+                "camp_name": camp_name,
+                "verify": verify,
+                "response": response,
+            }
+        ],
+    )
+
+
+def append_exploration_log_rows(
+    spreadsheet_id: str,
+    entries: List[Dict[str, Any]],
+) -> None:
+    """Append many ``logs`` rows in one Sheets call (buffered flush).
+
+    Each entry may include ``camp_id``, ``camp_name``, ``verify``, ``response``.
+    """
     sid = (spreadsheet_id or "").strip()
-    if not sid:
+    if not sid or not entries:
         return
     try:
         if sid not in _ENSURED_LOG_TABS:
             ensure_logs_worksheet(sid)
             _ENSURED_LOG_TABS.add(sid)
     except Exception as e:
-        logger.warning("exploration logs read failed (%s): %s", sid[:12], e)
+        logger.warning("exploration logs ensure failed (%s): %s", sid[:12], e)
         return
+
     date_s = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    row = [
-        str(camp_id or ""),
-        str(camp_name or ""),
-        str(verify or "")[:4000],
-        date_s,
-        _fmt_response(response),
-    ]
+    rows: List[List[str]] = []
+    for ent in entries:
+        if not isinstance(ent, dict):
+            continue
+        rows.append(
+            [
+                str(ent.get("camp_id") or ent.get("campId") or ""),
+                str(ent.get("camp_name") or ent.get("campName") or ""),
+                str(ent.get("verify") or "")[:4000],
+                date_s,
+                _fmt_response(ent.get("response", "")),
+            ]
+        )
+    if not rows:
+        return
+
     now_ts = time.time()
     if _LOG_WRITE_DISABLED_UNTIL.get(sid, 0.0) > now_ts:
         return
@@ -78,7 +109,10 @@ def append_exploration_log_row(
     for attempt in range(3):
         try:
             ws = gd.client.open_by_key(sid).worksheet(LOG_TAB)
-            ws.append_row(row, value_input_option="USER_ENTERED")
+            if len(rows) == 1:
+                ws.append_row(rows[0], value_input_option="USER_ENTERED")
+            else:
+                ws.append_rows(rows, value_input_option="USER_ENTERED")
             return
         except Exception as e:
             msg = str(e)

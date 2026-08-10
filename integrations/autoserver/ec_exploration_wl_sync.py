@@ -39,6 +39,7 @@ from integrations.autoserver.ec import (
     whiteListSources,
 )
 from integrations.autoserver.sk_optimizer import _append_logs_cell, _format_wl, _parse_wl
+from integrations.autoserver.exploration_sheet_logs import append_exploration_log_rows
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 from integrations.keitaro_conversions import iter_conversion_log
 
@@ -390,24 +391,15 @@ def _write_exploration_wl_patches(
     gd.create_or_update_sheet_from_dicts_withId(sheet_id, TAB_EXPLORATION, fresh)
 
 
-def _ec_logs_append(camp_id: str, camp_name: str, verify: Any) -> None:
+def _flush_ec_logs(entries: List[Dict[str, Any]]) -> None:
+    """One batched append to the EC workbook ``logs`` tab (no read/clear/rewrite)."""
     sid = (EC_SHEETS_SPREADSHEET_ID or "").strip()
-    if not sid:
+    if not sid or not entries:
         return
     try:
-        logs = gd.read_sheet_withID(sid, "logs") or []
-        logs.append(
-            {
-                "campId": camp_id,
-                "campName": camp_name,
-                "verify": verify,
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "response": "ok",
-            }
-        )
-        gd.create_or_update_sheet_from_dicts_withId(sid, "logs", logs)
+        append_exploration_log_rows(sid, entries)
     except Exception as e:
-        logger.warning("EC WL sync: logs append failed: %s", e)
+        logger.warning("EC WL sync: logs flush failed: %s", e)
 
 
 def sync_ec_exploration_wl_from_keitaro_sales(
@@ -444,6 +436,7 @@ def sync_ec_exploration_wl_from_keitaro_sales(
     unmatched_keys: List[Dict[str, Any]] = []
     quality_wl_candidates: List[Tuple[str, str, str]] = []
     patches: Dict[str, Dict[str, str]] = {}
+    pending_logs: List[Dict[str, Any]] = []
 
     for key, sale_pairs in sorted(sales_by_key.items()):
         row = idx.get(key)
@@ -591,7 +584,14 @@ def sync_ec_exploration_wl_from_keitaro_sales(
                 row["lastAction"] = "wl-from-sales"
                 patch["lastAction"] = "wl-from-sales"
             if parts:
-                _ec_logs_append(cid, cname, "WL sync: " + "; ".join(parts))
+                pending_logs.append(
+                    {
+                        "camp_id": cid,
+                        "camp_name": cname,
+                        "verify": "WL sync: " + "; ".join(parts),
+                        "response": "ok",
+                    }
+                )
         if activated:
             patch["status"] = "active"
         patches[patch_key] = patch
@@ -602,6 +602,9 @@ def sync_ec_exploration_wl_from_keitaro_sales(
 
     if patches and not dry_run:
         _write_exploration_wl_patches(sheet_id, patches)
+
+    if pending_logs and not dry_run:
+        _flush_ec_logs(pending_logs)
 
     summary = {
         "dry_run": dry_run,
@@ -618,6 +621,7 @@ def sync_ec_exploration_wl_from_keitaro_sales(
         "details": details,
         "unmatched": unmatched_keys[:30],
         "quality_wl": quality_wl_result,
+        "logs_flushed": len(pending_logs) if not dry_run else 0,
     }
     logger.info(
         "EC exploration WL sync (%s): campaigns=%s appended=%s reactivated=%s activated=%s quality_wl=%s",
