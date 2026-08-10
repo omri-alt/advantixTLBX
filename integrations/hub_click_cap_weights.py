@@ -28,8 +28,22 @@ def _nipuhim_sheet_for_feed(date_str: str, feed_key: str) -> Optional[str]:
         return f"{date_str}_offers_5"
     if fk == "kelkoo4":
         return f"{date_str}_offers_4"
+    if fk == "adexa":
+        return f"{date_str}_offers_adexa"
     return None
 
+
+def nipuhim_clicks_per_merchant(feed_key: str) -> int:
+    """Domain-demand / hub capacity clicks per selected merchant for a Nipuhim feed."""
+    from config import (
+        DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO,
+        DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO,
+    )
+
+    fk = (feed_key or "").strip().lower()
+    if fk == "adexa":
+        return int(DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO)
+    return int(DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO)
 
 def _latest_daily_run_dir() -> Optional[Path]:
     meta = Path(__file__).resolve().parents[1] / "runtime" / "workflow_runs" / "daily.json"
@@ -59,6 +73,7 @@ def _merchant_counts_from_chosen_artifacts(
         "kelkoo1": "chosen1.json",
         "kelkoo2": "chosen2.json",
         "kelkoo5": "chosen5.json",
+        "adexa": "chosen_adexa.json",
     }
     out: Dict[str, Dict[str, int]] = {}
     logs: List[str] = []
@@ -92,7 +107,7 @@ def _merchant_counts_from_chosen_artifacts(
 def nipuhim_feed_geo_merchant_counts(
     *,
     date_str: Optional[str] = None,
-    feed_keys: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4"),
+    feed_keys: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4", "adexa"),
 ) -> Tuple[Dict[str, Dict[str, int]], List[str]]:
     """
     Distinct merchant count per feed+geo from today's Nipuhim offers tabs.
@@ -219,7 +234,7 @@ def nipuhim_feed_active_geos(
     *,
     date_str: Optional[str] = None,
     max_offers_per_geo: int = 60,
-    feed_keys: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4"),
+    feed_keys: Tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo5", "kelkoo4", "adexa"),
 ) -> Tuple[Dict[str, FrozenSet[str]], List[str]]:
     """
     Geos with at least one store-link row on today's ``{date}_offers_*`` tab per feed.
@@ -261,12 +276,14 @@ def hub_nipuhim_equal_weights_per_geo(
     feed_geos: Dict[str, FrozenSet[str]],
     *,
     active_feeds: frozenset[str],
+    merchant_counts: Optional[Dict[str, Dict[str, int]]] = None,
 ) -> Tuple[Dict[str, Dict[str, float]], List[str]]:
     """
-    Per-geo hub weights: equal split across feeds that have offers for that geo.
+    Per-geo hub weights across feeds that have offers for that geo.
 
-    Example: if kelkoo1+kelkoo2+kelkoo5 all have ``de`` offers → 33.33% each on ``de_*`` streams.
-    If only kelkoo1 has ``au`` offers → 100% to ``hub_nipuhim_kelkoo1`` on ``au_*`` streams.
+    When ``merchant_counts`` is provided, split by demand capacity
+    (``clicks_per_merchant(feed) × merchant_count``) so Adexa at 300/geo
+    gets a smaller share than Kelkoo at 500×merchants. Otherwise equal split.
     """
     all_geos: set[str] = set()
     for fk in active_feeds:
@@ -274,16 +291,40 @@ def hub_nipuhim_equal_weights_per_geo(
 
     weights_by_geo: Dict[str, Dict[str, float]] = {}
     logs: List[str] = []
+    use_capacity = bool(merchant_counts)
     for geo in sorted(all_geos):
         feeds_with_geo = sorted(fk for fk in active_feeds if geo in feed_geos.get(fk, frozenset()))
         if not feeds_with_geo:
             continue
-        share = 100.0 / len(feeds_with_geo)
-        weights_by_geo[geo] = {f"hub_nipuhim_{fk}": share for fk in feeds_with_geo}
-        logs.append(
-            f"Hub {geo}: {len(feeds_with_geo)} feed(s) @ {share:.2f}% each "
-            f"({', '.join(feeds_with_geo)})"
-        )
+        if use_capacity:
+            caps: Dict[str, float] = {}
+            for fk in feeds_with_geo:
+                mcount = max(1, int((merchant_counts or {}).get(fk, {}).get(geo) or 0))
+                caps[fk] = float(nipuhim_clicks_per_merchant(fk)) * float(mcount)
+            total = sum(caps.values())
+            if total <= 0:
+                share = 100.0 / len(feeds_with_geo)
+                weights_by_geo[geo] = {f"hub_nipuhim_{fk}": share for fk in feeds_with_geo}
+                logs.append(
+                    f"Hub {geo}: {len(feeds_with_geo)} feed(s) @ {share:.2f}% each "
+                    f"({', '.join(feeds_with_geo)})"
+                )
+            else:
+                weights_by_geo[geo] = {
+                    f"hub_nipuhim_{fk}": (caps[fk] / total) * 100.0 for fk in feeds_with_geo
+                }
+                parts = ", ".join(
+                    f"{fk}={weights_by_geo[geo][f'hub_nipuhim_{fk}']:.1f}%({int(caps[fk])}c)"
+                    for fk in feeds_with_geo
+                )
+                logs.append(f"Hub {geo}: capacity split {parts}")
+        else:
+            share = 100.0 / len(feeds_with_geo)
+            weights_by_geo[geo] = {f"hub_nipuhim_{fk}": share for fk in feeds_with_geo}
+            logs.append(
+                f"Hub {geo}: {len(feeds_with_geo)} feed(s) @ {share:.2f}% each "
+                f"({', '.join(feeds_with_geo)})"
+            )
     return weights_by_geo, logs
 
 

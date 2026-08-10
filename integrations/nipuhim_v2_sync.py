@@ -236,3 +236,191 @@ def sync_sheet_to_nipuhim_v2(
     print()
     print(f"Nipuhim v2 done. Updated {updated_total} offers on campaign {campaign_id}.")
     return 0
+
+
+def sync_adexa_sheet_to_nipuhim_v2(
+    sheet_name: str,
+    *,
+    max_offers: int = 1,
+) -> int:
+    """
+    Sync ``{date}_offers_adexa`` into NIPUHIM-adexa.
+
+    Store links are preferably Adexa Goffers smartlinks (one offer/geo; Adexa
+    rotates products). Homepage URLs fall back to LinksMerchant raino payloads.
+
+    Offer names use prefix ``adexa_{geo}_productN``. Returns process exit code (0 = ok).
+    """
+    from update_offers_from_sheet import read_sheet_today_offers, write_upload_status_to_sheet
+    from integrations.adexa import (
+        build_adexa_golink_keitaro_payload,
+        build_adexa_links_keitaro_payload,
+        is_adexa_golink_url,
+    )
+    from integrations.keitaro_child_campaigns import nipuhim_child_campaign_id
+
+    def _adexa_payload(geo: str, link: str) -> str:
+        if is_adexa_golink_url(link):
+            return build_adexa_golink_keitaro_payload(link)
+        return build_adexa_links_keitaro_payload(geo, link)
+
+    feed_key = "adexa"
+    feed_prefix = "adexa"
+    try:
+        campaign_id = nipuhim_child_campaign_id(feed_key)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
+
+    print(
+        f"Nipuhim v2 sync: sheet={sheet_name!r} adexa "
+        f"-> {feed_key} campaign_id={campaign_id} (device flows, max {max_offers}/geo, smartlink preferred)"
+    )
+
+    from integrations.nipuhim_stream_cleanup import (
+        cleanup_nipuhim_campaign_streams,
+        nipuhim_campaign_needs_stream_cleanup,
+    )
+
+    if nipuhim_campaign_needs_stream_cleanup(campaign_id):
+        print(f"  Cleaning legacy/fallback stream order on campaign {campaign_id} ...")
+        cleanup_logs, stats = cleanup_nipuhim_campaign_streams(
+            campaign_id, dry_run=False, label=feed_key
+        )
+        for line in cleanup_logs:
+            print(f"    {line}")
+
+    try:
+        by_geo, rows_by_geo = read_sheet_today_offers(sheet_name, max_per_geo=max_offers)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return 1
+    except Exception as e:
+        print(f"Error reading sheet: {e}")
+        return 1
+
+    if not by_geo:
+        print("No data in sheet (columns A=country, D=Store Link).")
+        return 0
+
+    stream_map = _device_stream_map(campaign_id)
+    print(f"Campaign id={campaign_id} device streams loaded: {len(stream_map)}")
+    print(f"Geos in sheet: {list(by_geo.keys())}")
+    print()
+
+    updated_total = 0
+    rows_updated: List[int] = []
+
+    for geo, store_links in sorted(by_geo.items()):
+        if not is_supported_geo(geo):
+            print(f"  {geo}: unsupported geo — skip")
+            continue
+
+        need_count = min(len(store_links), max_offers)
+        offers = get_geo_offers_sorted(geo, feed_prefix=feed_prefix)
+
+        if len(offers) < need_count:
+            new_count = need_count - len(offers)
+            print(f"  {geo}: only {len(offers)} offers, creating {new_count} more ...")
+            try:
+                start_idx = len(offers)
+                new_urls = store_links[start_idx : start_idx + new_count]
+                new_ids = create_next_geo_offers(
+                    geo,
+                    count=new_count,
+                    feed_prefix=feed_prefix,
+                    product_urls=new_urls or None,
+                )
+                print(f"  {geo}: created {new_ids}")
+                offers = get_geo_offers_sorted(geo, feed_prefix=feed_prefix)
+                for i, oid in enumerate(new_ids):
+                    link = new_urls[i] if i < len(new_urls) else ""
+                    payload = _adexa_payload(geo, link)
+                    if payload:
+                        update_offer_action_payload(int(oid), payload)
+                stream_map = _ensure_device_streams(campaign_id, geo)
+                keep_ids = [int(o["id"]) for o in offers[:need_count]]
+                _attach_offers_to_device_streams(
+                    campaign_id, geo, keep_ids, stream_map=stream_map
+                )
+                print(
+                    f"  {geo}: attached {len(keep_ids)} offers to "
+                    f"{geo}_desktop + {geo}_mobile"
+                )
+            except (KeitaroClientError, ValueError) as e:
+                print(f"  {geo}: ERROR creating/attaching offers: {e}")
+                return 1
+
+        if len(offers) > need_count:
+            keep_offers = offers[:need_count]
+            remove_offers = offers[need_count:]
+            print(
+                f"  {geo}: {len(offers)} offers > {need_count}, "
+                f"detaching {len(remove_offers)} from device flows ..."
+            )
+            try:
+                stream_map = _ensure_device_streams(campaign_id, geo)
+                keep_ids = [int(o["id"]) for o in keep_offers]
+                _attach_offers_to_device_streams(
+                    campaign_id, geo, keep_ids, stream_map=stream_map
+                )
+                for offer in remove_offers:
+                    oid = int(offer["id"])
+                    if remove_offer_best_effort(oid):
+                        print(f"    removed {offer.get('name')} id={oid}")
+                    else:
+                        print(
+                            f"    warning: offer {offer.get('name')} id={oid} "
+                            "not deleted (detached from v2 flows only)"
+                        )
+            except KeitaroClientError as e:
+                print(f"  {geo}: ERROR trimming offers: {e}")
+                return 1
+            offers = keep_offers
+
+        stream_map = _ensure_device_streams(campaign_id, geo)
+        offer_ids = [int(o["id"]) for o in offers[:need_count]]
+        if offer_ids:
+            _attach_offers_to_device_streams(
+                campaign_id, geo, offer_ids, stream_map=stream_map
+            )
+
+        if not offers:
+            print(f"  {geo}: no offers — skip")
+            continue
+
+        to_update = min(len(store_links), len(offers), max_offers)
+        if to_update == 0:
+            continue
+
+        print(f"  {geo}: updating {to_update} offer payload(s) (Adexa smartlink/golink) ...")
+        geo_row_numbers = rows_by_geo.get(geo, [])
+        for i in range(to_update):
+            offer = offers[i]
+            link = store_links[i]
+            new_payload = _adexa_payload(geo, link)
+            if not new_payload:
+                print(f"    {offer.get('name')}: ERROR empty Adexa payload")
+                return 1
+            try:
+                update_offer_action_payload(int(offer["id"]), new_payload)
+                kind = "golink" if is_adexa_golink_url(link) else "links"
+                print(f"    {offer.get('name')} id={offer['id']} [{kind}] -> {link[:60]}...")
+                updated_total += 1
+                if i < len(geo_row_numbers):
+                    rows_updated.append(geo_row_numbers[i])
+            except KeitaroClientError as e:
+                print(f"    {offer.get('name')}: ERROR {e}")
+                return 1
+
+    if rows_updated:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            write_upload_status_to_sheet(sheet_name, rows_updated, ts)
+            print(f"Sheet: wrote live + timestamp to {len(rows_updated)} rows.")
+        except Exception as e:
+            print(f"Warning: could not write sheet status: {e}")
+
+    print()
+    print(f"Nipuhim Adexa done. Updated {updated_total} offers on campaign {campaign_id}.")
+    return 0

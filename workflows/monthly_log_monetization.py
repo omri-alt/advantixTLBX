@@ -28,6 +28,15 @@ LOG_HEADERS_5 = [
     "Kelkoo monetization",
 ]
 
+# Adexa Nipuhim monthly log (same shape; col E = smartlink/links mode).
+LOG_HEADERS_ADEXA = [
+    "Run date",
+    "Country",
+    "Merchant ID",
+    "Merchant name",
+    "Adexa mode",
+]
+
 # Optional delay between Kelkoo link API calls (rate limits)
 DEFAULT_REQUEST_DELAY_SEC = 0.15
 
@@ -35,6 +44,12 @@ DEFAULT_REQUEST_DELAY_SEC = 0.15
 def month_log_sheet_title(year: int, month: int, feed: int) -> str:
     name = date(year, month, 1).strftime("%B").lower()
     return f"{name}_log_{feed}"
+
+
+def month_log_adexa_sheet_title(year: int, month: int) -> str:
+    """``august_log_adexa`` — once-per-month Adexa Nipuhim merchant history."""
+    name = date(year, month, 1).strftime("%B").lower()
+    return f"{name}_log_adexa"
 
 
 def country_to_kelkoo_geo(country: str) -> str:
@@ -470,3 +485,165 @@ def upsert_run_merchants_into_monthly_log(
     body.sort(key=lambda r: (str(r[0]), str(r[1]), str(r[2])))
     write_full_log_sheet(service, spreadsheet_id, log_name, [LOG_HEADERS_5] + body)
     return api_calls
+
+
+def _strip_adexa_title_tag(title: str) -> str:
+    s = str(title or "").strip()
+    for tag in (" [adexa-smartlink]", " [adexa-links]"):
+        if s.endswith(tag):
+            return s[: -len(tag)].strip()
+    return s
+
+
+def extract_adexa_offers_rows(
+    values: List[List[Any]],
+) -> List[Tuple[str, str, str, str]]:
+    """
+    From ``{date}_offers_adexa`` values: unique (country, mid, name, mode).
+    Mode inferred from Product Title tag when present.
+    """
+    if not values or len(values) < 2:
+        return []
+    headers = [str(h or "").strip().lower() for h in values[0]]
+
+    def idx(*names: str) -> int:
+        for n in names:
+            if n in headers:
+                return headers.index(n)
+        return -1
+
+    country_i = idx("country")
+    mid_i = idx("merchant id", "merchant_id", "merchantid")
+    title_i = idx("product title", "merchant name", "name")
+    if country_i < 0:
+        country_i = 0
+    if mid_i < 0:
+        mid_i = 1
+    if title_i < 0:
+        title_i = 2
+
+    seen: Set[Tuple[str, str]] = set()
+    out: List[Tuple[str, str, str, str]] = []
+    for row in values[1:]:
+        if country_i >= len(row) or mid_i >= len(row):
+            continue
+        co = str(row[country_i] or "").strip().upper()
+        mid = str(row[mid_i] or "").strip()
+        if not co or not mid:
+            continue
+        key = (co, mid)
+        if key in seen:
+            continue
+        seen.add(key)
+        title = str(row[title_i] or "").strip() if title_i < len(row) else ""
+        mode = ""
+        low = title.lower()
+        if "adexa-smartlink" in low:
+            mode = "smartlink"
+        elif "adexa-links" in low:
+            mode = "links"
+        name = _strip_adexa_title_tag(title)
+        out.append((co, mid, name, mode))
+    return out
+
+
+def load_adexa_month_used_merchants(
+    service: Any,
+    spreadsheet_id: str,
+    run_date_str: str,
+) -> Set[Tuple[str, str]]:
+    """
+    ``(geo_lower, merchant_id)`` already used this calendar month on the Adexa log.
+
+    Used to enforce once-per-month (one 300-click day) for Adexa Nipuhim picks.
+    """
+    if not run_date_str or len(run_date_str) < 7:
+        return set()
+    y, m = int(run_date_str[0:4]), int(run_date_str[5:7])
+    log_name = month_log_adexa_sheet_title(y, m)
+    raw = read_sheet_values_raw(service, spreadsheet_id, log_name, "A:C")
+    used: Set[Tuple[str, str]] = set()
+    if len(raw) < 2:
+        return used
+    for row in raw[1:]:
+        if len(row) < 3:
+            continue
+        co = str(row[1] or "").strip().lower()[:2]
+        mid = str(row[2] or "").strip()
+        if len(co) == 2 and co.isalpha() and mid:
+            used.add((co, mid))
+    return used
+
+
+def upsert_adexa_run_merchants_into_monthly_log(
+    service: Any,
+    spreadsheet_id: str,
+    run_date_str: str,
+) -> int:
+    """
+    Upsert merchants from ``{run_date}_offers_adexa`` into ``{month}_log_adexa``.
+
+    Returns number of new/updated merchant rows for this run date.
+    """
+    if not run_date_str or len(run_date_str) < 10:
+        return 0
+
+    y, m = int(run_date_str[0:4]), int(run_date_str[5:7])
+    log_name = month_log_adexa_sheet_title(y, m)
+    offers_name = f"{run_date_str}_offers_adexa"
+
+    offers_vals = read_sheet_values_raw(service, spreadsheet_id, offers_name)
+    pairs = extract_adexa_offers_rows(offers_vals)
+    if not pairs:
+        logger.info("No Adexa offers data for %s; skip monthly log upsert", offers_name)
+        return 0
+
+    raw = read_monthly_log_values_with_retries(service, spreadsheet_id, log_name)
+    if len(raw) < 2 and pairs and month_log_column_a_has_run_dates(service, spreadsheet_id, log_name):
+        msg = (
+            f"Refusing Adexa monthly log upsert for {log_name!r}: full-range read returned no data "
+            f"rows but column A still contains run dates. Re-run later; no changes were written."
+        )
+        logger.error(msg)
+        raise RuntimeError(msg)
+
+    body: List[List[Any]] = normalize_log_rows_to_five_cols(raw[1:]) if raw else []
+    rows_before_merge = len(body)
+
+    index: Dict[Tuple[str, str, str], int] = {}
+    for i, row in enumerate(body):
+        if len(row) < 3:
+            continue
+        rd = str(row[0] or "").strip()
+        co = str(row[1] or "").strip().upper()
+        mid = str(row[2] or "").strip()
+        if rd and co and mid:
+            index[(rd, co, mid)] = i
+
+    touched = 0
+    for country, mid, mname, mode in pairs:
+        key = (run_date_str, country, mid)
+        if key in index:
+            row = body[index[key]]
+            while len(row) < 5:
+                row.append("")
+            if mname and not str(row[3] if len(row) > 3 else "").strip():
+                row[3] = mname
+            if mode and not str(row[4] if len(row) > 4 else "").strip():
+                row[4] = mode
+            touched += 1
+        else:
+            body.append([run_date_str, country, mid, mname, mode])
+            touched += 1
+
+    if len(body) < rows_before_merge:
+        msg = (
+            f"Internal error: Adexa monthly log body shrank from {rows_before_merge} to {len(body)} "
+            f"rows for {log_name!r}; refusing write."
+        )
+        logger.error(msg)
+        raise RuntimeError(msg)
+
+    body.sort(key=lambda r: (str(r[0]), str(r[1]), str(r[2])))
+    write_full_log_sheet(service, spreadsheet_id, log_name, [LOG_HEADERS_ADEXA] + body)
+    return touched

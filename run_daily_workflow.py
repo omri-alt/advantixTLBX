@@ -118,6 +118,12 @@ def nipuhim_feed5_enabled() -> bool:
     return bool((FEED5_API_KEY or "").strip())
 
 
+def adexa_nipuhim_daily_enabled() -> bool:
+    from integrations.adexa_nipuhim_pick import adexa_nipuhim_enabled
+
+    return adexa_nipuhim_enabled()
+
+
 _MERCHANT_OVERRIDE_RE = re.compile(r"^([125]):([a-z]{2})=(.+)$", re.I)
 _MERCHANT_AUTO_OVERRIDE_RE = re.compile(r"^([125]):([a-z]{2})(?::(\d+))?$", re.I)
 _MERCHANT_SKIP_REPLACE_RE = re.compile(r"^([125]):([a-z]{2}):(\d+)=(\d+)$", re.I)
@@ -880,13 +886,15 @@ def run_nipuhim_v2_keitaro_sync(
     max_offers: int | None = None,
 ) -> bool:
     """
-    Sync today's offers sheets into NIPUHIM-feed1/2/5 child campaigns.
+    Sync today's offers sheets into NIPUHIM-feed1/2/5 (+ Adexa when enabled) child campaigns.
     Does not modify legacy HrQBXp sync.
     """
     offers_1 = f"{date_str}_offers_1"
     offers_2 = f"{date_str}_offers_2"
     offers_5 = f"{date_str}_offers_5"
+    offers_adexa = f"{date_str}_offers_adexa"
     use_feed5 = nipuhim_feed5_enabled()
+    use_adexa = adexa_nipuhim_daily_enabled()
     cap = max_offers if max_offers is not None else KEITARO_SYNC_MAX_OFFERS_PER_GEO
 
     print(
@@ -900,7 +908,7 @@ def run_nipuhim_v2_keitaro_sync(
     print()
 
     if feed1_traffic_only:
-        print("   Nipuhim v2: feed1 only (skipping feed2/feed5).")
+        print("   Nipuhim v2: feed1 only (skipping feed2/feed5/adexa).")
         return True
 
     if not run_update_offers_from_sheet_v2(offers_2, 2, max_offers=cap):
@@ -911,6 +919,18 @@ def run_nipuhim_v2_keitaro_sync(
     if use_feed5:
         if not run_update_offers_from_sheet_v2(offers_5, 5, max_offers=cap):
             print("   Nipuhim v2 feed5 sync failed.")
+            return False
+        print()
+
+    if use_adexa:
+        from integrations.nipuhim_v2_sync import sync_adexa_sheet_to_nipuhim_v2
+
+        print("   Nipuhim Adexa sync → NIPUHIM-adexa (1 merchant/geo) ...")
+        if sync_adexa_sheet_to_nipuhim_v2(
+            offers_adexa,
+            max_offers=1,
+        ) != 0:
+            print("   Nipuhim v2 adexa sync failed.")
             return False
         print()
 

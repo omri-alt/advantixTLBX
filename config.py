@@ -72,12 +72,12 @@ KEITARO_HUB_CAMPAIGN_ID = int((os.getenv("KEITARO_HUB_CAMPAIGN_ID") or "94").str
 KEITARO_HUB_BLEND_PCT = int((os.getenv("KEITARO_HUB_BLEND_PCT") or "50").strip() or "50")
 KEITARO_HUB_NIPUHIM_PCT = int((os.getenv("KEITARO_HUB_NIPUHIM_PCT") or "50").strip() or "50")
 # Comma list of feed keys that receive hub traffic (others stay attached at share 0).
-# Default: Kelkoo feeds only until adexa/yadore/shopnomix are wired in daily sync.
+# Includes ``adexa`` so NIPUHIM-adexa participates in hub rewire + domain-demand bill.
 # ``kelkoo4`` = 4th Kelkoo publisher (Keitaro child aliases blendFeed8 / nipuhFeed8).
 KEITARO_HUB_ACTIVE_FEEDS = tuple(
     x.strip().lower()
     for x in (
-        os.getenv("KEITARO_HUB_ACTIVE_FEEDS") or "kelkoo1,kelkoo2,kelkoo5,kelkoo4"
+        os.getenv("KEITARO_HUB_ACTIVE_FEEDS") or "kelkoo1,kelkoo2,kelkoo5,kelkoo4,adexa"
     ).split(",")
     if x.strip()
 )
@@ -511,6 +511,14 @@ try:
 except ValueError:
     DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO = 500
 DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO = max(0, DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO)
+# Soft launch: Adexa Nipuhim demand per merchant×geo (lower than Kelkoo default 500).
+try:
+    DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO = int(
+        (os.getenv("DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO") or "300").strip()
+    )
+except ValueError:
+    DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO = 300
+DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO = max(0, DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO)
 try:
     DOMAIN_DEMAND_TRILLION_PAUSE_FILL_PCT = float(
         (os.getenv("DOMAIN_DEMAND_TRILLION_PAUSE_FILL_PCT") or "98").strip()
@@ -1073,6 +1081,34 @@ if not ADEXA_API_KEY:
         or _read_env_fallback("KEY_ADEX")
     )
 ADEXA_API_KEY = (ADEXA_API_KEY or "").strip().lstrip("= ").strip().strip('"').strip("'")
+
+# Nipuhim daily: pick 1 Adexa merchant per geo → NIPUHIM-adexa (campaign 107).
+# Both modes supported: offers-only Goffers smartlink (preferred) or Static CPC links.
+ADEXA_NIPUHIM_ENABLED = str(
+    os.getenv("ADEXA_NIPUHIM_ENABLED") or "1"
+).strip().lower() in ("1", "true", "yes", "on")
+_ADEXA_NIPUHIM_GEOS_RAW = (os.getenv("ADEXA_NIPUHIM_GEOS") or "").strip()
+if _ADEXA_NIPUHIM_GEOS_RAW:
+    ADEXA_NIPUHIM_GEOS = tuple(
+        x.strip().lower()[:2]
+        for x in _ADEXA_NIPUHIM_GEOS_RAW.split(",")
+        if len(x.strip()) >= 2
+    )
+else:
+    # Skip BR (often empty on GetMerchant); keep main EU + Nordics.
+    ADEXA_NIPUHIM_GEOS = (
+        "fr",
+        "uk",
+        "de",
+        "it",
+        "es",
+        "nl",
+        "dk",
+        "no",
+        "se",
+        "be",
+        "at",
+    )
 
 # Shopnomix (feed6) — demand API campaign ids (tile/native vs coupons placements)
 SHOPNOMIX_BASE_URL = (os.getenv("SHOPNOMIX_BASE_URL") or "https://r.v2i8b.com").strip().rstrip("/")

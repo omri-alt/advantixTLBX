@@ -496,6 +496,7 @@ def resolve_hub_weight_context(
         hub_nipuhim_equal_weights_per_geo,
         hub_offer_weights_from_caps,
         nipuhim_feed_active_geos,
+        nipuhim_feed_geo_merchant_counts,
         nipuhim_feed_offer_slots,
     )
 
@@ -514,16 +515,23 @@ def resolve_hub_weight_context(
         feed_geos, geo_logs = nipuhim_feed_active_geos(
             date_str=date_str,
             max_offers_per_geo=nipuhim_max_offers_per_geo,
+            feed_keys=tuple(sorted(active)),
         )
         logs.extend(geo_logs)
+        merchant_counts, count_logs = nipuhim_feed_geo_merchant_counts(
+            date_str=date_str,
+            feed_keys=tuple(sorted(active)),
+        )
+        logs.extend(count_logs)
         weights_by_geo, geo_weight_logs = hub_nipuhim_equal_weights_per_geo(
             feed_geos,
             active_feeds=active,
+            merchant_counts=merchant_counts or None,
         )
         logs.extend(geo_weight_logs)
         if weights_by_geo:
             logs.append(
-                f"Hub weights: per-geo equal split across feeds with offers "
+                f"Hub weights: per-geo capacity split across feeds with offers "
                 f"({len(weights_by_geo)} geo(s))"
             )
             return HubWeightContext(
@@ -532,7 +540,7 @@ def resolve_hub_weight_context(
                 nipuhim_feed_caps=nipuhim_caps,
                 weights_by_geo=weights_by_geo,
                 nipuhim_feed_geos=feed_geos,
-                source="per_geo_equal",
+                source="per_geo_capacity",
                 logs=logs,
             )
         logs.append("Hub weights: no per-geo offer data — equal 33% global fallback")

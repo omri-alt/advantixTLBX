@@ -33,7 +33,10 @@ def _import_daily():
 
 def stage_monthly_log(ctx: RunContext) -> int:
     rdw = _import_daily()
-    from workflows.monthly_log_monetization import upsert_yesterday_merchants_into_monthly_log
+    from workflows.monthly_log_monetization import (
+        upsert_adexa_run_merchants_into_monthly_log,
+        upsert_yesterday_merchants_into_monthly_log,
+    )
 
     print(f"0a. Monthly log: yesterday's merchants + Kelkoo monetization (column E) ...")
     service = rdw.get_sheets_service()
@@ -58,6 +61,19 @@ def stage_monthly_log(ctx: RunContext) -> int:
     except Exception as e:
         print(f"   Monthly log monetization skipped: {e}")
         return 1
+
+    if rdw.adexa_nipuhim_daily_enabled():
+        print("0a½. Adexa monthly log: yesterday's offers_adexa merchants ...")
+        try:
+            n_ax = upsert_adexa_run_merchants_into_monthly_log(
+                service, rdw.SPREADSHEET_ID, ctx.yesterday_str
+            )
+            print(
+                f"   Adexa monthly log: upserted {n_ax} merchant row(s) "
+                f"(yesterday={ctx.yesterday_str})"
+            )
+        except Exception as e:
+            print(f"   Adexa monthly log upsert skipped: {e}")
     return 0
 
 
@@ -282,6 +298,36 @@ def _merchant_selection(ctx: RunContext) -> tuple[Dict[str, List[str]], Dict[str
     if rdw.nipuhim_feed5_enabled():
         ctx.write_json_artifact("ranked5.json", ranked5)
         ctx.write_json_artifact("chosen5.json", chosen5)
+
+    if rdw.adexa_nipuhim_daily_enabled():
+        from integrations.adexa_nipuhim_pick import pick_adexa_merchants_one_per_geo
+        from workflows.monthly_log_monetization import load_adexa_month_used_merchants
+
+        print("3b. Adexa Nipuhim: picking 1 merchant/geo (exclude used this month) ...")
+        adexa_geos = None
+        if partial_geos:
+            adexa_geos = sorted(partial_geos)
+        used: set = set()
+        try:
+            service = rdw.get_sheets_service()
+            used = load_adexa_month_used_merchants(
+                service, rdw.SPREADSHEET_ID, ctx.date_str
+            )
+        except Exception as e:
+            print(f"   Warning: could not load Adexa month used set: {e}")
+        chosen_adexa, details, adexa_logs = pick_adexa_merchants_one_per_geo(
+            adexa_geos,
+            exclude_used=used,
+        )
+        for line in adexa_logs:
+            print(f"   {line}")
+        ctx.write_json_artifact("chosen_adexa.json", chosen_adexa)
+        ctx.write_json_artifact("chosen_adexa_details.json", details)
+        ctx.write_json_artifact(
+            "adexa_month_used.json",
+            sorted([f"{g}:{m}" for g, m in used]),
+        )
+        print(f"   Adexa: {len(chosen_adexa)} geo(s) selected")
     return chosen1, chosen2, 0
 
 
@@ -377,6 +423,59 @@ def stage_pla_offers(ctx: RunContext) -> int:
         it5 = sum(1 for r in rows5 if str(r.get("Country", "")).strip().upper() == "IT")
         print(f"   {offers_5}: {len(rows5)} offers ({it5} for IT)")
 
+    rows_adexa: list = []
+    offers_adexa = f"{ctx.date_str}_offers_adexa"
+    if rdw.adexa_nipuhim_daily_enabled():
+        from integrations.adexa_nipuhim_pick import offer_rows_from_adexa_picks
+
+        print("4c. Adexa Nipuhim: writing offers sheet (1 merchant/geo) ...")
+        try:
+            details = ctx.read_json_artifact("chosen_adexa_details.json") or []
+        except Exception:
+            details = []
+        if not details:
+            # Re-pick if merchant_pick artifact missing (resume edge case).
+            from integrations.adexa_nipuhim_pick import pick_adexa_merchants_one_per_geo
+            from workflows.monthly_log_monetization import load_adexa_month_used_merchants
+
+            geos = sorted(partial_geos) if partial_geos else None
+            used = set()
+            try:
+                used = load_adexa_month_used_merchants(
+                    service, rdw.SPREADSHEET_ID, ctx.date_str
+                )
+            except Exception as e:
+                print(f"   Warning: could not load Adexa month used set: {e}")
+            chosen_adexa, details, adexa_logs = pick_adexa_merchants_one_per_geo(
+                geos,
+                exclude_used=used,
+            )
+            for line in adexa_logs:
+                print(f"   {line}")
+            ctx.write_json_artifact("chosen_adexa.json", chosen_adexa)
+            ctx.write_json_artifact("chosen_adexa_details.json", details)
+        rows_adexa_new = offer_rows_from_adexa_picks(details)
+        if merge_offers_tabs and partial_geos:
+            existing_ax = read_offers_sheet_rows(service, rdw.SPREADSHEET_ID, offers_adexa)
+            rows_adexa = merge_offers_replace_geos(
+                existing_ax, rows_adexa_new, set(partial_geos)
+            )
+        else:
+            rows_adexa = rows_adexa_new
+        write_offers_sheet(service, rdw.SPREADSHEET_ID, offers_adexa, rows_adexa)
+        print(f"   {offers_adexa}: {len(rows_adexa)} offers (1 merchant/geo)")
+        try:
+            from workflows.monthly_log_monetization import (
+                upsert_adexa_run_merchants_into_monthly_log,
+            )
+
+            n_ax = upsert_adexa_run_merchants_into_monthly_log(
+                service, rdw.SPREADSHEET_ID, ctx.date_str
+            )
+            print(f"   Adexa monthly log: upserted {n_ax} merchant row(s) for {ctx.date_str}")
+        except Exception as e:
+            print(f"   Adexa monthly log upsert skipped: {e}")
+
     run_monthly_log_today = not offers_and_keitaro_only
     if run_monthly_log_today:
         print("4b. Monthly log: upserting today's merchants (no monetization checks) ...")
@@ -418,6 +517,8 @@ def stage_pla_offers(ctx: RunContext) -> int:
     }
     if rdw.nipuhim_feed5_enabled():
         meta.update({"offers_5": offers_5, "rows5": len(rows5)})
+    if rdw.adexa_nipuhim_daily_enabled():
+        meta.update({"offers_adexa": offers_adexa, "rows_adexa": len(rows_adexa)})
     ctx.write_json_artifact("offers_meta.json", meta)
     return 0
 
@@ -449,7 +550,10 @@ def stage_keitaro_sync(ctx: RunContext) -> int:
     rows1 = int(meta.get("rows1") or 0)
     rows2 = int(meta.get("rows2") or 0)
     rows5 = int(meta.get("rows5") or 0)
-    if not rows1 and not rows2 and (not rdw.nipuhim_feed5_enabled() or not rows5):
+    rows_adexa = int(meta.get("rows_adexa") or 0)
+    has_kelkoo = bool(rows1 or rows2 or (rdw.nipuhim_feed5_enabled() and rows5))
+    has_adexa = bool(rdw.adexa_nipuhim_daily_enabled() and rows_adexa)
+    if not has_kelkoo and not has_adexa:
         print("6. Nipuhim Keitaro sync (NIPUHIM-feed*) ...")
         print("   No offers generated for any feed today; skipping.")
         return 0
