@@ -118,16 +118,16 @@
             {% if key == "daily" or key == "daily-legacy" %}
             <p><strong>Workflow UI:</strong></p>
             <ul>
-              <li><strong>Run scope</strong> — countries → <code>--geo</code>; date → <code>--date</code>; toggles for <code>--skip-keitaro</code> and <code>--skip-blend-sync</code>.</li>
+              <li><strong>Run scope</strong> — countries → <code>--geo</code>; date → <code>--date</code>; toggles for <code>--skip-keitaro</code> and optional legacy Blend campaign sync (<code>--blend-sync</code>, off by default).</li>
               <li><strong>Merchant tools</strong> — Normal | Manual ID (<code>--merchant-override</code>) | Platform rank (<code>--merchant-auto-override</code>) | Swap merchant (<code>--offers-and-keitaro-only --merchant-skip-replace</code>).</li>
               <li><strong>Advanced</strong> — rare free-text flags. Nipuhim/Blend hub v2 follow <code>NIPUHIM_BLEND_V2_ENABLED</code> / <code>BLEND_HUB_V2_ENABLED</code>; override with <code>--skip-nipuhim-v2</code> / <code>--skip-blend-v2</code> / force flags only when needed.</li>
             </ul>
             <table>
               <thead><tr><th>Flag</th><th>Description</th><th>Example</th></tr></thead>
               <tbody>
-                <tr><td><code>--skip-keitaro</code></td><td>Skip Nipuhim + Blend Keitaro sync.</td><td><code>--skip-keitaro</code></td></tr>
+                <tr><td><code>--skip-keitaro</code></td><td>Skip Nipuhim NIPUHIM-feed* sync, hub rewire, and related Keitaro stages.</td><td><code>--skip-keitaro</code></td></tr>
                 <tr><td><code>--skip-blend</code></td><td>Skip entire Blend block.</td><td><code>--skip-blend</code></td></tr>
-                <tr><td><code>--skip-blend-sync</code></td><td>Skip Blend sheet → Keitaro (step 7b) only.</td><td></td></tr>
+                <tr><td><code>--skip-blend-sync</code> / <code>--blend-sync</code></td><td>Legacy Blend campaign (id 2) sync is <strong>off by default</strong>; pass <code>--blend-sync</code> to enable. Live Blend traffic uses BLEND-feed* (step 7c).</td><td><code>--blend-sync</code></td></tr>
                 <tr><td><code>--feed1-traffic-only</code></td><td>Feed1 Keitaro only, then Blend as configured.</td><td></td></tr>
                 <tr><td><code>--single-merchant-per-geo</code></td><td>Legacy one merchant per geo for PLA.</td><td></td></tr>
                 <tr><td><code>--skip-sales-report</code></td><td>Skip MTD <code>SalesMTD_*</code> sheet refresh in late-conversion step.</td><td></td></tr>

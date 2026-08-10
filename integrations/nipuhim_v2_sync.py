@@ -1,7 +1,7 @@
 """
 Sync today's offers sheet into a per-feed NIPUHIM-feed* Keitaro campaign (geo × device flows).
 
-Legacy ``HrQBXp`` sync is unchanged; this populates hub child campaigns for pre-cutover testing.
+This is the live Nipuhim path under hub campaign 94 (daily workflow step 6).
 """
 from __future__ import annotations
 

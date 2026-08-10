@@ -481,8 +481,8 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "title": "Daily workflow (v2 staged)",
         "script": "run_daily_workflow_v2.py",
         "description": (
-            "Full daily pipeline (v2 staged): feeds, reports, offers, legacy Keitaro (HrQBXp), "
-            "Nipuhim v2 (NIPUHIM-feed*), Blend — one subprocess per stage."
+            "Full daily pipeline (v2 staged): feeds, reports, offers, Nipuhim Keitaro "
+            "(NIPUHIM-feed* under hub 94), Blend — one subprocess per stage."
         ),
         "group": "daily-automations",
         "args_hint": "Rare flags only, e.g. --dry-run --skip-late-sales --feed1-traffic-only",
@@ -494,7 +494,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "prepend_args": ["--legacy"],
         "description": (
             "Same Kelkoo daily steps as v2 staged, but one Python process (no per-stage subprocesses). "
-            "Legacy Keitaro (HrQBXp) + optional Nipuhim v2. Use if staged v2 has issues."
+            "Nipuhim → NIPUHIM-feed* (hub 94). Use if staged v2 has issues."
         ),
         "group": "daily-automations",
         "args_hint": "Rare flags only, e.g. --dry-run --skip-late-sales --feed1-traffic-only",
@@ -2247,6 +2247,7 @@ def ui_workflow(workflow_key: str):
             extra_args = re.sub(r"--date\s+\S+", "", extra_args, flags=re.IGNORECASE)
             extra_args = re.sub(r"--skip-keitaro\b", "", extra_args, flags=re.IGNORECASE)
             extra_args = re.sub(r"--skip-blend-sync\b", "", extra_args, flags=re.IGNORECASE)
+            extra_args = re.sub(r"--blend-sync\b", "", extra_args, flags=re.IGNORECASE)
             extra_args = re.sub(r"--merchant-override\s+\S+", "", extra_args, flags=re.IGNORECASE)
             extra_args = re.sub(r"--merchant-auto-override\s+\S+", "", extra_args, flags=re.IGNORECASE)
             extra_args = re.sub(r"--merchant-skip-replace\s+\S+", "", extra_args, flags=re.IGNORECASE)
@@ -2269,9 +2270,10 @@ def ui_workflow(workflow_key: str):
             ):
                 extra_args = f"--skip-keitaro {extra_args}".strip()
 
-            blend_sync_mode = (request.form.get("daily_blend_sync") or "on").strip().lower()
-            if blend_sync_mode == "off":
-                extra_args = f"--skip-blend-sync {extra_args}".strip()
+            blend_sync_mode = (request.form.get("daily_blend_sync") or "").strip().lower()
+            # Legacy Blend campaign sync is opt-in (near-idle vs BLEND-feed*).
+            if blend_sync_mode in ("on", "1", "yes", "true"):
+                extra_args = f"--blend-sync {extra_args}".strip()
 
             mode = (request.form.get("daily_merchant_mode") or "none").strip().lower()
             if mode == "manual":

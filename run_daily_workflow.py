@@ -247,7 +247,8 @@ def _parse_daily_workflow_argv(argv: List[str]) -> dict:
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     skip_keitaro = "--skip-keitaro" in argv
     skip_blend = "--skip-blend" in argv
-    skip_blend_sync = "--skip-blend-sync" in argv
+    # Legacy Blend campaign (id 2) is near-idle vs BLEND-feed*; opt in with --blend-sync.
+    skip_blend_sync = "--blend-sync" not in argv
     skip_blend_prune = "--skip-blend-prune" in argv
     feed1_traffic_only = "--feed1-traffic-only" in argv
     merchants_per_geo = 1 if "--single-merchant-per-geo" in argv else 3
@@ -468,9 +469,9 @@ def run_blend_daily_steps(
     if skip_keitaro:
         print("   7b. Skipping legacy Blend Keitaro sync (--skip-keitaro).")
     elif skip_blend_sync:
-        print("   7b. Skipping legacy Blend Keitaro sync (--skip-blend-sync).")
+        print("   7b. Skipping legacy Blend campaign sync (default; pass --blend-sync to enable).")
     else:
-        print("   7b. blend_sync_from_sheet (prune auto='v' non-monetized + Keitaro) ...")
+        print("   7b. blend_sync_from_sheet (legacy Blend campaign + prune auto='v') ...")
         if not run_blend_sync_from_sheet():
             print("   Blend Keitaro sync failed.")
             sys.exit(1)
@@ -889,7 +890,7 @@ def run_nipuhim_v2_keitaro_sync(
     cap = max_offers if max_offers is not None else KEITARO_SYNC_MAX_OFFERS_PER_GEO
 
     print(
-        f"6b. Nipuhim v2 sync -> NIPUHIM-feed* campaigns "
+        f"6. Nipuhim Keitaro sync → NIPUHIM-feed* campaigns "
         f"(up to {cap} offers per geo, device flows) ..."
     )
 
@@ -1360,68 +1361,18 @@ def run_pla_offers_keitaro_blend_tail(
         return
 
     print(
-        f"6. Syncing feed1 to Keitaro (up to {KEITARO_SYNC_MAX_OFFERS_PER_GEO} offers per geo from sheet) ..."
+        f"6. Nipuhim Keitaro sync → NIPUHIM-feed* "
+        f"(up to {KEITARO_SYNC_MAX_OFFERS_PER_GEO} offers per geo) ..."
     )
-    feed1_extra_args = ["--traffic-feed1-only"] if feed1_traffic_only else None
+    print("   (Legacy HrQBXp sync skipped — live traffic is hub 94 → NIPUHIM-feed*.)")
 
-    if not rows1:
-        print("   No feed1 offers generated; skipping feed1 sync.")
-    elif not run_update_offers_from_sheet(offers_1, 1, extra_args=feed1_extra_args):
-        print("   Feed1 sync failed.")
+    if not nipuhim_v2_enabled:
+        print("   Nipuhim sync disabled (NIPUHIM_BLEND_V2_ENABLED=0 / --skip-nipuhim-v2).")
+    elif not run_nipuhim_v2_keitaro_sync(
+        date_str,
+        feed1_traffic_only=feed1_traffic_only,
+    ):
         sys.exit(1)
-
-    if feed1_traffic_only:
-        print("   Feed2 traffic disabled (skipping feed2 sync).")
-        if nipuhim_v2_enabled:
-            print()
-            if not run_nipuhim_v2_keitaro_sync(
-                date_str,
-                feed1_traffic_only=True,
-            ):
-                sys.exit(1)
-        maybe_run_hub_campaign_rewire(
-            date_str, skip_keitaro=False, skip_hub_rewire=skip_hub_rewire
-        )
-        print()
-        if run_blend_steps:
-            run_blend_daily_steps(
-                skip_keitaro=False,
-                skip_blend=skip_blend,
-                skip_blend_sync=skip_blend_sync,
-                skip_blend_prune=skip_blend_prune,
-                blend_v2_enabled=blend_v2_enabled,
-                only_geo=blend_only_geo,
-            )
-        run_domain_demand_daily_step(date_str)
-        run_hub_blend_child_flows_daily_step(date_str)
-        run_trillion_activate_daily_step(date_str)
-        print("Done. Feed1 traffic only synced to Keitaro.")
-        if run_daily_conversion_postbacks:
-            run_optional_daily_conversion_postbacks(postback_report_date)
-        return
-
-    print("   Syncing feed2 to Keitaro ...")
-    if not rows2:
-        print("   No feed2 offers generated; skipping feed2 sync.")
-    elif not run_update_offers_from_sheet(offers_2, 2):
-        print("   Feed2 sync failed.")
-        sys.exit(1)
-
-    if use_feed5:
-        print("   Syncing feed5 to Keitaro ...")
-        if not rows5:
-            print("   No feed5 offers generated; skipping feed5 sync.")
-        elif not run_update_offers_from_sheet(offers_5, 5):
-            print("   Feed5 sync failed.")
-            sys.exit(1)
-
-    if nipuhim_v2_enabled:
-        print()
-        if not run_nipuhim_v2_keitaro_sync(
-            date_str,
-            feed1_traffic_only=feed1_traffic_only,
-        ):
-            sys.exit(1)
 
     maybe_run_hub_campaign_rewire(
         date_str, skip_keitaro=False, skip_hub_rewire=skip_hub_rewire
@@ -1439,8 +1390,7 @@ def run_pla_offers_keitaro_blend_tail(
     run_domain_demand_daily_step(date_str)
     run_hub_blend_child_flows_daily_step(date_str)
     run_trillion_activate_daily_step(date_str)
-    done_msg = "Done. Feeds synced to Keitaro (feed1+feed2+feed5)." if use_feed5 else "Done. Both feeds synced to Keitaro."
-    print(done_msg)
+    print("Done. Offers synced to NIPUHIM-feed* / Blend as configured.")
     if run_daily_conversion_postbacks:
         run_optional_daily_conversion_postbacks(postback_report_date)
 

@@ -28,6 +28,7 @@ def _skip_keitaro(ctx: RunContext) -> bool:
 
 
 def _skip_nipuhim_v2(ctx: RunContext) -> bool:
+    """Skip Nipuhim Keitaro sync (step 6 → NIPUHIM-feed*)."""
     if _skip_keitaro(ctx):
         return True
     if ctx.pa.get("skip_nipuhim_v2"):
@@ -120,22 +121,15 @@ STAGES: tuple[StageDef, ...] = (
     StageDef("combined_offers", "5 - Combined offers tab", ("pla_offers",)),
     StageDef(
         "keitaro_sync",
-        "6 - Keitaro sync (legacy HrQBXp)",
+        "6 - Nipuhim Keitaro sync (NIPUHIM-feed*)",
         ("combined_offers",),
-        skip_if=_skip_keitaro,
-        fatal=True,
-    ),
-    StageDef(
-        "keitaro_sync_nipuhim_v2",
-        "6b - Nipuhim v2 sync (NIPUHIM-feed*)",
-        ("keitaro_sync",),
         skip_if=_skip_nipuhim_v2,
         fatal=True,
     ),
     StageDef(
         "hub_rewire",
         "7d - Hub campaign 94 (nipuhim kelkoo feeds)",
-        ("keitaro_sync_nipuhim_v2",),
+        ("keitaro_sync",),
         skip_if=_skip_hub_rewire,
         fatal=True,
     ),
@@ -207,17 +201,22 @@ def resolve_stage_order(
     only_stage: Optional[str] = None,
 ) -> List[StageDef]:
     """Return stages to run respecting skip rules and optional from/only filters."""
+    # Older resumes / CLI used a separate 6b stage id.
+    alias = {
+        "keitaro_sync_nipuhim_v2": "keitaro_sync",
+    }
     if only_stage:
+        only_stage = alias.get(only_stage, only_stage)
         return [stage_by_id(only_stage)]
 
     out: List[StageDef] = []
-    seen_skip = False
     for s in STAGES:
         if s.skip_if and s.skip_if(ctx):
             continue
         out.append(s)
 
     if from_stage:
+        from_stage = alias.get(from_stage, from_stage)
         try:
             idx = next(i for i, st in enumerate(out) if st.id == from_stage)
         except StopIteration:

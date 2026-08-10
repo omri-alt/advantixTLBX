@@ -439,56 +439,10 @@ def stage_combined_offers(ctx: RunContext) -> int:
 
 
 def stage_keitaro_sync(ctx: RunContext) -> int:
-    rdw = _import_daily()
-    pa = ctx.pa
-    feed1_traffic_only = bool(pa.get("feed1_traffic_only"))
-    offers_1 = f"{ctx.date_str}_offers_1"
-    offers_2 = f"{ctx.date_str}_offers_2"
+    """Sync today's offers into NIPUHIM-feed* hub children (live path under campaign 94).
 
-    meta = ctx.read_json_artifact("offers_meta.json")
-    rows1 = int(meta.get("rows1") or 0)
-    rows2 = int(meta.get("rows2") or 0)
-    rows5 = int(meta.get("rows5") or 0)
-    use_feed5 = rdw.nipuhim_feed5_enabled()
-
-    if not rows1 and not rows2 and (not use_feed5 or not rows5):
-        print("6. Syncing to Keitaro ...")
-        print("   No offers generated for any feed today; skipping Keitaro sync.")
-        return 0
-
-    print(
-        f"6. Syncing feed1 to Keitaro (up to {rdw.KEITARO_SYNC_MAX_OFFERS_PER_GEO} offers per geo from sheet) ..."
-    )
-    feed1_extra_args = ["--traffic-feed1-only"] if feed1_traffic_only else None
-    if not rows1:
-        print("   No feed1 offers generated; skipping feed1 sync.")
-    elif not rdw.run_update_offers_from_sheet(offers_1, 1, extra_args=feed1_extra_args):
-        print("   Feed1 sync failed.")
-        return 1
-
-    if feed1_traffic_only:
-        print("   Feed2 traffic disabled (skipping feed2 sync).")
-        return 0
-
-    print("   Syncing feed2 to Keitaro ...")
-    if not rows2:
-        print("   No feed2 offers generated; skipping feed2 sync.")
-    elif not rdw.run_update_offers_from_sheet(offers_2, 2):
-        print("   Feed2 sync failed.")
-        return 1
-
-    if use_feed5:
-        offers_5 = f"{ctx.date_str}_offers_5"
-        print("   Syncing feed5 to Keitaro ...")
-        if not rows5:
-            print("   No feed5 offers generated; skipping feed5 sync.")
-        elif not rdw.run_update_offers_from_sheet(offers_5, 5):
-            print("   Feed5 sync failed.")
-            return 1
-    return 0
-
-
-def stage_keitaro_sync_nipuhim_v2(ctx: RunContext) -> int:
+    Legacy HrQBXp sync was removed from the daily pipeline (near-zero live traffic).
+    """
     rdw = _import_daily()
     pa = ctx.pa
     meta = ctx.read_json_artifact("offers_meta.json")
@@ -496,7 +450,7 @@ def stage_keitaro_sync_nipuhim_v2(ctx: RunContext) -> int:
     rows2 = int(meta.get("rows2") or 0)
     rows5 = int(meta.get("rows5") or 0)
     if not rows1 and not rows2 and (not rdw.nipuhim_feed5_enabled() or not rows5):
-        print("6b. Nipuhim v2 sync ...")
+        print("6. Nipuhim Keitaro sync (NIPUHIM-feed*) ...")
         print("   No offers generated for any feed today; skipping.")
         return 0
     if not rdw.run_nipuhim_v2_keitaro_sync(
@@ -505,6 +459,11 @@ def stage_keitaro_sync_nipuhim_v2(ctx: RunContext) -> int:
     ):
         return 1
     return 0
+
+
+def stage_keitaro_sync_nipuhim_v2(ctx: RunContext) -> int:
+    """Compat alias for older ``--from-stage keitaro_sync_nipuhim_v2`` / ``--only-stage``."""
+    return stage_keitaro_sync(ctx)
 
 
 def stage_blend(ctx: RunContext) -> int:
