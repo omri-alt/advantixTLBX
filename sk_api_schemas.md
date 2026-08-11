@@ -85,11 +85,114 @@ Observed object response (minimum known fields):
     "name": "string"
   },
   "cpc": 0.0,
-  "trackingUrl": "https://..."
+  "dailyBudget": 25.0,
+  "trackingUrl": "https://...",
+  "allowDeepLink": true,
+  "geoTargeting": ["DE"],
+  "partnerChannels": ["1", "2", "3", "5", "6", "8", "9", "12", "13", "14", "15", "16"]
 }
 ```
 
-## 3) Campaign Publisher Stats
+**Note:** campaign GET does **not** return attached allow/block control lists. Manage lists via `/control-lists` (below).
+
+### POST `/affiliate/v2/campaigns/{id}` — pause / activate
+
+Body is a partial update (not full PUT):
+
+```json
+{ "active": false }
+```
+
+```json
+{ "active": true }
+```
+
+- Implemented as `pause_campaign` / `activate_campaign` in `integrations/autoserver/sk.py`.
+- Some archived campaigns reject status changes: `{"error":"You cannot change the status of campaign with id \"…\"."}` (and PUT may return Access Denied).
+
+### PUT `/affiliate/v2/campaigns/{id}`
+
+Full campaign update (tracking URL, targeting, etc.). Unknown extra JSON keys are often accepted with HTTP 200 but **ignored** (e.g. stuffing `allowListId` on the campaign body does nothing).
+
+## 3) Control lists (allow / block)
+
+UI name: **Allow & Block Lists**. API resource: **`control-lists`**.
+
+### GET `/affiliate/v2/control-lists`
+
+Paginated account lists (`items`, `itemsCount`, `hasMore`).
+
+```json
+{
+  "itemsCount": 30,
+  "items": [
+    {
+      "id": 59583,
+      "name": "YadJuneWL",
+      "itemsCount": null,
+      "type": "allow",
+      "global": false,
+      "updated": "2026-08-03 07:06:40"
+    }
+  ],
+  "hasMore": false
+}
+```
+
+- `type`: `"allow"` | `"block"`
+- `global: true` — e.g. the account global block list
+
+### GET `/affiliate/v2/control-lists/{id}`
+
+Full list detail (live-verified):
+
+```json
+{
+  "id": 59583,
+  "name": "YadJuneWL",
+  "itemsCount": 74,
+  "type": "allow",
+  "global": false,
+  "updated": "2026-08-03 07:06:40",
+  "campaigns": [
+    { "id": 388915, "name": "shopapothekeYADWL-AT-all" }
+  ],
+  "subIds": ["s1bf84bf08ddb9e4", "s2a818b0646682f5"]
+}
+```
+
+- **Allow list:** only listed `subIds` may buy on associated campaigns.
+- **Block list:** all traffic except listed `subIds`.
+
+### PUT `/affiliate/v2/control-lists/{id}`
+
+Replace list membership. Working body shape (live-verified):
+
+```json
+{
+  "name": "YadJuneWL",
+  "type": "allow",
+  "global": false,
+  "campaigns": [388915, 388210],
+  "subIds": ["s1bf84bf08ddb9e4"]
+}
+```
+
+- `campaigns` may be a list of **integer IDs** (preferred for updates) or objects `{id, name}` as returned by GET.
+- **Constraint:** a campaign may belong to **only one allow list**. Adding a campaign that is already on another allow list returns HTTP 400:
+  `{"error":"Some of the specified campaign are invalid or associated to another list!"}`
+  Fix: PUT the other list first **without** that campaign id, then PUT this list **with** it included.
+- PATCH is not allowed (405). Nested `/control-lists/{id}/campaigns` routes were 404 as of 2026-08.
+
+### Operational lists used in this account (examples)
+
+| id | name | type | role |
+| -- | ---- | ---- | ---- |
+| 59583 | YadJuneWL | allow | Yadore / YADWL converting-source allow list |
+| 58846 | MayNewWL | allow | earlier allow pool (campaigns may need moving off before YadJuneWL) |
+| 48365 | Global block list | block | global |
+
+## 4) Campaign Publisher Stats
 
 ### GET `/affiliate/v2/stats/by-campaign?from={YYYY-MM-DD}&to={YYYY-MM-DD}&page={n}`
 
@@ -147,7 +250,7 @@ Possible error response observed in code:
 }
 ```
 
-## 4) Minimal typed models (for migration scripts)
+## 5) Minimal typed models (for migration scripts)
 
 ```python
 from typing import TypedDict, NotRequired, List
@@ -190,8 +293,10 @@ class SKStatsResponse(TypedDict):
     items: List[SKPublisherStat]
 ```
 
-## Notes for upcoming Keitaro migration
+## Notes
 
 - Tracking-link update work should use full campaign payload from `GET /campaigns/{id}` before `PUT`.
 - `trackingUrl` exists on campaign-level payload and is already read/updated in legacy code.
 - Rate-limit handling is needed (`429` / `"Too Many Requests"`), currently done by simple 60s retries.
+- By-publisher `from`/`to` windows are limited (~3 calendar months); older ranges may return empty.
+- Do not confuse **control-list allow** (SK-side traffic restriction) with **`SKtrackExploration.wl`** (sheet JSON of converting subIds protected by the hourly optimizer).

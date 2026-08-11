@@ -148,6 +148,16 @@ python scripts/keitaro_feed_balance_bootstrap_notes.py --campaign-id 63
 - **Adexa** rows: outer shell `https://shopli.city/raino?rain=` then inner `https://api.adexad.com/LinksMerchant.php?siteID=…&country=<geo>&merchantUrl=<encoded>&clickid={subid}`. The `rain` value is quoted so `=`, `&`, `?`, and Keitaro macros stay readable (only `merchantUrl` is heavily encoded), matching the proven **feed4** style more closely than a fully percent-encoded inner URL.
 - **Yadore** rows: outer `https://shopli.city/rainotest?rain=` then inner `api.yadore.com/v2/d` with encoded merchant URL, market, `placementId={subid}`, `projectId` from `YADORE_PROJECT_ID` (with a documented fallback in the script).
 
+## Yadore — placements & monetization notes
+
+- **No Adexa-style static CPC flag.** Catalog (`GET /v2/deeplink/merchant`) exposes `estimatedCpc`, `isSmartlink`, `hasSmartlinkHomepage` / `hasExternalHomepage` — CPC is always estimated.
+- **Two publisher sites / API keys** (separate inventories):
+  - **Coupon-inclusive:** `YADORE_API_KEY` + `YADORE_PLACEMENT_ID` / project fallback `WAF4IibbRqGG`, probes with `isCouponing=true`.
+  - **No-coupon:** `YADORE_NO_COUPON_API_KEY` + `YADORE_NO_COUPON_PLACEMENT_ID` (e.g. `shopli.city_no_couponing`), `isCouponing=false`.
+- Merchant catalogs **differ by key** (e.g. DE coupon ≫ no-coupon count). Always probe the placement you intend to buy on.
+- AM smartlink-only brands were opened as SK **`YADWL`** exploration campaigns; dual-placement audits live under `data/yadore_am_dual_placement_audit.*`.
+- Prefer checking **July (or prior month) SK spend vs Keitaro `sub_id_6` `*-SK` revenue** before reopening paused tests (`data/yadore_am_reopen_july_perf.*`).
+
 ## SourceKnowledge (SK) — what was added
 
 ### API key
@@ -158,7 +168,20 @@ python scripts/keitaro_feed_balance_bootstrap_notes.py --campaign-id 63
 
 ### Schemas / reference
 
-- `sk_api_schemas.md` — inferred JSON shapes for advertisers, campaigns, stats endpoints (from legacy usage + docs). Update when live samples differ.
+- `sk_api_schemas.md` — advertisers, campaigns, stats, **control-lists (allow/block)**. Update when live samples differ.
+
+### Exploration `wl` vs SK allow list (do not mix up)
+
+| Layer | What it is | Typical use |
+| ----- | ---------- | ----------- |
+| **`SKtrackExploration.wl`** | Sheet JSON list of converting **subIds** for that campaign | Protects those sources from hourly bidFactor-0 blacklist; starts **empty** until sales prove a source |
+| **`SKtrackWL` tab** | Separate tracker for dedicated WL campaigns | Unmon checks only — **no** auto-blacklist pass |
+| **SK control-list `type=allow`** | Account-level allow list attached to campaigns via API | **Only** listed subIds can buy — use this to run “exploration on our converting sources” before opening full auction |
+
+- API: `GET/PUT /affiliate/v2/control-lists/{id}` (see `sk_api_schemas.md`). Campaign GET does not show lists.
+- A campaign can sit on **only one allow list**; move it off the old list before adding to another.
+- Yadore converting-source pool used operationally: control list **`59583` / `YadJuneWL`** (`data/yadore_am_control_list_59583.json` after the 2026-08 attach run).
+- Pause/activate: `POST /campaigns/{id}` with `{"active": false|true}` (`pause_campaign` / `activate_campaign` in `integrations/autoserver/sk.py`). Some IDs are permanently blocked from status change.
 
 ### Single-campaign tracking URL migration
 
@@ -254,4 +277,4 @@ python update_tracking_urls.py          # live run
 
 ---
 
-*Last aligned with repo state: Keitaro multi-feed feed-balance notes bootstrap, daily workflow merchant rerun/override UI, Blend Adexa offer URL shape, SK migration tooling, and `KEYSK` configuration.*
+*Last aligned with repo state: SK control-lists (allow/block) API, Yadore dual placements vs static-CPC absence, exploration `wl` vs SK allow-list distinction, Keitaro feed-balance notes, Blend Adexa/Yadore URL shapes.*

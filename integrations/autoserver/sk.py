@@ -241,6 +241,19 @@ def pause_campaign(id):
     return r.json()
 
 
+def activate_campaign(id):
+    """POST ``{"active": True}`` — inverse of ``pause_campaign``."""
+    endpoint = f"https://api.sourceknowledge.com/affiliate/v2/campaigns/{id}"
+    body = {"active": True}
+    r = requests.post(endpoint, headers=headers_sk, json=body)
+    match r.status_code:
+        case 200:
+            print(f"campaign {id} activated")
+        case _:
+            print(f"error in activating campaign {id}")
+    return r.json() if r.text else {"error": f"HTTP {r.status_code}"}
+
+
 #11. 15.06 recives advertisers parameters - [advertiser name , merch url with https:// , category ID ] and creates a new advertiser
 def new_advertiser(name, merch_url, catego):
     endpoint = "https://api.sourceknowledge.com/affiliate/v2/advertisers"
