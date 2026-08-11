@@ -1,8 +1,8 @@
 # Kelkoo daily conversion postbacks (probe per geo → process ready → hourly retry).
 # Copy to crontab on the server if Flask/Gunicorn is not running 24/7.
 #
-# Default in-app schedule: 09:00 Asia/Jerusalem (KELKOO_DAILY_POSTBACK_SCHEDULER_*).
+# Default in-app schedule: 08:00 Asia/Jerusalem (KELKOO_DAILY_POSTBACK_SCHEDULER_*).
 # Retries for missing countries are scheduled in-process (+1h, up to MAX_ATTEMPTS).
 # Run log: data/kelkoo_daily_postbacks_run_log.json
 #
-# 0 9 * * * cd /path/to/KLblend && /usr/bin/python3 cli/run_kelkoo_daily_postbacks_scheduled.py >> runtime/logs/kelkoo_daily_postbacks.log 2>&1
+# 0 8 * * * cd /path/to/KLblend && /usr/bin/python3 cli/run_kelkoo_daily_postbacks_scheduled.py >> runtime/logs/kelkoo_daily_postbacks.log 2>&1

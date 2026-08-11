@@ -69,6 +69,7 @@ def start_background_schedulers() -> None:
     from scheduler.adexa_yadore_daily_postbacks_scheduler import (
         start_adexa_yadore_daily_postbacks_scheduler,
     )
+    from scheduler.daily_workflow_scheduler import start_daily_workflow_scheduler
     from integrations.overview_snapshot import (
         start_daily_overview_scheduler,
         start_overview_snapshot_bootstrap,
@@ -83,6 +84,7 @@ def start_background_schedulers() -> None:
         ("Effinity daily sales postbacks", start_effinity_sales_scheduler),
         ("Kelkoo daily conversion postbacks", start_kelkoo_daily_postbacks_scheduler),
         ("Adexa/Yadore daily conversion postbacks", start_adexa_yadore_daily_postbacks_scheduler),
+        ("Daily workflow v2", start_daily_workflow_scheduler),
         ("Overview snapshot", start_daily_overview_scheduler),
         ("Overview bootstrap", start_overview_snapshot_bootstrap),
         ("Blend cap progress", start_blend_cap_progress_scheduler),

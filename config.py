@@ -212,7 +212,7 @@ except Exception:
 EFFINITY_SALES_SCHEDULER_MINUTE = max(0, min(59, EFFINITY_SALES_SCHEDULER_MINUTE))
 
 # Kelkoo daily click/sale postbacks (raw report → Keitaro). Probe per geo, process ready
-# countries immediately, retry missing geos hourly. Default: 09:00 Asia/Jerusalem.
+# countries immediately, retry missing geos hourly. Default: 08:00 Asia/Jerusalem.
 KELKOO_DAILY_POSTBACK_SCHEDULER_ENABLED = (
     os.getenv("KELKOO_DAILY_POSTBACK_SCHEDULER_ENABLED", "1").strip().lower()
     not in ("0", "false", "no")
@@ -222,10 +222,10 @@ KELKOO_DAILY_POSTBACK_SCHEDULER_TZ = (
 ).strip()
 try:
     KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = int(
-        (os.getenv("KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL") or "9").strip()
+        (os.getenv("KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL") or "8").strip()
     )
 except Exception:
-    KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = 9
+    KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = 8
 KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL = max(0, min(23, KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL))
 try:
     KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE = int(
@@ -263,6 +263,34 @@ _kd_pending = (os.getenv("KELKOO_DAILY_POSTBACK_PENDING_PATH") or "").strip()
 KELKOO_DAILY_POSTBACK_PENDING_PATH = _kd_pending or str(
     Path(__file__).resolve().parent / "runtime" / "kelkoo_daily_postbacks_pending.json"
 )
+
+# Daily workflow v2 (run_daily_workflow_v2.py). Default: 09:00 Asia/Jerusalem.
+# Skips when already running or a successful run already started today (scheduler TZ).
+DAILY_WORKFLOW_SCHEDULER_ENABLED = (
+    os.getenv("DAILY_WORKFLOW_SCHEDULER_ENABLED", "1").strip().lower()
+    not in ("0", "false", "no")
+)
+DAILY_WORKFLOW_SCHEDULER_TZ = (
+    os.getenv("DAILY_WORKFLOW_SCHEDULER_TZ") or "Asia/Jerusalem"
+).strip()
+try:
+    DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL = int(
+        (os.getenv("DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL") or "9").strip()
+    )
+except Exception:
+    DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL = 9
+DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL = max(0, min(23, DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL))
+try:
+    DAILY_WORKFLOW_SCHEDULER_MINUTE = int(
+        (os.getenv("DAILY_WORKFLOW_SCHEDULER_MINUTE") or "0").strip()
+    )
+except Exception:
+    DAILY_WORKFLOW_SCHEDULER_MINUTE = 0
+DAILY_WORKFLOW_SCHEDULER_MINUTE = max(0, min(59, DAILY_WORKFLOW_SCHEDULER_MINUTE))
+# Optional CLI flags appended to run_daily_workflow_v2.py (e.g. --skip-late-sales).
+DAILY_WORKFLOW_SCHEDULER_EXTRA_ARGS = (
+    os.getenv("DAILY_WORKFLOW_SCHEDULER_EXTRA_ARGS") or ""
+).strip()
 
 # Adexa + Yadore daily conversion postbacks (clicks). Default: 12:30 Asia/Jerusalem.
 # Yadore sales stay on ``YADORE_SALES_SCHEDULER_*`` (default 10:00); this job covers

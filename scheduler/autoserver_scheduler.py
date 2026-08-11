@@ -235,6 +235,18 @@ def _run_adexa_yadore_daily_postbacks_scheduled() -> None:
     run_adexa_yadore_daily_postbacks_scheduled(triggered_by="cron")
 
 
+def _run_daily_workflow_scheduled() -> None:
+    """Daily workflow v2 (default 09:00 Asia/Jerusalem)."""
+    from config import DAILY_WORKFLOW_SCHEDULER_ENABLED
+    from scheduler.daily_workflow_scheduler import run_daily_workflow_scheduled
+
+    if not DAILY_WORKFLOW_SCHEDULER_ENABLED:
+        logger.info("Daily workflow skipped (DAILY_WORKFLOW_SCHEDULER_ENABLED=0)")
+        return
+    logger.info("=== Daily workflow v2 cron ===")
+    run_daily_workflow_scheduled(triggered_by="cron")
+
+
 def _hourly_signal_broadcast() -> None:
     """Legacy single-threaded broadcast (manual catch-up / trigger-all internals)."""
     hour = _current_scheduler_hour()
@@ -381,6 +393,9 @@ def start_autoserver_scheduler() -> None:
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL,
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE,
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ,
+        DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL,
+        DAILY_WORKFLOW_SCHEDULER_MINUTE,
+        DAILY_WORKFLOW_SCHEDULER_TZ,
         SK_EXPLORATION_WL_SYNC_HOUR_LOCAL,
         SK_EXPLORATION_WL_SYNC_MINUTE,
         SK_EXPLORATION_WL_SYNC_TZ,
@@ -609,6 +624,30 @@ def start_autoserver_scheduler() -> None:
         coalesce=True,
         misfire_grace_time=3600,
     )
+    try:
+        from zoneinfo import ZoneInfo
+
+        daily_wf_tz = ZoneInfo(DAILY_WORKFLOW_SCHEDULER_TZ or "Asia/Jerusalem")
+    except Exception:
+        logger.warning(
+            "Invalid DAILY_WORKFLOW_SCHEDULER_TZ %r; using Asia/Jerusalem",
+            DAILY_WORKFLOW_SCHEDULER_TZ,
+        )
+        from zoneinfo import ZoneInfo
+
+        daily_wf_tz = ZoneInfo("Asia/Jerusalem")
+    _scheduler.add_job(
+        _run_daily_workflow_scheduled,
+        trigger="cron",
+        hour=int(DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL),
+        minute=int(DAILY_WORKFLOW_SCHEDULER_MINUTE),
+        timezone=daily_wf_tz,
+        id="daily_workflow_v2",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
     _scheduler.add_job(
         _write_scheduler_heartbeat,
         trigger="interval",
@@ -648,7 +687,8 @@ def start_autoserver_scheduler() -> None:
             "EC WL sync at %02d:%02d %s; "
             "Effinity MTD postbacks at %02d:%02d %s; "
             "Kelkoo daily postbacks at %02d:%02d %s; "
-            "Adexa/Yadore daily postbacks at %02d:%02d %s)"
+            "Adexa/Yadore daily postbacks at %02d:%02d %s; "
+            "Daily workflow v2 at %02d:%02d %s)"
         ),
         len(_automation_listeners) - 2,
         int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES),
@@ -676,6 +716,9 @@ def start_autoserver_scheduler() -> None:
         int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
         int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE),
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ,
+        int(DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL),
+        int(DAILY_WORKFLOW_SCHEDULER_MINUTE),
+        DAILY_WORKFLOW_SCHEDULER_TZ,
     )
 
 

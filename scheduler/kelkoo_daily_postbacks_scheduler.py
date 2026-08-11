@@ -1,5 +1,5 @@
 """
-Scheduled Kelkoo daily conversion postbacks (09:00 Asia/Jerusalem by default).
+Scheduled Kelkoo daily conversion postbacks (08:00 Asia/Jerusalem by default).
 
 1. Probe each feed+geo raw report (HTTP OK + parseable TSV = ready).
 2. Run postbacks for ready geos immediately.

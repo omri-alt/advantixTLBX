@@ -1,0 +1,8 @@
+# Daily workflow v2 (run_daily_workflow_v2.py via cli/run_workflow_job.py).
+# Copy to crontab on the server if Flask/Gunicorn is not running 24/7.
+#
+# Default in-app schedule: 09:00 Asia/Jerusalem (DAILY_WORKFLOW_SCHEDULER_*).
+# Skips when already running or a successful run already started today.
+# Status: runtime/workflow_runs/daily.json
+#
+# 0 9 * * * cd /path/to/KLblend && /usr/bin/python3 cli/run_daily_workflow_scheduled.py >> runtime/logs/daily_workflow_scheduled.log 2>&1

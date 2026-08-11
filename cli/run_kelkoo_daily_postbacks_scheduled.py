@@ -10,7 +10,7 @@ Cron-friendly entry (no Flask required):
 
 In-process schedule (when Control Center / Gunicorn runs): APScheduler cron
 ``kelkoo_daily_conversion_postbacks`` at ``KELKOO_DAILY_POSTBACK_SCHEDULER_*``
-(default 09:00 Asia/Jerusalem). Missing geos retry hourly up to
+(default 08:00 Asia/Jerusalem). Missing geos retry hourly up to
 ``KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS``.
 """
 from __future__ import annotations
