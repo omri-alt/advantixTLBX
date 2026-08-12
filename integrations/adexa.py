@@ -12,12 +12,18 @@ reports ``mode=smartlink`` and builds a Keitaro golink URL with ``clickid={subid
 When both LinksMerchant and golink work, ``mode=links+smartlink`` and both paths are reported.
 ``normalize_merchant_homepage_url()`` fixes common ``www`` typos (e.g. ``wwwlampenwelt.de``).
 
-**GetMerchant** — list merchants for a country (uses apiKey + siteID).
+**GetMerchant** — list CPC merchants for a country (uses apiKey + siteID).
   Your working URL shape::
 
     https://api.adexad.com/v1/GetMerchant/siteID={id}&apiKey={key}&country={geo}&format=json
 
   ``country`` is passed lowercase (``fr``, ``uk``, …) to match existing scripts.
+
+**GetMerchantCPA** — list CPA merchants for a country (same auth/params as GetMerchant)::
+
+    https://api.adexad.com/v1/GetMerchantCPA/siteID={id}&apiKey={key}&country={geo}&format=json
+
+  Monetization bulk presents CPC and CPA as separate columns (``adexa_cpc`` / ``adexa_cpa``).
 """
 from __future__ import annotations
 
@@ -32,7 +38,12 @@ from integrations.monetization_geo import two_letter_lower
 
 ADEXA_LINKS_MERCHANT_URL = "https://api.adexad.com/LinksMerchant.php"
 ADEXA_GET_MERCHANT_BASE = "https://api.adexad.com/v1/GetMerchant"
+ADEXA_GET_MERCHANT_CPA_BASE = "https://api.adexad.com/v1/GetMerchantCPA"
 ADEXA_KEITARO_RAIN_SHELL = "https://shopli.city/raino?rain="
+
+# Per-process caches for bulk monetization (geo → merchant rows).
+_GET_MERCHANT_CACHE: Dict[str, List[Dict[str, Any]]] = {}
+_GET_MERCHANT_CPA_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 
 # Default geos for bulk scripts (same order as your Adexa feed tooling).
 ADEXA_DEFAULT_GEOS: List[str] = [
@@ -264,6 +275,7 @@ def find_get_merchant_by_url(
     site_id: Optional[str] = None,
     api_key: Optional[str] = None,
     merchants: Optional[List[Dict[str, Any]]] = None,
+    use_cache: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Match a GetMerchant row by homepage host (``url`` field)."""
     needle = _merchant_host_key(merchant_url)
@@ -272,9 +284,49 @@ def find_get_merchant_by_url(
     rows = merchants
     if rows is None:
         try:
-            rows = get_merchants(country_iso2, site_id=site_id, api_key=api_key)
+            fetch = get_merchants_cached if use_cache else get_merchants
+            rows = fetch(country_iso2, site_id=site_id, api_key=api_key)
         except AdexaClientError:
             return None
+    return _best_merchant_host_match(needle, rows or [])
+
+
+def find_get_merchant_by_id(
+    merchant_id: str,
+    country_iso2: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    merchants: Optional[List[Dict[str, Any]]] = None,
+    use_cache: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Match a GetMerchant row by ``id`` / ``merchantId``."""
+    mid = str(merchant_id or "").strip()
+    if not mid:
+        return None
+    rows = merchants
+    if rows is None:
+        try:
+            fetch = get_merchants_cached if use_cache else get_merchants
+            rows = fetch(country_iso2, site_id=site_id, api_key=api_key)
+        except AdexaClientError:
+            return None
+    for m in rows or []:
+        if not isinstance(m, dict):
+            continue
+        row_mid = str(m.get("id") or m.get("merchantId") or m.get("merchant_id") or "").strip()
+        if row_mid == mid:
+            return m
+    return None
+
+
+def _best_merchant_host_match(
+    needle_host: str,
+    rows: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    needle = (needle_host or "").strip().lower()
+    if not needle:
+        return None
     best: Optional[Tuple[int, Dict[str, Any]]] = None
     for m in rows or []:
         if not isinstance(m, dict):
@@ -294,22 +346,47 @@ def find_get_merchant_by_url(
     return best[1] if best else None
 
 
-def find_get_merchant_by_id(
+def find_get_merchant_cpa_by_url(
+    merchant_url: str,
+    country_iso2: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    merchants: Optional[List[Dict[str, Any]]] = None,
+    use_cache: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Match a GetMerchantCPA row by homepage host."""
+    needle = _merchant_host_key(merchant_url)
+    if not needle:
+        return None
+    rows = merchants
+    if rows is None:
+        try:
+            fetch = get_merchants_cpa_cached if use_cache else get_merchants_cpa
+            rows = fetch(country_iso2, site_id=site_id, api_key=api_key)
+        except AdexaClientError:
+            return None
+    return _best_merchant_host_match(needle, rows or [])
+
+
+def find_get_merchant_cpa_by_id(
     merchant_id: str,
     country_iso2: str,
     *,
     site_id: Optional[str] = None,
     api_key: Optional[str] = None,
     merchants: Optional[List[Dict[str, Any]]] = None,
+    use_cache: bool = True,
 ) -> Optional[Dict[str, Any]]:
-    """Match a GetMerchant row by ``id`` / ``merchantId``."""
+    """Match a GetMerchantCPA row by merchant id."""
     mid = str(merchant_id or "").strip()
     if not mid:
         return None
     rows = merchants
     if rows is None:
         try:
-            rows = get_merchants(country_iso2, site_id=site_id, api_key=api_key)
+            fetch = get_merchants_cpa_cached if use_cache else get_merchants_cpa
+            rows = fetch(country_iso2, site_id=site_id, api_key=api_key)
         except AdexaClientError:
             return None
     for m in rows or []:
@@ -319,6 +396,72 @@ def find_get_merchant_by_id(
         if row_mid == mid:
             return m
     return None
+
+
+def merchant_cpa_monetization_check(
+    merchant_url: str,
+    country_iso2: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    merchants: Optional[List[Dict[str, Any]]] = None,
+    merchant_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Adexa CPA catalog check via GetMerchantCPA (separate from CPC LinksMerchant / GetMerchant).
+
+    Returns ``found=True`` when the homepage (or merchant_id) appears in the CPA list.
+    """
+    probe_url = normalize_merchant_homepage_url(merchant_url) or (merchant_url or "").strip()
+    mid = str(merchant_id or "").strip()
+    out: Dict[str, Any] = {
+        "found": False,
+        "mode": "none",
+        "note": "",
+        "merchant_id": "",
+        "merchant_name": "",
+        "commission": "",
+        "raw_merchant": None,
+        "probe_url": probe_url,
+    }
+    merchant = find_get_merchant_cpa_by_url(
+        probe_url,
+        country_iso2,
+        site_id=site_id,
+        api_key=api_key,
+        merchants=merchants,
+    )
+    if not merchant and mid:
+        merchant = find_get_merchant_cpa_by_id(
+            mid,
+            country_iso2,
+            site_id=site_id,
+            api_key=api_key,
+            merchants=merchants,
+        )
+    if not merchant:
+        out["note"] = "not_in_cpa_catalog"
+        return out
+
+    out["found"] = True
+    out["mode"] = "cpa"
+    out["merchant_id"] = str(merchant.get("id") or merchant.get("merchantId") or mid or "")
+    out["merchant_name"] = str(merchant.get("name") or merchant.get("merchantName") or "")
+    out["raw_merchant"] = merchant
+    for key in ("commission", "cpa", "cpaCommission", "payout", "estimatedCpa"):
+        val = merchant.get(key)
+        if val is not None and str(val).strip():
+            out["commission"] = str(val).strip()
+            break
+    offer = merchant.get("offer") if isinstance(merchant.get("offer"), dict) else {}
+    if not out["commission"] and offer:
+        for key in ("commission", "cpa", "staticCpa", "payout"):
+            val = offer.get(key)
+            if val is not None and str(val).strip():
+                out["commission"] = str(val).strip()
+                break
+    out["note"] = "get_merchant_cpa"
+    return out
 
 
 def _adexa_goffers_country_token(country_iso2: str) -> str:
@@ -729,6 +872,32 @@ def _get_merchant_request_url(site_id: str, api_key: str, country_lower: str) ->
     return f"{ADEXA_GET_MERCHANT_BASE}/siteID={sid}&apiKey={key}&country={cty}&format=json"
 
 
+def _get_merchant_cpa_request_url(site_id: str, api_key: str, country_lower: str) -> str:
+    """Build GetMerchantCPA URL (same param shape as GetMerchant)."""
+    sid = quote(str(site_id).strip(), safe="")
+    key = quote(str(api_key).strip(), safe="")
+    cty = quote((country_lower or "").strip().lower(), safe="")
+    return f"{ADEXA_GET_MERCHANT_CPA_BASE}/siteID={sid}&apiKey={key}&country={cty}&format=json"
+
+
+def clear_adexa_merchant_list_caches() -> None:
+    """Clear GetMerchant / GetMerchantCPA caches (call at start of bulk monetization)."""
+    _GET_MERCHANT_CACHE.clear()
+    _GET_MERCHANT_CPA_CACHE.clear()
+
+
+def _parse_merchant_list_payload(data: Any, *, label: str) -> List[Dict[str, Any]]:
+    if isinstance(data, list):
+        return [m for m in data if isinstance(m, dict)]
+    if isinstance(data, dict) and "error" in data:
+        raise AdexaClientError(str(data.get("error")), response_body=str(data)[:500])
+    if isinstance(data, dict):
+        inner = data.get("merchants") or data.get("data") or data.get("result")
+        if isinstance(inner, list):
+            return [m for m in inner if isinstance(m, dict)]
+    raise AdexaClientError(f"Unexpected {label} response shape", response_body=str(data)[:500])
+
+
 def get_merchants(
     country: str,
     *,
@@ -771,15 +940,85 @@ def get_merchants(
     except Exception as e:
         raise AdexaClientError(f"GetMerchant JSON parse error: {e}", response_body=r.text[:500]) from e
 
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict) and "error" in data:
-        raise AdexaClientError(str(data.get("error")), response_body=str(data)[:500])
-    if isinstance(data, dict):
-        inner = data.get("merchants") or data.get("data") or data.get("result")
-        if isinstance(inner, list):
-            return inner
-    raise AdexaClientError("Unexpected GetMerchant response shape", response_body=str(data)[:500])
+    return _parse_merchant_list_payload(data, label="GetMerchant")
+
+
+def get_merchants_cpa(
+    country: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: int = 120,
+) -> List[Dict[str, Any]]:
+    """
+    GET GetMerchantCPA for one country (CPA catalog).
+
+    Same auth/params as ``get_merchants``. Returns ``[]`` when the country has no CPA inventory.
+    """
+    sid = (site_id or ADEXA_SITE_ID or "").strip()
+    key = (api_key or ADEXA_API_KEY or "").strip()
+    if not sid:
+        raise AdexaClientError("ADEXA_SITE_ID / AdexSiteID is not set")
+    if not key:
+        raise AdexaClientError("ADEXA_API_KEY / KeyAdex is not set")
+
+    c = (country or "").strip().lower()[:2]
+    if len(c) != 2:
+        raise AdexaClientError(f"Invalid country: {country!r}")
+
+    url = _get_merchant_cpa_request_url(sid, key, c)
+    try:
+        r = requests.get(url, timeout=timeout, headers={"Accept": "application/json"})
+    except requests.RequestException as e:
+        raise AdexaClientError(str(e)) from e
+
+    if r.status_code != 200:
+        raise AdexaClientError(
+            f"GetMerchantCPA HTTP {r.status_code}",
+            status_code=r.status_code,
+            response_body=(r.text[:800] if r.text else None),
+        )
+
+    try:
+        data = r.json()
+    except Exception as e:
+        raise AdexaClientError(
+            f"GetMerchantCPA JSON parse error: {e}", response_body=r.text[:500]
+        ) from e
+
+    return _parse_merchant_list_payload(data, label="GetMerchantCPA")
+
+
+def get_merchants_cached(
+    country: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: int = 120,
+) -> List[Dict[str, Any]]:
+    """GetMerchant with per-process geo cache (for bulk monetization)."""
+    c = (country or "").strip().lower()[:2]
+    if c in _GET_MERCHANT_CACHE:
+        return _GET_MERCHANT_CACHE[c]
+    rows = get_merchants(c, site_id=site_id, api_key=api_key, timeout=timeout)
+    _GET_MERCHANT_CACHE[c] = rows
+    return rows
+
+
+def get_merchants_cpa_cached(
+    country: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: int = 120,
+) -> List[Dict[str, Any]]:
+    """GetMerchantCPA with per-process geo cache (for bulk monetization)."""
+    c = (country or "").strip().lower()[:2]
+    if c in _GET_MERCHANT_CPA_CACHE:
+        return _GET_MERCHANT_CPA_CACHE[c]
+    rows = get_merchants_cpa(c, site_id=site_id, api_key=api_key, timeout=timeout)
+    _GET_MERCHANT_CPA_CACHE[c] = rows
+    return rows
 
 
 ADEXA_STATS_RAW_BASE = "https://api.adexad.com/v1/StatsRaw"
