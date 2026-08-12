@@ -186,7 +186,8 @@
         <summary>
           <span class="bc-summary-title">Domain demand fill (hub 94)</span>
           <span class="bc-summary-stats" id="domain-demand-summary-line">Loading…</span>
-          <button type="button" class="btn btn-sm" id="domain-demand-refresh-btn" title="Refresh delivered clicks from Keitaro">Refresh</button>
+          <a class="btn btn-sm" href="{{ url_for('ui_trillion_yesterday_review') }}" style="text-decoration:none;" onclick="event.stopPropagation();">Yesterday review</a>
+          <button type="button" class="btn btn-sm" id="domain-demand-refresh-btn" title="Refresh delivered clicks from Keitaro" onclick="event.stopPropagation();">Refresh</button>
         </summary>
         <div class="bc-panel-body">
           <p class="muted" style="margin:10px 0;font-size:13px;max-width:860px;">
@@ -229,6 +230,9 @@
         </a>
         <a class="ql-card" href="{{ url_for('ui_nipuhim_zp_target_review') }}">
           <h3>Nipuhim ZP target review</h3>
+        </a>
+        <a class="ql-card" href="{{ url_for('ui_trillion_yesterday_review') }}">
+          <h3>Trillion yesterday review</h3>
         </a>
         <a class="ql-card" href="{{ url_for('ui_matchmaking_hub') }}">
           <h3>Matchmaking</h3>
