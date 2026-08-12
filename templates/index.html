@@ -698,6 +698,9 @@
         parts.push("green " + counts.green + " · yellow " + counts.yellow + " · red " + counts.red);
         if (data && data.trillion_hint) parts.push("hub " + data.trillion_hint);
       }
+      if (data && data.trillion_resume && (data.trillion_resume.resumed || 0) > 0) {
+        parts.push("resumed " + data.trillion_resume.resumed + " Trillion segment(s)");
+      }
       if (data && data.updated_at) {
         parts.push("updated " + String(data.updated_at).replace("T", " ").replace("Z", " UTC"));
       }
@@ -743,7 +746,9 @@
           "<td><span class=\"bc-pill " + esc(lvl) + "\">" + esc(lvl) + "</span></td>" +
           "<td><div class=\"bc-bar\"><span class=\"" + esc(lvl) + "\" style=\"width:" + bw + "%\"></span></div></td>" +
           "<td>" + esc(s.trillion_status || "—") + "</td>" +
-          "<td>" + esc(s.trillion_hint || "") + "</td>" +
+          "<td>" + esc(s.trillion_hint || "") +
+          (s.trillion_hint === "RESUME_NEEDED" ? " <span class=\"muted\">(click Refresh)</span>" : "") +
+          "</td>" +
           "</tr>"
         );
       }).join("");

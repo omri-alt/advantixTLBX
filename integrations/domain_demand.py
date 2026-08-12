@@ -815,10 +815,14 @@ def build_domain_demand_payload(
         delivered = float(hub_seg_clicks.get((geo, device), 0))
         tr = tr_map.get((geo, device)) or {}
         pct = _fill_pct(delivered, demand)
-        if tr.get("is_paused") or (tr and not tr.get("is_active")):
-            hint = "ALREADY_PAUSED"
-        elif demand > 0 and pct is not None and pct >= pause_pct:
+        remaining = _remaining(demand, delivered)
+        paused = bool(tr.get("is_paused")) or (tr and not tr.get("is_active"))
+        if demand > 0 and pct is not None and pct >= pause_pct:
             hint = "PAUSE_SUGGESTED"
+        elif paused and demand > 0 and remaining > 0 and (pct is None or pct < pause_pct):
+            hint = "RESUME_NEEDED"
+        elif paused:
+            hint = "ALREADY_PAUSED"
         else:
             hint = "OPEN"
         summary_by_geo_rows.append(
@@ -827,7 +831,7 @@ def build_domain_demand_payload(
                 "device": device,
                 "demand_clicks": int(round(demand)),
                 "delivered_clicks": int(round(delivered)),
-                "remaining": _remaining(demand, delivered),
+                "remaining": remaining,
                 "fill_pct": pct,
                 "trillion_campaign": tr.get("campaign") or "",
                 "trillion_status": tr.get("status") or "",

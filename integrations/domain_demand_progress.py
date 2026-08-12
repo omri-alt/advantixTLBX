@@ -272,8 +272,12 @@ def build_domain_demand_progress_payload(*, reason: str = "api") -> Dict[str, An
     return _ui_payload_from_raw(raw, reason=reason)
 
 
-def refresh_domain_demand_progress(*, reason: str = "manual") -> Dict[str, Any]:
-    """Force refresh: Keitaro delivered + write sheet (demand lines unchanged)."""
+def refresh_domain_demand_progress(
+    *,
+    reason: str = "manual",
+    resume_trillion: bool = True,
+) -> Dict[str, Any]:
+    """Force refresh: Keitaro delivered + write sheet; optionally resume underfilled Trillion."""
     global _refresh_running
     with _refresh_lock:
         if _refresh_running:
@@ -282,6 +286,8 @@ def refresh_domain_demand_progress(*, reason: str = "manual") -> Dict[str, Any]:
                 return {**cached, "refresh_skipped": True, "message": "refresh already running"}
         _refresh_running = True
     try:
+        from config import DOMAIN_TRILLION_GUARD_ENABLED, KEYTR
+        from integrations.domain_demand_guard import run_trillion_activate_for_demand
         from integrations.domain_demand import (
             sync_domain_demand,
             today_domain_demand_ready,
@@ -289,13 +295,40 @@ def refresh_domain_demand_progress(*, reason: str = "manual") -> Dict[str, Any]:
         )
 
         day = _calendar_day()
+        trillion_resume: Optional[Dict[str, Any]] = None
         if not today_domain_demand_ready(date_str=day):
             payload = _awaiting_payload(day=day, reason=reason)
         else:
             raw = sync_domain_demand(
                 rebuild_demand=False, dry_run=False, reason=f"ui:{reason}"
             )
+            if (
+                resume_trillion
+                and DOMAIN_TRILLION_GUARD_ENABLED
+                and (KEYTR or "").strip()
+            ):
+                trillion_resume = run_trillion_activate_for_demand(
+                    dry_run=False,
+                    reason=f"ui:{reason}",
+                    segments=raw.get("summary_by_geo"),
+                )
+                if int(trillion_resume.get("resumed") or 0) > 0:
+                    raw = sync_domain_demand(
+                        rebuild_demand=False,
+                        dry_run=False,
+                        reason=f"ui:{reason}_post_resume",
+                    )
             payload = _ui_payload_from_raw(raw, reason=reason)
+            if trillion_resume is not None:
+                payload["trillion_resume"] = {
+                    "resumed": trillion_resume.get("resumed"),
+                    "errors": trillion_resume.get("errors") or [],
+                    "actions": [
+                        a
+                        for a in (trillion_resume.get("actions") or [])
+                        if str(a.get("status") or "") in ("resumed", "error")
+                    ],
+                }
         _write_cache(payload)
         return payload
     finally:
@@ -328,7 +361,7 @@ def get_api_payload(*, allow_background_refresh: bool = True) -> Dict[str, Any]:
 
         def _bg() -> None:
             try:
-                refresh_domain_demand_progress(reason="stale_api")
+                refresh_domain_demand_progress(reason="stale_api", resume_trillion=True)
             except Exception as e:
                 logger.exception("Background domain-demand progress refresh failed: %s", e)
 
