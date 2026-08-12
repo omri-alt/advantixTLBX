@@ -77,10 +77,73 @@ def list_campaigns(
 
 
 def update_ron_active(api_key: str, *, ron: str, active: bool) -> Dict[str, Any]:
-    params = {
+    return update_ron(api_key, ron=ron, active=active)
+
+
+def update_ron(
+    api_key: str,
+    *,
+    ron: str,
+    active: Optional[bool] = None,
+    my_bid: Optional[float] = None,
+    daily_limit: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Update RON campaign settings (``update_ron`` API mode)."""
+    params: Dict[str, Any] = {
         "mode": "update_ron",
         "type": "json",
         "ron": ron,
-        "active": "1" if active else "0",
     }
+    if active is not None:
+        params["active"] = "1" if active else "0"
+    if my_bid is not None:
+        params["my_bid"] = f"{float(my_bid):.4f}".rstrip("0").rstrip(".")
+    if daily_limit is not None:
+        params["daily_limit"] = f"{float(daily_limit):.2f}"
+    if active is None and my_bid is None and daily_limit is None:
+        raise ValueError("update_ron requires at least one of active, my_bid, daily_limit")
     return _request_json(api_key, params=params, method="POST")
+
+
+def fetch_report(
+    api_key: str,
+    *,
+    period: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    groupby: Optional[str] = None,
+    campaign: Optional[str] = None,
+    folder: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """``mode=report`` — returns ``results`` rows (may be empty while processing)."""
+    params: Dict[str, Any] = {"mode": "report", "type": "json"}
+    if period:
+        params["period"] = period
+    if from_date:
+        params["from_date"] = from_date
+    if to_date:
+        params["to_date"] = to_date
+    if groupby:
+        params["groupby"] = groupby
+    if campaign:
+        params["campaign"] = campaign
+    if folder:
+        params["folder"] = folder
+    data = _request_json(api_key, params=params, method="POST")
+    rows = data.get("results")
+    if not isinstance(rows, list):
+        return []
+    return [x for x in rows if isinstance(x, dict)]
+
+
+def parse_trillion_money(raw: Any) -> Optional[float]:
+    """Parse Trillion report/list fields like ``11.560`` or ``$50.00``."""
+    if raw is None or raw == "":
+        return None
+    s = str(raw).strip().replace("$", "").replace(",", "")
+    if not s:
+        return None
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None

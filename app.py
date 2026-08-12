@@ -46,7 +46,11 @@ from workflows.campaign_setup import run_create_campaign_workflow
 from integrations.keitaro import KeitaroClientError
 from integrations.kelkoo_search import kelkoo_merchant_link_check
 from integrations.yadore import merchant_monetization_check as yadore_merchant_check, YadoreClientError
-from integrations.adexa import merchant_monetization_check as adexa_merchant_check, AdexaClientError
+from integrations.adexa import (
+    merchant_monetization_check as adexa_merchant_check,
+    merchant_cpa_monetization_check as adexa_cpa_merchant_check,
+    AdexaClientError,
+)
 from integrations.shopnomix import demand_tile_check, demand_coupons_check, ShopnomixClientError
 from integrations.flexoffers import merchant_monetization_check as flexoffers_merchant_check
 from integrations.monetization_geo import yadore_feed_class, shopnomix_feed_class
@@ -1186,9 +1190,12 @@ def ui_matchmaking_manual():
                 ax: Dict[str, Any] = {}
                 adexa_mode = ""
                 adexa_keitaro_offer_url = ""
+                adexa_cpc_found = False
+                adexa_cpa_found = False
+                adexa_cpa_note = ""
                 try:
                     ax = adexa_merchant_check(domain, g)
-                    adexa_found = bool(ax.get("found"))
+                    adexa_cpc_found = bool(ax.get("found"))
                     adexa_mode = str(ax.get("mode") or "")
                     adexa_note = str(ax.get("note") or "")
                     adexa_keitaro_offer_url = str(ax.get("keitaro_offer_url") or "")
@@ -1197,8 +1204,20 @@ def ui_matchmaking_manual():
                     elif adexa_mode == "smartlink":
                         adexa_note = f"smartlink: {ax.get('smartlink_url') or ''}"
                 except AdexaClientError as e:
-                    adexa_found = False
+                    adexa_cpc_found = False
                     adexa_note = str(e)[:120]
+                try:
+                    ax_cpa = adexa_cpa_merchant_check(domain, g)
+                    adexa_cpa_found = bool(ax_cpa.get("found"))
+                    adexa_cpa_note = str(ax_cpa.get("note") or "")
+                    if adexa_cpa_found and ax_cpa.get("merchant_name"):
+                        adexa_cpa_note = (
+                            f"{ax_cpa.get('merchant_name')}"
+                            + (f" cpa={ax_cpa.get('commission')}" if ax_cpa.get("commission") else "")
+                        )
+                except AdexaClientError as e:
+                    adexa_cpa_found = False
+                    adexa_cpa_note = str(e)[:120]
                 sn_tile_found = False
                 sn_coupons_found = False
                 sn_tile_epc = ""
@@ -1228,9 +1247,12 @@ def ui_matchmaking_manual():
                         "yadore_class": yadore_feed_class(y_nc_found, y_c_found),
                         "yadore_click_url": str(yadore_res.get("clickUrl") or ""),
                         "yadore_mode": str(yadore_res.get("mode") or ""),
-                        "adexa_found": adexa_found,
+                        "adexa_cpc": adexa_cpc_found,
+                        "adexa_cpa": adexa_cpa_found,
+                        "adexa_found": adexa_cpc_found,  # backward-compatible alias
                         "adexa_mode": adexa_mode,
                         "adexa_note": adexa_note,
+                        "adexa_cpa_note": adexa_cpa_note,
                         "adexa_keitaro_offer_url": adexa_keitaro_offer_url,
                         "shopnomix_class": shopnomix_feed_class(sn_tile_found, sn_coupons_found),
                         "shopnomix_tile_found": sn_tile_found,
@@ -2437,6 +2459,54 @@ def api_domain_demand_progress_refresh():
         return jsonify({**payload, "refreshed": True})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e), "refreshed": False}), 500
+
+
+@app.route("/domain-demand/yesterday-review")
+def ui_trillion_yesterday_review():
+    """Yesterday underdelivered domain segments + Trillion budget/CPC recommendations."""
+    from integrations.trillion_yesterday_review import _yesterday_date_str
+
+    return render_template(
+        "trillion_yesterday_review.html",
+        default_date=_yesterday_date_str(),
+    )
+
+
+@app.route("/api/trillion-yesterday-review", methods=["GET"])
+def api_trillion_yesterday_review():
+    from integrations.trillion_yesterday_review import build_yesterday_review_payload
+
+    date_s = (request.args.get("date") or "").strip()
+    try:
+        payload = build_yesterday_review_payload(date_str=date_s or None)
+        return jsonify(payload)
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e), "rows": []}), 500
+
+
+@app.route("/api/trillion-yesterday-review/apply", methods=["POST"])
+def api_trillion_yesterday_review_apply():
+    from integrations.trillion_yesterday_review import (
+        apply_yesterday_review_actions,
+        build_yesterday_review_payload,
+    )
+
+    body = request.get_json(silent=True) or {}
+    keys = body.get("keys") or []
+    if not isinstance(keys, list):
+        return jsonify({"ok": False, "error": "keys must be a list"}), 400
+    dry_run = bool(body.get("dry_run"))
+    date_s = (body.get("date") or "").strip()
+    try:
+        review = build_yesterday_review_payload(date_str=date_s or None)
+        result = apply_yesterday_review_actions(
+            [str(k) for k in keys],
+            dry_run=dry_run,
+            payload=review,
+        )
+        return jsonify({**result, "date": review.get("date")})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 def _api_automations_payload() -> Dict[str, Any]:

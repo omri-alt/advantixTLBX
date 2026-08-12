@@ -1,0 +1,258 @@
+{% from "macros/page_header.html" import tool_header %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trillion yesterday domain review</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui_shared.css') }}">
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a2b;
+      --line: #27324a;
+      --text: #eaf1fb;
+      --muted: #9aa4b2;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --accent: #4f8cff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, Segoe UI, Arial, sans-serif; background: linear-gradient(180deg, #0b1020, #0d1426 35%, #0b1020); color: var(--text); }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    .muted { color: var(--muted); }
+    .back { color: #93c5fd; text-decoration: none; font-size: 14px; }
+    .back:hover { text-decoration: underline; }
+    .panel { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 16px; margin-bottom: 16px; }
+    .form-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-top: 12px; }
+    label { display: block; font-size: 13px; color: #cbd5e1; }
+    input[type="date"] { padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: #0f172a; color: var(--text); }
+    button, .btn { padding: 9px 14px; border-radius: 10px; border: 1px solid #1d4ed8; background: #2563eb; color: white; cursor: pointer; font: inherit; }
+    button:hover, .btn:hover { background: #1d4ed8; }
+    button.secondary { border-color: var(--line); background: #1e293b; }
+    button.secondary:hover { background: #334155; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .err { margin-top: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(239,68,68,.35); background: rgba(239,68,68,.12); color: #fecaca; }
+    .okbox { margin-top: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(34,197,94,.35); background: rgba(34,197,94,.12); color: #bbf7d0; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 16px 0; }
+    .summary-card { border: 1px solid var(--line); border-radius: 12px; background: #151f33; padding: 12px 14px; }
+    .summary-card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .summary-card .value { font-size: 22px; font-weight: 700; margin-top: 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: #cbd5e1; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tr:last-child td { border-bottom: 0; }
+    tr.selected { background: rgba(79, 140, 255, 0.08); }
+    .pill { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+    .pill.yes { background: rgba(245,158,11,.18); color: #fcd34d; }
+    .pill.no { background: rgba(34,197,94,.18); color: #86efac; }
+    .pill.neutral { background: #334155; color: #cbd5e1; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+    .actions-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0; }
+    code { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p><a class="back" href="{{ url_for('ui_home') }}">← Control Center</a> · <a class="back" href="{{ url_for('ui_help') }}#domain-demand">Help</a></p>
+    {{ tool_header(
+      "Trillion yesterday domain review",
+      "Countries/geo×device that bought fewer hub clicks than demand yesterday — budget vs CPC recommendations.",
+      "domain-demand"
+    ) }}
+
+    <section class="panel">
+      <p class="muted" style="margin:0 0 8px;">
+        Uses archived <code>yesterday_summary_by_geo</code> vs Keitaro delivered clicks.
+        Trillion <strong>yesterday</strong> report checks daily budget use.
+        If budget was reached → recommend <code>+10 × (missing_clicks / 1000)</code> on daily limit.
+        If not → recommend CPC <code>+0.002</code>.
+      </p>
+      <div class="form-row">
+        <div>
+          <label for="review-date">Bill date</label>
+          <input type="date" id="review-date" value="{{ default_date }}">
+        </div>
+        <button type="button" id="load-btn">Load review</button>
+        <button type="button" class="secondary" id="select-all-btn">Select all applicable</button>
+        <button type="button" id="apply-btn" disabled>Apply selected via Trillion API</button>
+      </div>
+      <div id="load-err" class="err" style="display:none;"></div>
+      <div id="apply-ok" class="okbox" style="display:none;"></div>
+      <div id="summary-grid" class="summary-grid" style="display:none;"></div>
+    </section>
+
+    <section class="panel">
+      <div id="table-host" class="muted">Loading…</div>
+    </section>
+  </div>
+
+  <script>
+  (function() {
+    var apiUrl = {{ url_for("api_trillion_yesterday_review") | tojson }};
+    var applyUrl = {{ url_for("api_trillion_yesterday_review_apply") | tojson }};
+    var dateInput = document.getElementById("review-date");
+    var loadBtn = document.getElementById("load-btn");
+    var selectAllBtn = document.getElementById("select-all-btn");
+    var applyBtn = document.getElementById("apply-btn");
+    var loadErr = document.getElementById("load-err");
+    var applyOk = document.getElementById("apply-ok");
+    var summaryGrid = document.getElementById("summary-grid");
+    var tableHost = document.getElementById("table-host");
+    var lastPayload = null;
+    var selected = new Set();
+
+    function esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function showErr(msg) {
+      loadErr.style.display = "block";
+      loadErr.textContent = msg;
+    }
+    function clearErr() {
+      loadErr.style.display = "none";
+      loadErr.textContent = "";
+    }
+
+    function renderSummary(data) {
+      var s = data.summary || {};
+      summaryGrid.style.display = "grid";
+      summaryGrid.innerHTML =
+        "<div class=\"summary-card\"><div class=\"label\">Date</div><div class=\"value\">" + esc(data.date) + "</div></div>" +
+        "<div class=\"summary-card\"><div class=\"label\">Underdelivered</div><div class=\"value\">" + esc(s.underdelivered || 0) + "</div></div>" +
+        "<div class=\"summary-card\"><div class=\"label\">Budget hit</div><div class=\"value\">" + esc(s.budget_reached || 0) + "</div></div>" +
+        "<div class=\"summary-card\"><div class=\"label\">Segments</div><div class=\"value\">" + esc(s.segments_loaded || 0) + "</div></div>";
+    }
+
+    function renderTable(data) {
+      var rows = (data.rows || []).filter(function(r) { return r.missing_clicks > 0; });
+      if (!rows.length) {
+        tableHost.className = "muted";
+        tableHost.textContent = data.error || "No underdelivered segments for this date.";
+        applyBtn.disabled = true;
+        return;
+      }
+      var html = "<div class=\"table-wrap\"><table><thead><tr>" +
+        "<th></th><th>Geo</th><th>Device</th>" +
+        "<th class=\"num\">Demand</th><th class=\"num\">Delivered</th><th class=\"num\">Missing</th>" +
+        "<th>Budget hit?</th><th class=\"num\">Limit</th><th class=\"num\">Cost</th><th class=\"num\">CPC</th>" +
+        "<th>Trillion</th><th>Recommendation</th>" +
+        "</tr></thead><tbody>";
+      rows.forEach(function(r) {
+        var key = r.key || "";
+        var applicable = r.applicable;
+        var checked = selected.has(key);
+        var budgetPill = r.budget_reached
+          ? "<span class=\"pill yes\">Yes</span>"
+          : "<span class=\"pill no\">No</span>";
+        if (!applicable) budgetPill = "<span class=\"pill neutral\">—</span>";
+        html += "<tr class=\"" + (checked ? "selected" : "") + "\" data-key=\"" + esc(key) + "\">" +
+          "<td>" + (applicable
+            ? "<input type=\"checkbox\" class=\"row-chk\" data-key=\"" + esc(key) + "\"" + (checked ? " checked" : "") + ">"
+            : "") + "</td>" +
+          "<td>" + esc((r.geo || "").toUpperCase()) + "</td>" +
+          "<td>" + esc(r.device) + "</td>" +
+          "<td class=\"num\">" + esc(r.demand_clicks) + "</td>" +
+          "<td class=\"num\">" + esc(r.delivered_clicks) + "</td>" +
+          "<td class=\"num\">" + esc(r.missing_clicks) + "</td>" +
+          "<td>" + budgetPill + "</td>" +
+          "<td class=\"num\">" + (r.daily_limit != null ? esc(r.daily_limit) : "—") + "</td>" +
+          "<td class=\"num\">" + (r.yesterday_cost != null ? esc(r.yesterday_cost) : "—") + "</td>" +
+          "<td class=\"num\">" + (r.my_bid != null ? esc(r.my_bid) : "—") + "</td>" +
+          "<td><code style=\"font-size:11px;\">" + esc(r.trillion_campaign || "—") + "</code></td>" +
+          "<td>" + esc(r.recommendation_label || "") + "</td>" +
+          "</tr>";
+      });
+      html += "</tbody></table></div>";
+      tableHost.className = "";
+      tableHost.innerHTML = html;
+      tableHost.querySelectorAll(".row-chk").forEach(function(chk) {
+        chk.addEventListener("change", function() {
+          var k = chk.getAttribute("data-key");
+          if (chk.checked) selected.add(k);
+          else selected.delete(k);
+          applyBtn.disabled = selected.size === 0;
+          var tr = chk.closest("tr");
+          if (tr) tr.classList.toggle("selected", chk.checked);
+        });
+      });
+      applyBtn.disabled = selected.size === 0;
+    }
+
+    function load() {
+      clearErr();
+      applyOk.style.display = "none";
+      tableHost.className = "muted";
+      tableHost.textContent = "Loading…";
+      summaryGrid.style.display = "none";
+      selected.clear();
+      var d = (dateInput.value || "").trim();
+      var url = apiUrl + (d ? "?date=" + encodeURIComponent(d) : "");
+      fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          lastPayload = data;
+          if (data.report_error) showErr("Trillion report: " + data.report_error);
+          if (data.status === "error" && data.error) showErr(data.error);
+          renderSummary(data);
+          renderTable(data);
+        })
+        .catch(function(e) {
+          showErr("Load failed: " + (e && e.message ? e.message : String(e)));
+          tableHost.textContent = "Failed to load.";
+        });
+    }
+
+    selectAllBtn.addEventListener("click", function() {
+      if (!lastPayload || !lastPayload.rows) return;
+      lastPayload.rows.forEach(function(r) {
+        if (r.applicable) selected.add(r.key);
+      });
+      tableHost.querySelectorAll(".row-chk").forEach(function(chk) {
+        chk.checked = selected.has(chk.getAttribute("data-key"));
+        var tr = chk.closest("tr");
+        if (tr) tr.classList.toggle("selected", chk.checked);
+      });
+      applyBtn.disabled = selected.size === 0;
+    });
+
+    applyBtn.addEventListener("click", function() {
+      if (!selected.size) return;
+      if (!confirm("Apply " + selected.size + " Trillion change(s) via API?")) return;
+      applyBtn.disabled = true;
+      applyOk.style.display = "none";
+      fetch(applyUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          keys: Array.from(selected),
+          date: (dateInput.value || "").trim(),
+        }),
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(out) {
+          applyOk.style.display = "block";
+          if (out.errors && out.errors.length) {
+            applyOk.textContent = "Some errors: " + out.errors.join(" · ");
+          } else {
+            applyOk.textContent = "Applied " + (out.applied || 0) + " change(s). Reloading…";
+          }
+          load();
+        })
+        .catch(function(e) {
+          showErr("Apply failed: " + (e && e.message ? e.message : String(e)));
+          applyBtn.disabled = false;
+        });
+    });
+
+    loadBtn.addEventListener("click", load);
+    load();
+  })();
+  </script>
+</body>
+</html>

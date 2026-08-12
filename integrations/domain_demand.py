@@ -628,6 +628,98 @@ def load_bill_lines_from_sheet(
     return lines, logs
 
 
+def load_summary_by_geo_from_sheet(
+    *,
+    tab: Optional[str] = None,
+    date_str: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Read geo×device summary rows from a domain-demand sheet tab."""
+    day = (date_str or "").strip()
+    logs: List[str] = []
+    sheet_id = (DOMAIN_DEMAND_SHEET_ID or "").strip()
+    if not sheet_id:
+        return [], ["DOMAIN_DEMAND_SHEET_ID not set"]
+
+    tab_name = (tab or DOMAIN_DEMAND_SUMMARY_BY_GEO_TAB).strip()
+    quoted = tab_name.replace("'", "''")
+    try:
+        service = _get_sheets_service()
+        result = service.values().get(
+            spreadsheetId=sheet_id,
+            range=f"'{quoted}'!A:Z",
+        ).execute()
+    except Exception as e:
+        return [], [f"Failed to read tab '{tab_name}': {e}"]
+
+    values = result.get("values") or []
+    if len(values) < 2:
+        return [], [f"Tab '{tab_name}' is empty"]
+
+    header = [str(h).strip().lower() for h in values[0]]
+    idx = {name: i for i, name in enumerate(header)}
+
+    def cell(row: List[Any], name: str) -> str:
+        i = idx.get(name)
+        if i is None or i >= len(row):
+            return ""
+        return str(row[i] if row[i] is not None else "").strip()
+
+    rows: List[Dict[str, Any]] = []
+    skipped_other_day = 0
+    for row in values[1:]:
+        if not row:
+            continue
+        row_day = cell(row, "date")
+        if day and row_day and row_day != day:
+            skipped_other_day += 1
+            continue
+        geo = cell(row, "geo").lower()
+        device = cell(row, "device").lower()
+        if not geo or device not in ("desktop", "mobile"):
+            continue
+        try:
+            demand = int(round(float(cell(row, "demand_clicks") or 0)))
+        except (TypeError, ValueError):
+            demand = 0
+        try:
+            delivered = int(round(float(cell(row, "delivered_clicks") or 0)))
+        except (TypeError, ValueError):
+            delivered = 0
+        try:
+            remaining = int(round(float(cell(row, "remaining") or max(0, demand - delivered))))
+        except (TypeError, ValueError):
+            remaining = max(0, demand - delivered)
+        fill_raw = cell(row, "fill_pct")
+        fill_pct: Optional[float] = None
+        if fill_raw:
+            try:
+                fill_pct = float(str(fill_raw).replace("%", "").strip())
+            except (TypeError, ValueError):
+                fill_pct = None
+        if fill_pct is None and demand > 0:
+            fill_pct = _fill_pct(float(delivered), float(demand))
+        rows.append(
+            {
+                "geo": geo,
+                "device": device,
+                "demand_clicks": demand,
+                "delivered_clicks": delivered,
+                "remaining": remaining,
+                "fill_pct": fill_pct,
+                "trillion_campaign": cell(row, "trillion_campaign"),
+                "trillion_status": cell(row, "trillion_status"),
+                "trillion_hint": cell(row, "trillion_hint"),
+                "date": row_day or day,
+            }
+        )
+
+    logs.append(
+        f"Loaded {len(rows)} summary_by_geo row(s) from '{tab_name}'"
+        + (f" (skipped {skipped_other_day} other-day row(s))" if skipped_other_day else "")
+    )
+    return rows, logs
+
+
 def build_domain_demand_payload(
     *,
     date_str: Optional[str] = None,

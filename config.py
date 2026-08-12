@@ -561,6 +561,21 @@ try:
 except ValueError:
     DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES = 30
 DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES = max(10, min(120, DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES))
+
+# Trillion yesterday underdelivery review (homepage / domain-demand UI).
+TRILLION_YESTERDAY_BUDGET_BUMP_PER_1K_CLICKS = float(
+    (os.getenv("TRILLION_YESTERDAY_BUDGET_BUMP_PER_1K_CLICKS") or "10").strip() or "10"
+)
+TRILLION_YESTERDAY_CPC_BUMP = float(
+    (os.getenv("TRILLION_YESTERDAY_CPC_BUMP") or "0.002").strip() or "0.002"
+)
+try:
+    TRILLION_YESTERDAY_BUDGET_REACHED_PCT = float(
+        (os.getenv("TRILLION_YESTERDAY_BUDGET_REACHED_PCT") or "98").strip() or "98"
+    )
+except Exception:
+    TRILLION_YESTERDAY_BUDGET_REACHED_PCT = 98.0
+TRILLION_YESTERDAY_BUDGET_REACHED_PCT = max(50.0, min(100.0, TRILLION_YESTERDAY_BUDGET_REACHED_PCT))
 DOMAIN_TRILLION_GUARD_ENABLED = (
     os.getenv("DOMAIN_TRILLION_GUARD_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 )
