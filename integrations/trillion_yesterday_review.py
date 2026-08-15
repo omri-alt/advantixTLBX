@@ -35,7 +35,8 @@ def _clamp_budget(amount: float) -> float:
 
 
 def _clamp_bid(amount: float) -> float:
-    return max(0.05, min(100.0, round(amount, 4)))
+    """RON SubP bids may be as low as $0.005 (keyword campaigns use $0.05)."""
+    return max(0.005, min(100.0, round(amount, 4)))
 
 
 def _budget_reached_yesterday(cost: Optional[float], daily_limit: Optional[float]) -> bool:
@@ -109,12 +110,12 @@ def _recommendation_for_row(
             "new_my_bid": None,
             "delta_cpc": None,
         }
-    base_bid = current_my_bid if current_my_bid is not None else 0.05
+    base_bid = current_my_bid if current_my_bid is not None else 0.005
     delta_cpc = float(TRILLION_YESTERDAY_CPC_BUMP)
     new_bid = _clamp_bid(base_bid + delta_cpc)
     return {
         "recommended_action": "increase_cpc",
-        "recommendation_label": f"Raise CPC +{delta_cpc:.4f} → ${new_bid:.4f}",
+        "recommendation_label": f"Raise CPC +{delta_cpc:.3f} → ${new_bid:.3f}",
         "delta_budget": None,
         "new_daily_limit": None,
         "new_my_bid": new_bid,
