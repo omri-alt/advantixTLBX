@@ -17,6 +17,7 @@ from config import (
     YADORE_API_KEY,
     YADORE_DEFAULT_DETAIL_MARKETS,
     YADORE_IS_COUPONING,
+    YADORE_PLACEMENT_ID,
     YADORE_PROJECT_ID,
     YADORE_REPORT_DETAIL_MARKETS,
 )
@@ -26,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 YADORE_BASE_URL = "https://api.yadore.com"
 YADORE_KEITARO_RAIN_SHELL = "https://shopli.city/rainotest?rain="
+# Encode ``?`` / ``&`` / ``=`` so rain stays a single query value; keep ``{subid}``.
+YADORE_KEITARO_RAIN_QUOTE_SAFE = ":/%{}"
 YADORE_DEEPLINK_PROJECT_FALLBACK = "WAF4IibbRqGG"
 
 
@@ -43,8 +46,8 @@ def wrap_yadore_click_url_for_keitaro(click_url: str) -> str:
     if "placementId=" not in raw and "placementId%3D" not in raw.lower():
         sep = "&" if "?" in raw else "?"
         raw = f"{raw}{sep}placementId={{subid}}"
-    # Keep ``{subid}`` unencoded for Keitaro macros; encode the rest of the rain target.
-    return YADORE_KEITARO_RAIN_SHELL + quote(raw, safe=":/?&=%{}" )
+    # Keep ``{subid}`` unencoded for Keitaro macros; encode ``?``/``&`` so rain is one value.
+    return YADORE_KEITARO_RAIN_SHELL + quote(raw, safe=YADORE_KEITARO_RAIN_QUOTE_SAFE)
 
 
 class YadoreClientError(Exception):
@@ -262,7 +265,7 @@ def build_yadore_keitaro_payload(
             f"?url={{sub_id_3}}&market={{sub_id_2}}"
             f"&placementId={{subid}}&projectId={pid_q}&isCouponing={coupon_q}"
         )
-        return YADORE_KEITARO_RAIN_SHELL + quote(inner, safe=":/?&={}")
+        return YADORE_KEITARO_RAIN_SHELL + quote(inner, safe=YADORE_KEITARO_RAIN_QUOTE_SAFE)
 
     g = (geo or "").strip().lower()[:2]
     if g == "gb":
@@ -276,7 +279,7 @@ def build_yadore_keitaro_payload(
         f"?url={m_enc}&market={quote(str(market), safe='')}"
         f"&placementId={{subid}}&projectId={pid_q}&isCouponing={coupon_q}"
     )
-    return YADORE_KEITARO_RAIN_SHELL + quote(inner, safe=":/?&={}%")
+    return YADORE_KEITARO_RAIN_SHELL + quote(inner, safe=YADORE_KEITARO_RAIN_QUOTE_SAFE)
 
 
 def _yadore_host(s: str) -> str:
@@ -364,6 +367,123 @@ def find_catalog_merchant(
             if _catalog_host_match(probe, catalog_name):
                 return row
     return None
+
+
+def _yadore_placement_id() -> str:
+    return (YADORE_PLACEMENT_ID or "").strip() or YADORE_DEEPLINK_PROJECT_FALLBACK
+
+
+def fetch_product_offers(
+    geo: str,
+    *,
+    keyword: str = "",
+    merchant_id: str = "",
+    limit: int = 20,
+    is_couponing: Optional[bool] = None,
+    api_key: Optional[str] = None,
+    precision: str = "strict",
+    base_url: str = YADORE_BASE_URL,
+) -> List[Dict[str, Any]]:
+    """GET /v2/offer — product rows (may include ``clickUrl``)."""
+    token = (api_key or YADORE_API_KEY or "").strip()
+    if not token:
+        raise YadoreClientError("YADORE_API_KEY is not set")
+    coupon = YADORE_IS_COUPONING if is_couponing is None else bool(is_couponing)
+    params: Dict[str, Any] = {
+        "market": geo_for_yadore(geo or ""),
+        "limit": max(1, min(100, int(limit))),
+        "precision": precision,
+        "sort": "rel_desc",
+        "isCouponing": "true" if coupon else "false",
+    }
+    kw = (keyword or "").strip()[:80]
+    if kw:
+        params["keyword"] = kw
+    mid = (merchant_id or "").strip()
+    if mid:
+        params["merchantId"] = mid
+    endpoint = f"{base_url.rstrip('/')}/v2/offer"
+    headers = {"Accept": "application/json", "API-Key": token}
+    try:
+        r = requests.get(endpoint, headers=headers, params=params, timeout=45)
+    except requests.RequestException as e:
+        raise YadoreClientError(str(e)) from e
+    if r.status_code != 200:
+        raise YadoreClientError(
+            f"Yadore /v2/offer HTTP {r.status_code}",
+            status_code=r.status_code,
+            response_body=(r.text[:500] if r.text else None),
+        )
+    data = r.json() if r.text else {}
+    arr = data.get("offers") if isinstance(data, dict) else None
+    if not isinstance(arr, list):
+        inner = data.get("result") if isinstance(data, dict) and isinstance(data.get("result"), dict) else {}
+        arr = inner.get("offers") if isinstance(inner.get("offers"), list) else []
+    return [o for o in arr if isinstance(o, dict)]
+
+
+def fetch_matched_product_offers(
+    brand: str,
+    geo: str,
+    merchant_url: str,
+    *,
+    limit: int = 3,
+    api_key: Optional[str] = None,
+    is_couponing: Optional[bool] = None,
+) -> List[Dict[str, Any]]:
+    """Host-filtered /v2/offer rows that have a ``clickUrl`` (SK PLA + Blend fallback)."""
+    want = max(1, int(limit))
+    host = _yadore_host(merchant_url) or _yadore_host(brand)
+    keyword = (brand or "").strip() or (host.split(".")[0] if host else "")
+    catalog_id = ""
+    try:
+        rows = fetch_deeplink_merchants(geo, api_key=api_key)
+        cat = find_catalog_merchant(rows, host=host, merchant_name=brand)
+        catalog_id = str((cat or {}).get("id") or "")
+    except YadoreClientError:
+        catalog_id = ""
+
+    seen: set[str] = set()
+    matched: List[Dict[str, Any]] = []
+
+    def _absorb(offers: List[Dict[str, Any]]) -> None:
+        for o in offers:
+            if len(matched) >= want:
+                return
+            click = str(o.get("clickUrl") or "").strip()
+            if not click or click in seen:
+                continue
+            merch_name = str(((o.get("merchant") or {}).get("name")) or "")
+            if host and not _catalog_host_match(host, merch_name):
+                if brand and not _catalog_host_match(brand, merch_name):
+                    continue
+            seen.add(click)
+            matched.append(o)
+
+    try:
+        if catalog_id:
+            _absorb(
+                fetch_product_offers(
+                    geo,
+                    merchant_id=catalog_id,
+                    limit=max(20, want),
+                    is_couponing=is_couponing,
+                    api_key=api_key,
+                )
+            )
+        if len(matched) < want and keyword:
+            _absorb(
+                fetch_product_offers(
+                    geo,
+                    keyword=keyword,
+                    limit=max(20, want),
+                    is_couponing=is_couponing,
+                    api_key=api_key,
+                )
+            )
+    except YadoreClientError:
+        return matched
+    return matched[:want]
 
 
 def merchant_monetization_check(
@@ -477,7 +597,8 @@ def merchant_monetization_check(
         if cn:
             probe_url = _merchant_url_https(f"https://{cn}")
 
-    keitaro_offer_url = build_yadore_keitaro_payload(country_iso2, probe_url, is_couponing=coupon_flag) if found else ""
+    click = str(click_url or "").strip()
+    keitaro_offer_url = wrap_yadore_click_url_for_keitaro(click) if click else ""
 
     return {
         "found": found,
@@ -534,6 +655,87 @@ def direct_redirect_probe(
         "body_snippet": (r.text or "")[:300],
         "used_projectId": bool(pid),
     }
+
+
+def resolve_yadore_blend_keitaro_payload(
+    geo: str,
+    merchant_url: str,
+    *,
+    merchant_name: str = "",
+    api_key: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Blend Yadore Keitaro URL, in operator order:
+
+    1. Homepage monetized — ``GET /v2/d`` 302 → rain-wrapped homepage ``/v2/d``
+    2. Else smartlink ``clickUrl`` from ``POST /v2/deeplink`` (or catalog smartlink + clickUrl)
+    3. Else one host-matched ``/v2/offer`` ``clickUrl``
+    4. Else empty (do not buy)
+    """
+    probe = _merchant_url_https(merchant_url)
+    placement = _yadore_placement_id()
+    homepage_urls: List[str] = []
+    seen_u: set[str] = set()
+
+    def _add_home(u: str) -> None:
+        c = _merchant_url_https(u)
+        if c and c not in seen_u:
+            seen_u.add(c)
+            homepage_urls.append(c)
+
+    _add_home(probe)
+    try:
+        check = merchant_monetization_check(
+            probe,
+            geo,
+            merchant_name=merchant_name,
+            placement_id=placement,
+            api_key=api_key,
+        )
+    except Exception:
+        check = {}
+    _add_home(str(check.get("probe_url") or ""))
+
+    for home in homepage_urls:
+        try:
+            pr = direct_redirect_probe(
+                home,
+                geo,
+                placement_id=placement,
+                is_couponing=YADORE_IS_COUPONING,
+                api_key=api_key,
+            )
+        except YadoreClientError:
+            continue
+        if pr.get("monetized"):
+            payload = build_yadore_keitaro_payload(geo, home, is_couponing=YADORE_IS_COUPONING)
+            if payload:
+                return {"action_payload": payload, "source": "homepage"}
+
+    click = str(check.get("clickUrl") or "").strip()
+    smart = bool(check.get("smartlink_found") or check.get("is_smartlink"))
+    mode = str(check.get("mode") or "")
+    if click and not smart and mode not in ("smartlink", "smartlink_catalog"):
+        wrapped = wrap_yadore_click_url_for_keitaro(click)
+        if wrapped:
+            return {"action_payload": wrapped, "source": "homepage"}
+    if click and (smart or mode in ("smartlink", "smartlink_catalog")):
+        wrapped = wrap_yadore_click_url_for_keitaro(click)
+        if wrapped:
+            return {"action_payload": wrapped, "source": "smartlink"}
+
+    brand = (merchant_name or "").strip() or _yadore_host(probe)
+    try:
+        offers = fetch_matched_product_offers(brand, geo, probe, limit=1, api_key=api_key)
+    except YadoreClientError:
+        offers = []
+    offer_click = str((offers[0].get("clickUrl") if offers else "") or "").strip()
+    if offer_click:
+        wrapped = wrap_yadore_click_url_for_keitaro(offer_click)
+        if wrapped:
+            return {"action_payload": wrapped, "source": "offer"}
+
+    return {"action_payload": "", "source": "none"}
 
 
 def _conversion_detail_click_rows(data: Union[dict, list, Any]) -> List[Dict[str, Any]]:

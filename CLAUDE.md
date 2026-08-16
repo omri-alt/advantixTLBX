@@ -146,7 +146,7 @@ python scripts/keitaro_feed_balance_bootstrap_notes.py --campaign-id 63
 - Reads tab `**Blend`** on `BLEND_SHEETS_SPREADSHEET_ID`; columns include `brandName`, `offerUrl`, `clickCap`, `geo`, `feed` (`kelkoo1` / `kelkoo2` / `adexa` / `yadore`), `auto`, optional `merchantId`.
 - **Kelkoo** rows: `offerUrl` is wrapped like Nipuhim via `assistance.build_offer_action_payload` (per-feed account ids).
 - **Adexa** rows: outer shell `https://shopli.city/raino?rain=` then inner `https://api.adexad.com/LinksMerchant.php?siteID=…&country=<geo>&merchantUrl=<encoded>&clickid={subid}`. The `rain` value is quoted so `=`, `&`, `?`, and Keitaro macros stay readable (only `merchantUrl` is heavily encoded), matching the proven **feed4** style more closely than a fully percent-encoded inner URL.
-- **Yadore** rows: outer `https://shopli.city/rainotest?rain=` then inner `api.yadore.com/v2/d` with encoded merchant URL, market, `placementId={subid}`, `projectId` from `YADORE_PROJECT_ID` (with a documented fallback in the script).
+- **Yadore** rows: `resolve_yadore_blend_keitaro_payload` — (1) homepage if `GET /v2/d` 302 (rain-wrapped `/v2/d`) or a non-smartlink deeplink `clickUrl`; (2) else smartlink `clickUrl` wrapped with `wrap_yadore_click_url_for_keitaro`; (3) else one host-matched `/v2/offer` `clickUrl`; (4) else skip (no traffic). Rain quoting uses `safe=":/%{}"`.
 
 ## Yadore — placements & monetization notes
 

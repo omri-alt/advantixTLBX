@@ -461,15 +461,23 @@ def _blend_adexa_action_payload(geo: str, merchant_url: str) -> str:
 
 
 def _blend_yadore_action_payload(geo: str, merchant_url: str) -> str:
-    from integrations.yadore import build_yadore_keitaro_payload
+    from integrations.yadore import resolve_yadore_blend_keitaro_payload
 
-    return build_yadore_keitaro_payload(geo, merchant_url)
+    probe = (merchant_url or "").strip()
+    if probe and not re.match(r"^https?://", probe, flags=re.IGNORECASE):
+        probe = f"https://{probe.lstrip('/')}"
+    try:
+        res = resolve_yadore_blend_keitaro_payload(geo, probe)
+    except Exception:
+        res = {}
+    return str(res.get("action_payload") or "").strip()
 
 
 def _blend_keitaro_action_payload(geo: str, offer_url: str, feed_tag: str) -> str:
     """
     kelkoo1/kelkoo2: shopli rain + encoded merchantUrl. kelkoo5: intentix path + encoded merchantUrl.
-    Adexa/Yadore: shopli rain shells with sheet geo + offerUrl as merchant target; ``{subid}`` for click id.
+    Adexa: shopli rain shells with sheet geo + offerUrl as merchant target; ``{subid}`` for click id.
+    Yadore: homepage ``/v2/d`` if 302, else smartlink ``clickUrl``, else one ``/v2/offer``; else empty.
     """
     ft = (feed_tag or "").strip().lower()
     if ft == "kelkoo5":
@@ -1287,6 +1295,14 @@ def main() -> None:
             name = r.offer_name
             before = _get_offer_id_by_name(client, name)
             action_payload = _blend_keitaro_action_payload(r.geo, r.offer_url, r.feed_tag)
+            if not (action_payload or "").strip():
+                if (r.feed_tag or "").strip().lower() == "yadore":
+                    print(
+                        f"  Skip {name}: no Yadore homepage, smartlink clickUrl, or product offer"
+                    )
+                else:
+                    print(f"  Skip {name}: empty Keitaro action payload")
+                continue
             oid = _upsert_offer(client, name, action_payload)
             offer_id_to_row[oid] = r
             if before is None:

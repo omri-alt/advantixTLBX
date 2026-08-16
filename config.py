@@ -73,11 +73,12 @@ KEITARO_HUB_BLEND_PCT = int((os.getenv("KEITARO_HUB_BLEND_PCT") or "50").strip()
 KEITARO_HUB_NIPUHIM_PCT = int((os.getenv("KEITARO_HUB_NIPUHIM_PCT") or "50").strip() or "50")
 # Comma list of feed keys that receive hub traffic (others stay attached at share 0).
 # Includes ``adexa`` so NIPUHIM-adexa participates in hub rewire + domain-demand bill.
+# Includes ``yadore`` so hub_blend_yadore / hub_nipuhim_yadore get a positive weight.
 # ``kelkoo4`` = 4th Kelkoo publisher (Keitaro child aliases blendFeed8 / nipuhFeed8).
 KEITARO_HUB_ACTIVE_FEEDS = tuple(
     x.strip().lower()
     for x in (
-        os.getenv("KEITARO_HUB_ACTIVE_FEEDS") or "kelkoo1,kelkoo2,kelkoo5,kelkoo4,adexa"
+        os.getenv("KEITARO_HUB_ACTIVE_FEEDS") or "kelkoo1,kelkoo2,kelkoo5,kelkoo4,adexa,yadore"
     ).split(",")
     if x.strip()
 )
