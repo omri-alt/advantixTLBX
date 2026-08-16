@@ -202,7 +202,7 @@ def _run_kelkoo_daily_postbacks_scheduled() -> None:
     from config import KELKOO_DAILY_POSTBACK_SCHEDULER_ENABLED
     from scheduler.kelkoo_daily_postbacks_scheduler import (
         enabled_kelkoo_postback_feeds,
-        run_kelkoo_daily_postbacks_scheduled,
+        run_kelkoo_daily_postbacks_tick,
     )
 
     if not KELKOO_DAILY_POSTBACK_SCHEDULER_ENABLED:
@@ -212,7 +212,7 @@ def _run_kelkoo_daily_postbacks_scheduled() -> None:
         logger.info("Kelkoo daily postbacks skipped (no feed API keys)")
         return
     logger.info("=== Kelkoo daily conversion postbacks cron ===")
-    run_kelkoo_daily_postbacks_scheduled(triggered_by="cron")
+    run_kelkoo_daily_postbacks_tick(triggered_by="cron")
 
 
 def _run_adexa_yadore_daily_postbacks_scheduled() -> None:
@@ -390,6 +390,7 @@ def start_autoserver_scheduler() -> None:
         KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL,
         KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE,
         KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
+        KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS,
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL,
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE,
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ,
@@ -588,10 +589,12 @@ def start_autoserver_scheduler() -> None:
         from zoneinfo import ZoneInfo
 
         kelkoo_pb_tz = ZoneInfo("Asia/Jerusalem")
+    kelkoo_first_h = int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL)
+    kelkoo_last_h = 23
     _scheduler.add_job(
         _run_kelkoo_daily_postbacks_scheduled,
         trigger="cron",
-        hour=int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
+        hour=f"{kelkoo_first_h}-{kelkoo_last_h}",
         minute=int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
         timezone=kelkoo_pb_tz,
         id="kelkoo_daily_conversion_postbacks",
@@ -657,6 +660,22 @@ def start_autoserver_scheduler() -> None:
     )
     _scheduler.start()
     _write_scheduler_heartbeat()
+    try:
+        from scheduler.kelkoo_daily_postbacks_scheduler import should_run_kelkoo_postback_tick
+
+        if should_run_kelkoo_postback_tick():
+            _scheduler.add_job(
+                _run_kelkoo_daily_postbacks_scheduled,
+                trigger="date",
+                run_date=datetime.now() + timedelta(seconds=15),
+                id="kelkoo_daily_postbacks_startup_catchup",
+                replace_existing=True,
+                max_instances=1,
+                misfire_grace_time=3600,
+            )
+            logger.info("Kelkoo daily postbacks: scheduled startup catch-up (missed first hour or pending geos)")
+    except Exception:
+        logger.exception("Kelkoo daily postbacks startup catch-up not scheduled")
     if _should_schedule_startup_catchup():
         for automation in _automation_listeners:
             if automation.__class__.__name__ in (
@@ -686,7 +705,7 @@ def start_autoserver_scheduler() -> None:
             "SK WL sync at %02d:%02d %s; "
             "EC WL sync at %02d:%02d %s; "
             "Effinity MTD postbacks at %02d:%02d %s; "
-            "Kelkoo daily postbacks at %02d:%02d %s; "
+            "Kelkoo daily postbacks hourly %02d:00–%02d:00 %s (first try + retries); "
             "Adexa/Yadore daily postbacks at %02d:%02d %s; "
             "Daily workflow v2 at %02d:%02d %s)"
         ),
@@ -710,8 +729,8 @@ def start_autoserver_scheduler() -> None:
         int(EFFINITY_SALES_SCHEDULER_HOUR_LOCAL),
         int(EFFINITY_SALES_SCHEDULER_MINUTE),
         EFFINITY_SALES_SCHEDULER_TZ,
-        int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
-        int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
+        kelkoo_first_h,
+        kelkoo_last_h,
         KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
         int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
         int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE),

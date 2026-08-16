@@ -3,9 +3,10 @@ Scheduled Kelkoo daily conversion postbacks (08:00 Asia/Jerusalem by default).
 
 1. Probe each feed+geo raw report (HTTP OK + parseable TSV = ready).
 2. Run postbacks for ready geos immediately.
-3. If only some countries are ready, keep those pending and schedule a +1h retry
-   (up to ``KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS``). Partial runs are not treated as
-   “succeeded today”, so retries continue until every configured geo is done.
+3. If only some countries are ready, keep those pending. A standing hourly cron
+   (first-try hour through first-try + MAX_ATTEMPTS−1) retries missing geos even if
+   the 08:00 fire was missed (deploy / Gunicorn recycle). Extra +1h date jobs remain
+   as a backup. Partial days are not treated as “succeeded today”.
 4. Append each attempt to ``data/kelkoo_daily_postbacks_run_log.json``.
 """
 from __future__ import annotations
@@ -355,6 +356,103 @@ def _schedule_retry_job(*, report_date: str, attempt: int, dry_run: bool) -> Dic
     return {"ok": True, "mode": "thread", "run_at_utc": run_at_utc, "attempt": attempt}
 
 
+def kelkoo_postback_window(
+    *, now: Optional[datetime] = None
+) -> tuple[datetime, datetime]:
+    """Local first-try instant through last hourly retry (inclusive)."""
+    from config import (
+        KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS,
+        KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL,
+        KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE,
+        KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
+    )
+
+    try:
+        tz = ZoneInfo(KELKOO_DAILY_POSTBACK_SCHEDULER_TZ or "Asia/Jerusalem")
+    except Exception:
+        tz = ZoneInfo("Asia/Jerusalem")
+    clock = now.astimezone(tz) if now is not None else datetime.now(tz)
+    start = clock.replace(
+        hour=int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
+        minute=int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
+        second=0,
+        microsecond=0,
+    )
+    extra_hours = max(0, int(KELKOO_DAILY_POSTBACK_MAX_ATTEMPTS) - 1)
+    end = start + timedelta(hours=extra_hours)
+    return start, end
+
+
+def should_run_kelkoo_postback_tick(*, now: Optional[datetime] = None) -> bool:
+    """True after first-try time while today's report is unfinished (or geos still pending)."""
+    start, _end = kelkoo_postback_window(now=now)
+    clock = now.astimezone(start.tzinfo) if now is not None else datetime.now(start.tzinfo)
+    if clock < start:
+        return False
+    return _kelkoo_postbacks_still_needed()
+
+
+def _kelkoo_postbacks_still_needed() -> bool:
+    from integrations.daily_conversion_postbacks import default_report_date_str
+    from integrations.daily_postbacks_run_history import feed_live_run_succeeded_today
+
+    date_s = default_report_date_str()
+    pending = _load_pending()
+    raw = pending.get("pending_by_feed") or {}
+    if (
+        str(pending.get("report_date") or "") == date_s
+        and isinstance(raw, dict)
+        and any(isinstance(v, list) and v for v in raw.values())
+    ):
+        return True
+    for feed in enabled_kelkoo_postback_feeds():
+        if not feed_live_run_succeeded_today(feed, report_date=date_s):
+            return True
+    return False
+
+
+def run_kelkoo_daily_postbacks_tick(*, triggered_by: str = "hourly") -> Dict[str, Any]:
+    """
+    Hourly tick: first probe of the day, or pending-geo retry.
+
+    Does not depend on a previous run having scheduled a one-shot Timer/date job.
+    """
+    from integrations.daily_conversion_postbacks import default_report_date_str
+
+    if not should_run_kelkoo_postback_tick():
+        logger.info("Kelkoo daily postbacks tick skipped (outside window, no pending)")
+        return {"ok": True, "skipped": "outside_window"}
+
+    date_s = default_report_date_str()
+    pending = _load_pending()
+    raw = pending.get("pending_by_feed") or {}
+    has_pending = (
+        str(pending.get("report_date") or "") == date_s
+        and isinstance(raw, dict)
+        and any(isinstance(v, list) and v for v in raw.values())
+    )
+    if has_pending:
+        attempt = max(2, int(pending.get("attempt") or 1) + 1)
+        logger.info(
+            "Kelkoo daily postbacks tick: retry attempt=%s pending=%s",
+            attempt,
+            {k: v for k, v in raw.items() if v},
+        )
+        return run_kelkoo_daily_postbacks_scheduled(
+            report_date=date_s,
+            attempt=attempt,
+            pending_only=True,
+            triggered_by=triggered_by,
+        )
+    logger.info("Kelkoo daily postbacks tick: first/catch-up probe for %s", date_s)
+    return run_kelkoo_daily_postbacks_scheduled(
+        report_date=date_s,
+        attempt=1,
+        pending_only=False,
+        triggered_by=triggered_by,
+    )
+
+
 def run_kelkoo_daily_postbacks_scheduled(
     *,
     report_date: Optional[str] = None,
@@ -700,6 +798,7 @@ def _seconds_until_local(hour: int, minute: int, tz_name: str) -> float:
 
 def _thread_loop() -> None:
     from config import (
+        KELKOO_DAILY_POSTBACK_RETRY_INTERVAL_MINUTES,
         KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL,
         KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE,
         KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
@@ -707,21 +806,24 @@ def _thread_loop() -> None:
 
     while True:
         try:
-            delay = _seconds_until_local(
-                int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
-                int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
-                KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
-            )
-            logger.info(
-                "Kelkoo daily postbacks scheduler: sleeping %.0fs until %02d:%02d %s",
-                delay,
-                int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
-                int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
-                KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
-            )
-            time.sleep(delay)
-            # Hourly retries are scheduled inside the run (thread Timer when APScheduler is off).
-            run_kelkoo_daily_postbacks_scheduled(triggered_by="cron")
+            if not should_run_kelkoo_postback_tick():
+                delay = _seconds_until_local(
+                    int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
+                    int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
+                    KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
+                )
+                logger.info(
+                    "Kelkoo daily postbacks scheduler: sleeping %.0fs until first try %02d:%02d %s",
+                    delay,
+                    int(KELKOO_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
+                    int(KELKOO_DAILY_POSTBACK_SCHEDULER_MINUTE),
+                    KELKOO_DAILY_POSTBACK_SCHEDULER_TZ,
+                )
+                time.sleep(delay)
+            run_kelkoo_daily_postbacks_tick(triggered_by="cron")
+            interval_s = max(60.0, float(int(KELKOO_DAILY_POSTBACK_RETRY_INTERVAL_MINUTES)) * 60.0)
+            logger.info("Kelkoo daily postbacks scheduler: next hourly tick in %.0fs", interval_s)
+            time.sleep(interval_s)
         except Exception:
             logger.exception("Kelkoo daily postbacks scheduler loop failed")
             time.sleep(60)
