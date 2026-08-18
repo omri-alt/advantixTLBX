@@ -65,6 +65,7 @@ from assistance import (
 )
 from kelkoo_late_sales import run_late_sales_flow
 from integrations.overview import (
+    slice_affiliation_revenue,
     slice_ecomnia,
     slice_revenue,
     slice_sourceknowledge,
@@ -2366,6 +2367,12 @@ def _overview_missing_payload() -> Dict[str, Any]:
         },
         "total_cost": {"yesterday": None, "mtd": None},
         "net": {"yesterday": None, "mtd": None},
+        "affiliation_revenue": {
+            "yesterday": None,
+            "mtd": None,
+            "error": "No snapshot yet. Use \"Refresh from APIs\" or wait for the daily scheduled job.",
+            "rows": [],
+        },
         "as_of_utc": None,
         "ranges": {},
     }
@@ -2627,6 +2634,12 @@ def api_overview_slice_sourceknowledge():
 @app.route("/api/overview/slice/ecomnia", methods=["GET"])
 def api_overview_slice_ecomnia():
     return jsonify(slice_ecomnia())
+
+
+@app.route("/api/overview/slice/affiliation-revenue", methods=["GET"])
+def api_overview_slice_affiliation_revenue():
+    """Live Keitaro affiliation revenue (month start through yesterday)."""
+    return jsonify(slice_affiliation_revenue())
 
 
 @app.route("/api/v1/workflows/create-campaign", methods=["POST"])

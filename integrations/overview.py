@@ -17,7 +17,10 @@ from integrations.overview_costs import (
     fetch_trillion_cost,
     fetch_zeropark_cost,
 )
-from integrations.overview_revenue import fetch_keitaro_revenue_overview
+from integrations.overview_revenue import (
+    fetch_keitaro_affiliation_revenue,
+    fetch_keitaro_revenue_overview,
+)
 
 
 def _nz(v: Any) -> float:
@@ -110,6 +113,24 @@ def slice_trillion() -> Dict[str, Any]:
     return _slice_envelope("trillion", tr)
 
 
+def slice_affiliation_revenue() -> Dict[str, Any]:
+    yesterday, mtd_start, mtd_end = overview_period()
+
+    def safe_aff() -> Dict[str, Any]:
+        try:
+            return fetch_keitaro_affiliation_revenue(
+                yesterday=yesterday,
+                mtd_start=mtd_start,
+                mtd_end=mtd_end,
+                base_url=KEITARO_BASE_URL,
+                api_key=KEITARO_API_KEY,
+            )
+        except Exception as e:
+            return {"yesterday": None, "mtd": None, "error": str(e), "rows": []}
+
+    return _slice_envelope("affiliation_revenue", safe_aff())
+
+
 def build_overview_json() -> Dict[str, Any]:
     yesterday, mtd_start, mtd_end = overview_period()
 
@@ -131,13 +152,27 @@ def build_overview_json() -> Dict[str, Any]:
         except Exception as e:
             return {"yesterday": None, "mtd": None, "error": str(e)}
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    def safe_affiliation():
+        try:
+            return fetch_keitaro_affiliation_revenue(
+                yesterday=yesterday,
+                mtd_start=mtd_start,
+                mtd_end=mtd_end,
+                base_url=KEITARO_BASE_URL,
+                api_key=KEITARO_API_KEY,
+            )
+        except Exception as e:
+            return {"yesterday": None, "mtd": None, "error": str(e), "rows": []}
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
         f_rev = pool.submit(safe_revenue)
+        f_aff = pool.submit(safe_affiliation)
         f_zp = pool.submit(safe_cost, fetch_zeropark_cost)
         f_sk = pool.submit(safe_cost, fetch_sk_cost)
         f_ec = pool.submit(safe_cost, fetch_ecomnia_cost)
         f_tr = pool.submit(safe_cost, fetch_trillion_cost)
         revenue = f_rev.result()
+        affiliation = f_aff.result()
         zp = f_zp.result()
         sk = f_sk.result()
         ec = f_ec.result()
@@ -166,6 +201,12 @@ def build_overview_json() -> Dict[str, Any]:
         },
         "total_cost": {"yesterday": round(ty, 4), "mtd": round(tm, 4)},
         "net": {"yesterday": round(net_y, 4), "mtd": round(net_m, 4)},
+        "affiliation_revenue": {
+            "yesterday": affiliation.get("yesterday"),
+            "mtd": affiliation.get("mtd"),
+            "error": affiliation.get("error"),
+            "rows": affiliation.get("rows") or [],
+        },
         "as_of_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "ranges": ranges_dict(yesterday, mtd_start, mtd_end),
     }

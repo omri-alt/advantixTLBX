@@ -61,7 +61,7 @@
         <details class="help-acc" open data-help-search="overview snapshot">
           <summary>Homepage overview tiles</summary>
           <div class="help-acc-body">
-            <p>Tiles read the on-disk snapshot (fast). <strong>Refresh from APIs</strong> rebuilds revenue and DSP cost tiles and can take several minutes.</p>
+            <p>Tiles read the on-disk snapshot (fast). <strong>Refresh from APIs</strong> rebuilds revenue, affiliation split, and DSP cost tiles and can take several minutes.</p>
             <table>
               <thead><tr><th>Action</th><th>Description</th></tr></thead>
               <tbody>
@@ -69,7 +69,8 @@
                 <tr><td><code>POST /api/overview/refresh</code></td><td>Rebuild snapshot from live APIs.</td></tr>
               </tbody>
             </table>
-            <p><strong>Caveat:</strong> Auto rebuild runs twice daily by default at <strong>11:00</strong> and <strong>16:00</strong> <code>Asia/Jerusalem</code> (<code>OVERVIEW_SCHEDULER_ENABLED</code>, <code>OVERVIEW_SNAPSHOT_HOURS</code>, <code>OVERVIEW_SNAPSHOT_TZ</code>). Legacy single-hour: <code>OVERVIEW_SNAPSHOT_HOUR</code>.</p>
+            <p><strong>Affiliation revenue</strong> is Keitaro conversion revenue from the <strong>1st of the current UTC month through yesterday</strong>, split by monetization network (Kelkoo 1/2/4/5, Yadore, Adexa, Shopnomix, Effinity, FlexOffers). Use the dropdown to show one affiliation’s cumulative total. Unmapped offers land in <strong>Other</strong>.</p>
+            <p><strong>Caveat:</strong> Auto rebuild runs twice daily by default at <strong>11:00</strong> and <strong>16:00</strong> <code>Asia/Jerusalem</code> (<code>OVERVIEW_SCHEDULER_ENABLED</code>, <code>OVERVIEW_SNAPSHOT_HOURS</code>, <code>OVERVIEW_SNAPSHOT_TZ</code>). Legacy single-hour: <code>OVERVIEW_SNAPSHOT_HOUR</code>. Existing snapshots without the affiliation block need one refresh to populate the new widget.</p>
             <p><a href="{{ url_for('ui_home') }}">Open Control Center →</a></p>
           </div>
         </details>

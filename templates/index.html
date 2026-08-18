@@ -64,6 +64,37 @@
     .ov-row-top { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
     @media (max-width: 720px) { .ov-row-top { grid-template-columns: 1fr; } }
     .ov-row-costs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+    .ov-affil {
+      margin: 0 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #151f33;
+      padding: 12px 14px;
+    }
+    .ov-affil.has-err { border-color: #92400e; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.15); }
+    .ov-affil-head {
+      display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+      margin-bottom: 10px;
+    }
+    .ov-affil-head h4 { margin: 0; font-size: 14px; font-weight: 600; color: #cbd5e1; }
+    .ov-affil-head label { font-size: 12px; color: var(--muted); }
+    .ov-affil-head select {
+      background: #17223a; color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px;
+    }
+    .ov-affil-total { display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: baseline; margin-bottom: 10px; }
+    .ov-affil-total .amt { font-size: 22px; font-weight: 700; }
+    .ov-affil-total .lbl { font-size: 11px; color: var(--muted); }
+    .ov-affil-total .sub { font-size: 14px; font-weight: 600; color: #cbd5e1; }
+    .ov-affil table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .ov-affil th, .ov-affil td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+    .ov-affil th { color: #cbd5e1; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .ov-affil td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ov-affil th.num { text-align: right; }
+    .ov-affil tr:last-child td { border-bottom: 0; }
+    .ov-affil tr.sel td { background: rgba(79, 140, 255, 0.12); }
+    .ov-affil tr.total td { font-weight: 700; }
+    .ov-affil .err { font-size: 11px; color: #fdba74; margin-top: 8px; }
     .ov-card { border: 1px solid var(--line); border-radius: 12px; background: #151f33; padding: 12px 14px; }
     .ov-card.has-err { border-color: #92400e; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.15); }
     .ov-card h4 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: #cbd5e1; }
@@ -170,6 +201,7 @@
           <div id="tile-revenue"></div>
           <div id="tile-net"></div>
         </div>
+        <div id="tile-affiliation"></div>
         <div class="ov-row-costs" id="overview-costs">
           <div id="tile-zeropark"></div>
           <div id="tile-sourceknowledge"></div>
@@ -293,6 +325,14 @@
         "</div>"
       );
     }
+    function affiliationLoadingHtml() {
+      return (
+        '<div class="ov-affil">' +
+          "<h4>Affiliation revenue</h4>" +
+          '<div class="muted" style="margin-top:8px;"><span class="ov-spin" aria-hidden="true"></span> Loading…</div>' +
+        "</div>"
+      );
+    }
     function tileLoading(title) {
       return (
         '<div class="ov-card ov-tile-loading">' +
@@ -301,6 +341,103 @@
           '<div class="muted"><span class="ov-spin" aria-hidden="true"></span> Loading…</div>' +
         "</div>"
       );
+    }
+
+    function selectedAffiliationId() {
+      try {
+        return localStorage.getItem(AFFIL_SELECT_KEY) || "all";
+      } catch (e) {
+        return "all";
+      }
+    }
+
+    function renderAffiliation(aff, ranges) {
+      var el = document.getElementById("tile-affiliation");
+      if (!el) return;
+      aff = aff || {};
+      var rows = Array.isArray(aff.rows) ? aff.rows : [];
+      var err = aff.error || null;
+      var sel = selectedAffiliationId();
+      if (sel !== "all" && !rows.some(function(r) { return r.id === sel; })) sel = "all";
+      var y = aff.yesterday;
+      var m = aff.mtd;
+      var label = "All affiliations";
+      if (sel !== "all") {
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].id === sel) {
+            y = rows[i].yesterday;
+            m = rows[i].mtd;
+            label = rows[i].label;
+            break;
+          }
+        }
+      }
+      var opts = '<option value="all"' + (sel === "all" ? " selected" : "") + ">All affiliations</option>";
+      rows.forEach(function(r) {
+        opts +=
+          '<option value="' + r.id + '"' + (sel === r.id ? " selected" : "") + ">" +
+          r.label +
+          "</option>";
+      });
+      var from = (ranges && ranges.mtd_from) || "";
+      var to = (ranges && ranges.mtd_to) || "";
+      var windowLbl = from && to ? from + " → " + to : "1st of month through yesterday";
+      var tableRows = rows
+        .map(function(r) {
+          var cls = r.id === sel ? ' class="sel"' : "";
+          return (
+            "<tr" + cls + ">" +
+              "<td>" + r.label + "</td>" +
+              '<td class="num">' + money(r.yesterday) + "</td>" +
+              '<td class="num">' + money(r.mtd) + "</td>" +
+            "</tr>"
+          );
+        })
+        .join("");
+      tableRows +=
+        '<tr class="total">' +
+          "<td>Total</td>" +
+          '<td class="num">' + money(aff.yesterday) + "</td>" +
+          '<td class="num">' + money(aff.mtd) + "</td>" +
+        "</tr>";
+      var errHtml = err ? '<div class="err">Error: ' + String(err).slice(0, 200) + "</div>" : "";
+      var emptyNote = !rows.length && !err
+        ? '<div class="muted" style="font-size:12px;margin-top:8px;">No affiliation split in this snapshot yet — use Refresh from APIs.</div>'
+        : "";
+      el.innerHTML =
+        '<div class="ov-affil' + (err ? " has-err" : "") + '">' +
+          '<div class="ov-affil-head">' +
+            "<h4>Affiliation revenue</h4>" +
+            '<label>Show <select id="overview-affil-select">' + opts + "</select></label>" +
+          "</div>" +
+          '<div class="ov-affil-total">' +
+            "<div>" +
+              '<div class="lbl">Cumulative MTD · ' + label + "</div>" +
+              '<div class="amt">' + money(m) + "</div>" +
+            "</div>" +
+            "<div>" +
+              '<div class="lbl">Yesterday (UTC)</div>' +
+              '<div class="sub">' + money(y) + "</div>" +
+            "</div>" +
+            "<div>" +
+              '<div class="lbl">Window (UTC)</div>' +
+              '<div class="sub">' + windowLbl + "</div>" +
+            "</div>" +
+          "</div>" +
+          "<table>" +
+            "<thead><tr><th>Affiliation</th><th class=\"num\">Yesterday</th><th class=\"num\">MTD</th></tr></thead>" +
+            "<tbody>" + tableRows + "</tbody>" +
+          "</table>" +
+          emptyNote +
+          errHtml +
+        "</div>";
+      var selEl = document.getElementById("overview-affil-select");
+      if (selEl) {
+        selEl.addEventListener("change", function() {
+          try { localStorage.setItem(AFFIL_SELECT_KEY, selEl.value || "all"); } catch (e) {}
+          renderAffiliation(aff, ranges);
+        });
+      }
     }
 
     var failEl = document.getElementById("overview-fail");
@@ -321,6 +458,7 @@
       ecomnia: "Cost · Ecomnia",
       trillion: "Cost · Trillion (TR)",
     };
+    var AFFIL_SELECT_KEY = "klblend-overview-affiliation";
 
     if (!rangesEl || !failEl) return;
 
@@ -346,6 +484,8 @@
       var totEl = document.getElementById("tile-total");
       if (netEl) netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Loading snapshot…", false, "wait");
       if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC + TR)", null, null, "Loading snapshot…", false, "wait");
+      var affEl = document.getElementById("tile-affiliation");
+      if (affEl) affEl.innerHTML = affiliationLoadingHtml();
     }
 
     function setTilesLoading() {
@@ -357,6 +497,8 @@
       var totEl = document.getElementById("tile-total");
       if (netEl) netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Refreshing…", false, "wait");
       if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC + TR)", null, null, "Refreshing…", false, "wait");
+      var affEl = document.getElementById("tile-affiliation");
+      if (affEl) affEl.innerHTML = affiliationLoadingHtml();
     }
 
     function renderFromSnapshot(data) {
@@ -405,6 +547,7 @@
         var netErr = [rev.error, terr].filter(Boolean).join(" · ") || null;
         netEl.innerHTML = cardHtml("Net (revenue − cost)", net.yesterday, net.mtd, netErr, false, netErr ? "err" : "ok");
       }
+      renderAffiliation(data.affiliation_revenue || {}, rg);
     }
 
     function loadSnapshotFromDisk() {
