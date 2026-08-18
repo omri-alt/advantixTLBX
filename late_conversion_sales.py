@@ -195,7 +195,8 @@ def fetch_kelkoo_mtd_sales(
 ) -> List[SaleRow]:
     from config import kelkoo_postback_tag_to_index, raw_report_geos_for_feed_index
     from config import kelkoo_api_key_for_postback_tag
-    from integrations.daily_conversion_postbacks import KELKOO_RAW_REPORT_URL
+    from config import kelkoo_postback_revenue_share
+    from integrations.daily_conversion_postbacks import KELKOO_RAW_REPORT_URL, _apply_revenue_share
 
     api_key = kelkoo_api_key_for_postback_tag(feed)
     if not api_key:
@@ -208,6 +209,7 @@ def fetch_kelkoo_mtd_sales(
     start_s = month_start.isoformat()
     end_s = hi_date.isoformat()
     out: List[SaleRow] = []
+    share = kelkoo_postback_revenue_share(feed_tag=feed)
 
     from workflows.kelkoo_sales_report import _sale_rows_from_tsv
 
@@ -226,12 +228,15 @@ def fetch_kelkoo_mtd_sales(
                 cid = (row.get("click_id") or "").strip()
                 if not cid:
                     continue
+                sale_usd = (row.get("sale_value_usd") or "0").strip() or "0"
+                if share != 1.0:
+                    sale_usd = _apply_revenue_share(sale_usd, share)
                 out.append(
                     SaleRow(
                         feed=feed,
                         sub_id=cid,
                         sale_date=sale_date,
-                        sale_value_usd=(row.get("sale_value_usd") or "0").strip() or "0",
+                        sale_value_usd=sale_usd,
                         merchant=(row.get("merchant") or "").strip(),
                         country=(row.get("country") or geo).strip(),
                         geo=geo.lower(),

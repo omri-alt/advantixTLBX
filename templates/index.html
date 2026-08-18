@@ -457,7 +457,7 @@
 
     var TILE_KEYS = ["revenue", "zeropark", "sourceknowledge", "ecomnia", "trillion"];
     var TITLES = {
-      revenue: "Revenue (Keitaro)",
+      revenue: "Revenue (affiliations)",
       zeropark: "Cost · Zeropark",
       sourceknowledge: "Cost · SourceKnowledge",
       ecomnia: "Cost · Ecomnia",
@@ -525,7 +525,7 @@
       var rev = data.revenue || {};
       var revEl = document.getElementById("tile-revenue");
       if (revEl) {
-        revEl.innerHTML = cardHtml("Revenue (Keitaro)", rev.yesterday, rev.mtd, rev.error, false, rev.error ? "err" : "ok");
+        revEl.innerHTML = cardHtml("Revenue (affiliations)", rev.yesterday, rev.mtd, rev.error, false, rev.error ? "err" : "ok");
       }
       var c = data.costs || {};
       function costTile(key, title) {

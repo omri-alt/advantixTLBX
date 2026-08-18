@@ -690,8 +690,9 @@ def kelkoo_postback_revenue_share(*, feed_tag: str = "", feed_index: int = 0) ->
     """
     Multiply raw-report CPC / sale USD before firing postbacks (our net share).
 
-    ``FEED4_POSTBACK_REVENUE_SHARE`` defaults to ``0.7`` (70% net). Other feeds default to ``1.0``
-    unless ``FEEDn_POSTBACK_REVENUE_SHARE`` is set. Alias: ``FEED8_POSTBACK_REVENUE_SHARE``.
+    ``FEED2_POSTBACK_REVENUE_SHARE`` and ``FEED4_POSTBACK_REVENUE_SHARE`` default to ``0.7``
+    (70% net). Other feeds default to ``1.0`` unless ``FEEDn_POSTBACK_REVENUE_SHARE`` is set.
+    Feed 4 alias: ``FEED8_POSTBACK_REVENUE_SHARE``.
     """
     tag = (feed_tag or "").strip().lower()
     idx = feed_index or kelkoo_postback_tag_to_index(tag)
@@ -706,6 +707,8 @@ def kelkoo_postback_revenue_share(*, feed_tag: str = "", feed_index: int = 0) ->
             or os.getenv("FEED8_POSTBACK_REVENUE_SHARE")
             or "0.7"
         ).strip()
+    if not raw and (idx == 2 or tag == "kelkoo2"):
+        raw = (os.getenv("FEED2_POSTBACK_REVENUE_SHARE") or "0.7").strip()
     if not raw:
         return 1.0
     try:
