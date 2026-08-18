@@ -230,12 +230,7 @@ def _merchant_selection(ctx: RunContext) -> tuple[Dict[str, List[str]], Dict[str
     service = rdw.get_sheets_service()
 
     base_top_n = max(1, merchants_per_geo)
-    max_auto_rank = 1
-    for feed_data in merchant_auto_overrides.values():
-        for rank in feed_data.values():
-            if rank > max_auto_rank:
-                max_auto_rank = rank
-    rank_depth = max(base_top_n, max_auto_rank)
+    rank_depth = rdw._merchant_rank_depth(base_top_n, merchant_auto_overrides)
 
     print(
         f"3. Choosing merchants (top-{rank_depth} scan; up to {base_top_n} per geo; "
@@ -268,6 +263,22 @@ def _merchant_selection(ctx: RunContext) -> tuple[Dict[str, List[str]], Dict[str
     )
     chosen1 = rdw._apply_merchant_overrides_to_chosen(chosen1, 1, merchant_overrides)
     chosen2 = rdw._apply_merchant_overrides_to_chosen(chosen2, 2, merchant_overrides)
+    chosen1 = rdw._apply_no_val_click_skips(
+        chosen1,
+        ranked1,
+        1,
+        target_n=base_top_n,
+        run_date_str=ctx.date_str,
+        merchant_overrides=merchant_overrides,
+    )
+    chosen2 = rdw._apply_no_val_click_skips(
+        chosen2,
+        ranked2,
+        2,
+        target_n=base_top_n,
+        run_date_str=ctx.date_str,
+        merchant_overrides=merchant_overrides,
+    )
     chosen1 = rdw._apply_merchant_skip_replaces(chosen1, 1, merchant_skip_replaces)
     chosen2 = rdw._apply_merchant_skip_replaces(chosen2, 2, merchant_skip_replaces)
     chosen5: dict = {}
@@ -280,6 +291,14 @@ def _merchant_selection(ctx: RunContext) -> tuple[Dict[str, List[str]], Dict[str
             merchant_auto_overrides=merchant_auto_overrides,
         )
         chosen5 = rdw._apply_merchant_overrides_to_chosen(chosen5, 5, merchant_overrides)
+        chosen5 = rdw._apply_no_val_click_skips(
+            chosen5,
+            ranked5,
+            5,
+            target_n=base_top_n,
+            run_date_str=ctx.date_str,
+            merchant_overrides=merchant_overrides,
+        )
         chosen5 = rdw._apply_merchant_skip_replaces(chosen5, 5, merchant_skip_replaces)
     if partial_geos:
         chosen1 = {k: v for k, v in chosen1.items() if k in partial_geos}

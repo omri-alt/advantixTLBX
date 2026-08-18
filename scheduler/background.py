@@ -86,7 +86,7 @@ def start_background_schedulers() -> None:
         ("Adexa/Yadore daily conversion postbacks", start_adexa_yadore_daily_postbacks_scheduler),
         ("Daily workflow v2", start_daily_workflow_scheduler),
         ("Overview snapshot", start_daily_overview_scheduler),
-        ("Overview bootstrap", start_overview_snapshot_bootstrap),
+        ("Dashboard snapshot bootstrap", start_overview_snapshot_bootstrap),
         ("Blend cap progress", start_blend_cap_progress_scheduler),
         ("Blend CPC refresh", start_blend_cpc_refresh_scheduler),
     ):

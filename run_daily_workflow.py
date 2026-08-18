@@ -76,6 +76,8 @@ from config import (
     FEED2_MERCHANTS_GEOS,
     FEED5_MERCHANTS_GEOS,
     KELKOO_SHEETS_SPREADSHEET_ID,
+    NO_VAL_CLICK_ENABLED,
+    NO_VAL_CLICK_RANK_BUFFER,
     YADORE_API_KEY,
 )
 
@@ -472,6 +474,19 @@ def run_blend_daily_steps(
             print(f"   Warning: Blend prune step failed: {e}")
     else:
         print("   7a½. Skipping Blend prune (--skip-blend-prune).")
+    print("   7a¾. Color Blend rows that had clicks yesterday but no Val_clicks ...")
+    try:
+        from integrations.no_val_click import color_blend_dead_rows
+
+        res = color_blend_dead_rows(dry_run=False)
+        print(
+            f"   Blend no-Val-click highlight: status={res.get('status')} "
+            f"colored={res.get('colored', 0)} cleared={res.get('cleared', 0)}"
+        )
+        if res.get("error"):
+            print(f"   Warning: {res['error']}")
+    except Exception as e:
+        print(f"   Warning: Blend no-Val-click coloring failed: {e}")
     if skip_keitaro:
         print("   7b. Skipping legacy Blend Keitaro sync (--skip-keitaro).")
     elif skip_blend_sync:
@@ -1070,6 +1085,58 @@ def _apply_merchant_skip_replaces(
     return ch
 
 
+def _merchant_rank_depth(base_top_n: int, merchant_auto_overrides: Dict[int, Dict[str, int]]) -> int:
+    """Scan depth so auto-rank and no-Val-click replacements still have a next merchant."""
+    max_auto_rank = 1
+    for feed_data in (merchant_auto_overrides or {}).values():
+        for rank in feed_data.values():
+            if rank > max_auto_rank:
+                max_auto_rank = rank
+    buffer = int(NO_VAL_CLICK_RANK_BUFFER) if NO_VAL_CLICK_ENABLED else 0
+    return max(1, int(base_top_n), max_auto_rank) + max(0, buffer)
+
+
+def _apply_no_val_click_skips(
+    chosen: Dict[str, List[str]],
+    ranked: Dict[str, List[str]],
+    feed_num: int,
+    *,
+    target_n: int,
+    run_date_str: str,
+    merchant_overrides: Dict[int, Dict[str, List[str]]],
+) -> Dict[str, List[str]]:
+    """Replace yesterday's no-Val-click merchants with the next ranked candidate."""
+    if not NO_VAL_CLICK_ENABLED:
+        return chosen
+    try:
+        from integrations.no_val_click import apply_nipuhim_skips, nipuhim_skip_set
+
+        run_date = datetime.strptime(run_date_str, "%Y-%m-%d").date()
+        skip_keys = nipuhim_skip_set(run_date=run_date)
+        if not skip_keys:
+            return chosen
+        protected_by_geo: Dict[str, Set[str]] = {}
+        for geo, ids in (merchant_overrides.get(feed_num) or {}).items():
+            g = (geo or "").strip().lower()[:2]
+            protected_by_geo[g] = {
+                _normalize_merchant_id_from_sheet(x) for x in (ids or []) if str(x).strip()
+            }
+        updated, notes = apply_nipuhim_skips(
+            chosen,
+            ranked,
+            feed_num,
+            skip_keys,
+            target_n=target_n,
+            protected_by_geo=protected_by_geo,
+        )
+        for line in notes:
+            print(f"   {line}")
+        return updated
+    except Exception as e:
+        print(f"   Warning: no-Val-click skip for feed{feed_num} failed ({e}); keeping current selection.")
+        return chosen
+
+
 def _run_post_pla_automation_tail(service: Any, pa: dict) -> None:
     """Sales report (late-sales workbook) then Kelkoo late-sales flow; errors are logged, non-fatal."""
     dry = bool(pa.get("workflow_dry_run"))
@@ -1156,12 +1223,7 @@ def run_pla_offers_keitaro_blend_tail(
     use_feed5 = nipuhim_feed5_enabled()
 
     base_top_n = max(1, int(merchants_per_geo))
-    max_auto_rank = 1
-    for feed_data in merchant_auto_overrides.values():
-        for rank in feed_data.values():
-            if rank > max_auto_rank:
-                max_auto_rank = rank
-    rank_depth = max(base_top_n, max_auto_rank)
+    rank_depth = _merchant_rank_depth(base_top_n, merchant_auto_overrides)
     print(
         f"3. Choosing merchants (top-{rank_depth} scan; up to {base_top_n} per geo; "
         "report rules + CPC floor) ..."
@@ -1201,6 +1263,22 @@ def run_pla_offers_keitaro_blend_tail(
     )
     chosen1 = _apply_merchant_overrides_to_chosen(chosen1, 1, merchant_overrides)
     chosen2 = _apply_merchant_overrides_to_chosen(chosen2, 2, merchant_overrides)
+    chosen1 = _apply_no_val_click_skips(
+        chosen1,
+        ranked1,
+        1,
+        target_n=base_top_n,
+        run_date_str=date_str,
+        merchant_overrides=merchant_overrides,
+    )
+    chosen2 = _apply_no_val_click_skips(
+        chosen2,
+        ranked2,
+        2,
+        target_n=base_top_n,
+        run_date_str=date_str,
+        merchant_overrides=merchant_overrides,
+    )
     chosen1 = _apply_merchant_skip_replaces(chosen1, 1, merchant_skip_replaces)
     chosen2 = _apply_merchant_skip_replaces(chosen2, 2, merchant_skip_replaces)
     chosen5: dict = {}
@@ -1213,6 +1291,14 @@ def run_pla_offers_keitaro_blend_tail(
             merchant_auto_overrides=merchant_auto_overrides,
         )
         chosen5 = _apply_merchant_overrides_to_chosen(chosen5, 5, merchant_overrides)
+        chosen5 = _apply_no_val_click_skips(
+            chosen5,
+            ranked5,
+            5,
+            target_n=base_top_n,
+            run_date_str=date_str,
+            merchant_overrides=merchant_overrides,
+        )
         chosen5 = _apply_merchant_skip_replaces(chosen5, 5, merchant_skip_replaces)
     if partial_geos:
         chosen1 = {k: v for k, v in chosen1.items() if k in partial_geos}

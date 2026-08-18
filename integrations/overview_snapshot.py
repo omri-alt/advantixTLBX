@@ -368,34 +368,13 @@ def _scheduler_loop() -> None:
 
 def start_overview_snapshot_bootstrap() -> None:
     """
-    Optionally queue one refresh shortly after startup (background).
+    After deploy / process start, refresh dashboard caches that are missing or schema-stale.
 
-    Controlled by ``OVERVIEW_SNAPSHOT_BOOTSTRAP`` (``missing`` | ``always`` | ``off``).
+    Delegates to ``start_dashboard_snapshot_bootstrap`` (overview + domain-demand + Blend cap).
     """
-    from config import OVERVIEW_SNAPSHOT_BOOTSTRAP
+    from integrations.dashboard_snapshots import start_dashboard_snapshot_bootstrap
 
-    mode = (OVERVIEW_SNAPSHOT_BOOTSTRAP or "missing").strip().lower()
-    if mode in ("0", "off", "false", "no"):
-        return
-    if os.getenv("FLASK_DEBUG") == "1" and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-        return
-
-    def run() -> None:
-        time.sleep(3.0)
-        path = snapshot_path()
-        if mode in ("missing", "if-missing", ""):
-            if path.exists():
-                logger.info("Overview snapshot bootstrap skipped (file exists): %s", path)
-                return
-        elif mode not in ("always", "force", "yes", "1", "true"):
-            logger.warning("Unknown OVERVIEW_SNAPSHOT_BOOTSTRAP %r; treating as missing", mode)
-            if path.exists():
-                return
-        queue_overview_refresh(reason="bootstrap")
-        logger.info("Overview snapshot bootstrap refresh queued")
-
-    threading.Thread(target=run, name="overview-snapshot-bootstrap", daemon=True).start()
-    logger.info("Overview snapshot bootstrap thread scheduled (mode=%s)", mode)
+    start_dashboard_snapshot_bootstrap()
 
 
 def start_daily_overview_scheduler() -> None:

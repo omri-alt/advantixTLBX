@@ -57,9 +57,13 @@
     .overview { margin: 0 0 32px; }
     .overview h2 { margin: 0 0 10px; font-size: 1.15rem; font-weight: 700; }
     .overview .ov-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 12px; }
-    .overview .ov-actions .btn { cursor: pointer; border: 0; font: inherit; }
-    .overview .ov-actions .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-    .overview .ov-actions .btn-sm { font-size: 12px; padding: 6px 12px; border-radius: 8px; }
+    .overview .ov-actions .btn,
+    .ov-affil-head .btn { cursor: pointer; border: 0; font: inherit; }
+    .overview .ov-actions .btn:disabled,
+    .ov-affil-head .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .overview .ov-actions .btn-sm,
+    .ov-affil-head .btn-sm { font-size: 12px; padding: 6px 12px; border-radius: 8px; }
+    .ov-affil-head .btn { margin-left: auto; }
     .ov-meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
     .ov-row-top { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
     @media (max-width: 720px) { .ov-row-top { grid-template-columns: 1fr; } }
@@ -402,13 +406,14 @@
         "</tr>";
       var errHtml = err ? '<div class="err">Error: ' + String(err).slice(0, 200) + "</div>" : "";
       var emptyNote = !rows.length && !err
-        ? '<div class="muted" style="font-size:12px;margin-top:8px;">No affiliation split in this snapshot yet — use Refresh from APIs.</div>'
+        ? '<div class="muted" style="font-size:12px;margin-top:8px;">No affiliation split in this snapshot yet — use Refresh.</div>'
         : "";
       el.innerHTML =
         '<div class="ov-affil' + (err ? " has-err" : "") + '">' +
           '<div class="ov-affil-head">' +
             "<h4>Affiliation revenue</h4>" +
             '<label>Show <select id="overview-affil-select">' + opts + "</select></label>" +
+            '<button type="button" class="btn btn-sm" id="overview-affil-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh</button>' +
           "</div>" +
           '<div class="ov-affil-total">' +
             "<div>" +
@@ -560,7 +565,10 @@
           if (!r.ok) throw new Error("HTTP " + r.status);
           return r.json();
         })
-        .then(renderFromSnapshot);
+        .then(function(data) {
+          renderFromSnapshot(data);
+          return data;
+        });
     }
 
     function pollRefreshUntilDone(sessionStartedUtc) {
@@ -648,10 +656,84 @@
         });
     }
 
+    var AFFIL_AUTO_REFRESH_KEY = "klblend-overview-affil-auto-refresh";
+
+    function affiliationSnapshotMissing(data) {
+      if (!data || data.snapshot_status === "missing") return true;
+      var aff = data.affiliation_revenue;
+      return aff == null || typeof aff !== "object";
+    }
+
+    function setRefreshButtonsDisabled(on) {
+      if (refreshBtn) refreshBtn.disabled = !!on;
+      var affBtn = document.getElementById("overview-affil-refresh-btn");
+      if (affBtn) affBtn.disabled = !!on;
+    }
+
+    function queueOverviewRefresh(opts) {
+      opts = opts || {};
+      var allowJoinRunning = !!opts.allowJoinRunning;
+      setRefreshButtonsDisabled(true);
+      failEl.style.display = "none";
+      setTilesLoading();
+      rangesEl.textContent = "Queuing snapshot refresh from APIs…";
+      return fetch(refreshUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      })
+        .then(function(r) {
+          if (r.status === 401) throw new Error("HTTP 401 — sign in again");
+          if (!r.ok) {
+            return r.text().then(function(t) {
+              throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200));
+            });
+          }
+          return r.json();
+        })
+        .then(function(st) {
+          if (st && st.status === "error") {
+            throw new Error(st.error || "Could not queue refresh");
+          }
+          if (st && st.queued === false && st.status === "running") {
+            if (allowJoinRunning && st.started_utc) {
+              rangesEl.textContent = "Joining in-progress refresh (started " + st.started_utc + ")…";
+              return pollRefreshUntilDone(st.started_utc);
+            }
+            throw new Error(
+              "A refresh is already running" +
+                (st.started_utc ? " (started " + st.started_utc + ")" : "") +
+                ". Wait for it to finish."
+            );
+          }
+          var sessionStarted = (st && st.started_utc) || "";
+          if (!sessionStarted) {
+            throw new Error("Refresh was not queued (missing started_utc in response)");
+          }
+          return pollRefreshUntilDone(sessionStarted);
+        })
+        .catch(function(e) {
+          failEl.style.display = "block";
+          failEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
+          return loadSnapshotFromDisk();
+        })
+        .finally(function() {
+          setRefreshButtonsDisabled(false);
+        });
+    }
+
     maybeResumeRefreshPoll()
       .then(function(resumed) {
         if (resumed) return resumed;
-        return loadSnapshotFromDisk();
+        return loadSnapshotFromDisk().then(function(data) {
+          if (!affiliationSnapshotMissing(data)) return data;
+          var already = "";
+          try { already = sessionStorage.getItem(AFFIL_AUTO_REFRESH_KEY) || ""; } catch (e) {}
+          if (already === "1") return data;
+          try { sessionStorage.setItem(AFFIL_AUTO_REFRESH_KEY, "1"); } catch (e) {}
+          rangesEl.textContent = "Affiliation split missing from snapshot — queuing a rebuild…";
+          return queueOverviewRefresh({ allowJoinRunning: true });
+        });
       })
       .catch(function(e) {
         failEl.style.display = "block";
@@ -660,49 +742,16 @@
 
     if (refreshBtn) {
       refreshBtn.addEventListener("click", function() {
-        refreshBtn.disabled = true;
-        failEl.style.display = "none";
-        setTilesLoading();
-        rangesEl.textContent = "Queuing snapshot refresh from APIs…";
-        fetch(refreshUrl, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { Accept: "application/json" },
-        })
-          .then(function(r) {
-            if (r.status === 401) throw new Error("HTTP 401 — sign in again");
-            if (!r.ok) {
-              return r.text().then(function(t) {
-                throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200));
-              });
-            }
-            return r.json();
-          })
-          .then(function(st) {
-            if (st && st.status === "error") {
-              throw new Error(st.error || "Could not queue refresh");
-            }
-            if (st && st.queued === false && st.status === "running") {
-              throw new Error(
-                "A refresh is already running" +
-                  (st.started_utc ? " (started " + st.started_utc + ")" : "") +
-                  ". Wait for it to finish."
-              );
-            }
-            var sessionStarted = (st && st.started_utc) || "";
-            if (!sessionStarted) {
-              throw new Error("Refresh was not queued (missing started_utc in response)");
-            }
-            return pollRefreshUntilDone(sessionStarted);
-          })
-          .catch(function(e) {
-            failEl.style.display = "block";
-            failEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
-            return loadSnapshotFromDisk();
-          })
-          .finally(function() {
-            refreshBtn.disabled = false;
-          });
+        queueOverviewRefresh();
+      });
+    }
+    var affHost = document.getElementById("tile-affiliation");
+    if (affHost) {
+      affHost.addEventListener("click", function(ev) {
+        var t = ev.target;
+        if (t && t.id === "overview-affil-refresh-btn") {
+          queueOverviewRefresh();
+        }
       });
     }
   })();

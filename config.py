@@ -1019,8 +1019,24 @@ OVERVIEW_SNAPSHOT_HOURS = _parse_overview_snapshot_hours()
 # Legacy single-hour alias (first scheduled hour) for older callers / templates.
 OVERVIEW_SNAPSHOT_HOUR = OVERVIEW_SNAPSHOT_HOURS[0]
 OVERVIEW_SCHEDULER_ENABLED = (os.getenv("OVERVIEW_SCHEDULER_ENABLED", "1").strip().lower() not in ("0", "false", "no"))
-# At process start: ``missing`` = build snapshot in background only if file absent; ``always`` = always rebuild once; ``off`` = never.
+# At process start: ``missing`` = rebuild overview if file absent or schema stale
+# (e.g. no affiliation_revenue); also fills missing domain-demand / Blend-cap caches.
+# ``always`` = rebuild all dashboard snapshots once; ``off`` = never.
+# Cron / post-deploy: ``python cli/refresh_dashboard_snapshots.py``.
 OVERVIEW_SNAPSHOT_BOOTSTRAP = (os.getenv("OVERVIEW_SNAPSHOT_BOOTSTRAP") or "missing").strip().lower()
+
+# Yesterday Nipuhim offers with traffic but 0 Val_clicks: skip that merchant at today's pick
+# (backfill from the next ranked merchant). Blend rows are highlighted, not skipped.
+_nvc_on = (os.getenv("NO_VAL_CLICK_ENABLED") or "1").strip().lower()
+NO_VAL_CLICK_ENABLED = _nvc_on not in ("0", "false", "no", "off")
+try:
+    NO_VAL_CLICK_MIN_CLICKS = max(1, int((os.getenv("NO_VAL_CLICK_MIN_CLICKS") or "5").strip()))
+except ValueError:
+    NO_VAL_CLICK_MIN_CLICKS = 5
+try:
+    NO_VAL_CLICK_RANK_BUFFER = max(0, int((os.getenv("NO_VAL_CLICK_RANK_BUFFER") or "5").strip()))
+except ValueError:
+    NO_VAL_CLICK_RANK_BUFFER = 5
 
 # Ecomnia (advertiser API keys)
 EC_ADVERTISER_KEY = (os.getenv("ADVERTISER_KEY") or "").strip()
