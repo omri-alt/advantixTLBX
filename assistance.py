@@ -953,6 +953,128 @@ def set_hub_child_domain_flow_filters(
     return client.update_stream(int(stream_id), {"filters": filters})
 
 
+def _min_catch_all_stream_position(streams: List[Dict[str, Any]]) -> Optional[int]:
+    """
+    Lowest position among non-``_domain``, non-bot streams that have no filters
+    (i.e. catch-all flows like ``Flow 2`` on Quality campaigns).
+    """
+    positions: List[int] = []
+    for s in streams:
+        name = (s.get("name") or "").strip().lower()
+        if name.endswith("_domain"):
+            continue
+        stype = (s.get("type") or "").lower()
+        if stype in ("bot", "default"):
+            continue
+        if name in ("bot protection", "bot"):
+            continue
+        filters = s.get("filters") or []
+        if filters:
+            continue  # has filters — not a catch-all
+        pos = s.get("position")
+        if pos is not None:
+            try:
+                positions.append(int(pos))
+            except (TypeError, ValueError):
+                pass
+    return min(positions) if positions else None
+
+
+def reorder_quality_domain_streams(
+    campaign_id: int,
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> List[str]:
+    """
+    Ensure ``{geo}_{channel}_domain`` flows are positioned BEFORE any catch-all
+    (no-filter) flows on Quality campaigns.
+
+    Keitaro evaluates streams in position order. When a catch-all flow like ``Flow 2``
+    sits at position 1 with no filters it swallows all traffic — hub domain traffic
+    never reaches the ``_domain`` streams at higher positions.
+
+    Strategy: find the lowest position of any catch-all stream; place every ``_domain``
+    stream at that position - 1 (minimum 1), then push the catch-all up by 1 to make room.
+    """
+    logs: List[str] = []
+    client = KeitaroClient(base_url=base_url, api_key=api_key)
+    streams = client.get_streams(int(campaign_id))
+
+    # Find the lowest catch-all position
+    catch_all_pos = _min_catch_all_stream_position(streams)
+    if catch_all_pos is None:
+        logs.append("  no catch-all stream found — nothing to reorder")
+        return logs
+
+    # Collect _domain streams that are at or after the catch-all position
+    domain_streams_to_fix: List[Dict[str, Any]] = []
+    for s in streams:
+        name = (s.get("name") or "").strip()
+        if not name.lower().endswith("_domain"):
+            continue
+        geo, channel = parse_blend_stream_geo_channel(name)
+        if not geo or channel not in ("desktop", "mobile"):
+            continue
+        pos = int(s.get("position") or 0)
+        if pos >= catch_all_pos:
+            domain_streams_to_fix.append(s)
+
+    if not domain_streams_to_fix:
+        logs.append("  domain stream positions already correct — no changes")
+        return logs
+
+    # Keitaro requires unique positions — use high temp slots first, then final positions.
+    # Step 1: park all _domain streams at high temp positions to vacate their current slots
+    temp_base = 9000
+    for idx, s in enumerate(domain_streams_to_fix):
+        sid = s.get("id")
+        if sid is None:
+            continue
+        client.update_stream(int(sid), {"position": temp_base + idx})
+
+    # Step 2: push catch-all streams down by len(domain_streams_to_fix) to make room
+    n = len(domain_streams_to_fix)
+    catch_all_streams_moved = []
+    for s in sorted(streams, key=lambda x: int(x.get("position") or 0), reverse=True):
+        name = (s.get("name") or "").strip().lower()
+        if name.endswith("_domain"):
+            continue
+        stype = (s.get("type") or "").lower()
+        if stype in ("bot", "default") or name in ("bot protection", "bot"):
+            continue
+        if s.get("filters"):
+            continue
+        sid = s.get("id")
+        old_pos = int(s.get("position") or 0)
+        if sid is None or old_pos < catch_all_pos:
+            continue
+        new_pos = old_pos + n
+        client.update_stream(int(sid), {"position": new_pos})
+        catch_all_streams_moved.append((sid, old_pos, new_pos, s.get("name", "?")))
+
+    for sid, old_pos, new_pos, sname in catch_all_streams_moved:
+        logs.append(
+            "  catch-all id=" + str(sid) + " '" + str(sname) + "'"
+            " nudged " + str(old_pos) + " -> " + str(new_pos)
+        )
+
+    # Step 3: place each _domain stream at catch_all_pos, catch_all_pos+1, …
+    for idx, s in enumerate(domain_streams_to_fix):
+        sid = s.get("id")
+        old_pos = int(s.get("position") or 0)
+        new_pos = catch_all_pos + idx
+        if sid is None:
+            continue
+        client.update_stream(int(sid), {"position": new_pos})
+        logs.append(
+            "  _domain id=" + str(sid) + " '" + str(s.get("name", "?")) + "'"
+            " moved " + str(old_pos) + " -> " + str(new_pos)
+        )
+
+    return logs
+
+
 def ensure_domain_blend_stream(
     campaign_id: int,
     geo: str,
@@ -966,12 +1088,15 @@ def ensure_domain_blend_stream(
     ``{geo}_{channel}_domain`` flow for Quality campaigns (blend hub traffic only).
 
     Existing ``{geo}_{channel}`` flows on those campaigns stay for direct quality traffic.
+    The domain flow is positioned BEFORE the non-domain flow so position-based routing
+    evaluates it first and hub traffic is not swallowed by the catch-all quality stream.
     """
     client = KeitaroClient(base_url=base_url, api_key=api_key)
     flow_name = domain_blend_stream_name(geo, channel)
+    streams = client.get_streams(int(campaign_id))
     if skip_if_exists:
         name_lower = flow_name.lower()
-        for s in client.get_streams(int(campaign_id)):
+        for s in streams:
             if (s.get("name") or "").strip().lower() == name_lower:
                 out = dict(s)
                 out["_skipped"] = True
@@ -981,11 +1106,15 @@ def ensure_domain_blend_stream(
                         int(sid), geo, channel, base_url=base_url, api_key=api_key
                     )
                 return out
+    # Position the new _domain stream before the catch-all flow (e.g. Flow 2)
+    catch_pos = _min_catch_all_stream_position(streams)
+    insert_pos: Optional[int] = catch_pos if catch_pos and catch_pos >= 1 else None
+
     geo_code = _geo_for_api(geo)
     if not geo_code:
         raise ValueError(f"Invalid country code {geo!r}")
     filters = domain_blend_filter_specs(geo_code, channel)
-    payload = {
+    payload: Dict[str, Any] = {
         "campaign_id": int(campaign_id),
         "type": "regular",
         "name": flow_name,
@@ -999,6 +1128,8 @@ def ensure_domain_blend_stream(
         "filters": filters,
         "offers": [],
     }
+    if insert_pos is not None:
+        payload["position"] = insert_pos
     return client.create_stream(payload)
 
 

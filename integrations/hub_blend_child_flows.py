@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from assistance import (
     ensure_domain_blend_stream,
     refresh_hub_child_domain_filters,
+    reorder_quality_domain_streams,
     set_flow_offers_weighted,
 )
 from config import (
@@ -212,15 +213,17 @@ def sync_quality_merchant_domain_flows(
             )
             offer_id_to_row[int(oid)] = row
 
-    for channel in ("desktop", "mobile"):
-        stream_name = f"{geo}_{channel}_domain"
-        if dry_run:
+    if dry_run:
+        for channel in ("desktop", "mobile"):
+            stream_name = f"{geo}_{channel}_domain"
             active = sum(1 for row in group.rows if _channel_weight_for_row(row, channel) > 0)
             logs.append(
                 f"  {group.campaign_name} {stream_name}: would ensure domain flow + {active} offer(s)"
             )
-            continue
+        return logs
 
+    for channel in ("desktop", "mobile"):
+        stream_name = f"{geo}_{channel}_domain"
         stream = ensure_domain_blend_stream(cid, geo, channel, skip_if_exists=True)
         sid = stream.get("id")
         if sid is None:
@@ -237,6 +240,10 @@ def sync_quality_merchant_domain_flows(
             )
         else:
             logs.append(f"  {group.campaign_name} {stream_name}: no offers for {channel}")
+
+    # Ensure _domain streams sit before the plain (catch-all) streams in position order.
+    reorder_logs = reorder_quality_domain_streams(cid)
+    logs.extend(reorder_logs)
 
     return logs
 
