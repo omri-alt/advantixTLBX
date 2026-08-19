@@ -344,6 +344,25 @@ def _affiliation_payloads(d_from: date, d_to: date) -> List[Dict[str, Any]]:
     ]
 
 
+_AFFIL_REVENUE_SHARE: Dict[str, str] = {
+    "kelkoo2": "kelkoo2",
+    "kelkoo4": "kelkoo4",
+}
+
+
+def _affil_revenue_share(aid: str) -> float:
+    """Net revenue share for an affiliation id (1.0 unless a sub-100% feed)."""
+    feed_tag = _AFFIL_REVENUE_SHARE.get(aid)
+    if not feed_tag:
+        return 1.0
+    try:
+        from config import kelkoo_postback_revenue_share
+
+        return kelkoo_postback_revenue_share(feed_tag=feed_tag)
+    except Exception:
+        return 1.0
+
+
 def _sum_affiliation_from_report(report: Any) -> Dict[str, float]:
     totals = {aid: 0.0 for aid, _ in AFFILIATION_ORDER}
     for row in _rows_from_report(report):
@@ -352,7 +371,9 @@ def _sum_affiliation_from_report(report: Any) -> Dict[str, float]:
         aid = classify_affiliation(campaign_name=campaign, offer_name=offer)
         if aid not in totals:
             aid = "other"
-        totals[aid] += _row_revenue(row)
+        rev = _row_revenue(row)
+        share = _affil_revenue_share(aid)
+        totals[aid] += rev * share
     return totals
 
 
