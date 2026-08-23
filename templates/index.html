@@ -647,6 +647,11 @@
         })
         .then(function(st) {
           if (!st || st.status !== "running" || !st.started_utc) return null;
+          // Do not hang the page on an orphaned "running" status (crashed refresh).
+          var startedMs = Date.parse(String(st.started_utc).replace("Z", "+00:00"));
+          if (!isNaN(startedMs) && Date.now() - startedMs > 45 * 60 * 1000) {
+            return null;
+          }
           rangesEl.textContent = "Resuming in-progress refresh (started " + st.started_utc + ")…";
           setTilesLoading();
           return pollRefreshUntilDone(st.started_utc);

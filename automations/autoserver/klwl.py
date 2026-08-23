@@ -27,15 +27,7 @@ class KLWL(BaseAutomation):
     def _execute(self) -> None:
         logger.info("Executing KLWL")
         sourcim = [
-            "s3ed3a7177c013e2",
-            "sfb01bfc6ac1cbe3",
-            "s6edc9136846d915",
-            "s27b58e2b6548902",
-            "s06bc48fe7a74470",
-            "s2599879d2841979",
-            "s1bf84bf08ddb9e4",
-            "sab80d384b9e33bf",
-            "s329c543a1b75b0b",
+            "sb1a0e6971aea25a",  # KLWL11
         ]
         sk.findSourceListInCampaigns(sourcim)
         sk.optimize_KLWL1()

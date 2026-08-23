@@ -57,10 +57,36 @@ def read_refresh_state() -> Dict[str, Any]:
         return {"status": "idle"}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {"status": "idle"}
+        if not isinstance(data, dict):
+            return {"status": "idle"}
     except Exception as e:
         logger.warning("Overview refresh state read failed: %s", e)
         return {"status": "idle", "error": str(e)}
+
+    # Auto-heal orphaned "running" so the homepage does not poll forever after a
+    # crashed refresh subprocess left status=running + a lock file.
+    if data.get("status") == "running" and _running_is_stale(data):
+        finished = _utc_now()
+        healed = {
+            **data,
+            "status": "error",
+            "finished_utc": finished,
+            "error": data.get("error")
+            or "stale running state cleared (refresh exceeded timeout or process died)",
+        }
+        try:
+            write_refresh_state(healed)
+            if refresh_lock_path().is_file():
+                _release_file_lock()
+            logger.warning(
+                "Cleared stale overview refresh state (started=%s)",
+                data.get("started_utc"),
+            )
+        except Exception as e:
+            logger.warning("Could not clear stale overview refresh state: %s", e)
+            return healed
+        return healed
+    return data
 
 
 def write_refresh_state(state: Dict[str, Any]) -> None:

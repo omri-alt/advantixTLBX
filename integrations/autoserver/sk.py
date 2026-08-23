@@ -636,8 +636,8 @@ def findSourceInCampaigns(source):
                     })
                 break
     match source:
-        case 's3ed3a7177c013e2':
-            sname = source + 'KLWL1'
+        case 'sb1a0e6971aea25a':
+            sname = source + '_KLWL11'
         case _:
             sname = source
     gdocs.create_or_update_sheet_from_dicts(f"{sname}", output)
@@ -734,24 +734,8 @@ def findSourceListInCampaigns(sourceList):
                         })
                     break
         match source:
-            case 's3ed3a7177c013e2':
-                sname = source + '_KLWL1'
-            case 's6edc9136846d915':
-                sname = source + '_KLWL2'
-            case 'sfb01bfc6ac1cbe3':
-                sname = source + '_KLWL3'
-            case 's06bc48fe7a74470':
-                sname = source + '_KLWL4'
-            case 's27b58e2b6548902':
-                sname = source + '_KLWL5'
-            case 's2599879d2841979':
-                sname = source + '_KLWL6'
-            case 's1bf84bf08ddb9e4':
-                sname = source + '_KLWL7'
-            case 'sab80d384b9e33bf':
-                sname = source + '_KLWL8'
-            case 's329c543a1b75b0b':
-                sname = source + '_KLWL9'
+            case 'sb1a0e6971aea25a':
+                sname = source + '_KLWL11'
             case _:
                 sname = source
         gdocs.create_or_update_sheet_from_dicts(f"{sname}", output)
