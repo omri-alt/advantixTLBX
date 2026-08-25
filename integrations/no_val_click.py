@@ -79,6 +79,148 @@ def _normalize_geo(raw: Any) -> str:
     return geo
 
 
+def _host_of(url: str) -> str:
+    from urllib.parse import urlparse
+
+    try:
+        host = (urlparse((url or "").strip()).hostname or "").lower()
+    except Exception:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _merchant_url_from_action(action: str) -> str:
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    raw = (action or "").strip()
+    if not raw:
+        return ""
+    if "rain=" in raw:
+        q = parse_qs(urlparse(raw).query)
+        rain = (q.get("rain") or [""])[0]
+        raw = unquote(rain) if rain else raw
+    qs = parse_qs(urlparse(raw).query)
+    return unquote((qs.get("merchantUrl") or [""])[0])
+
+
+def _offers_by_name(client: KeitaroClient) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        for offer in client.get_offers() or []:
+            name = str(offer.get("name") or "").strip()
+            if name:
+                out[name] = offer
+    except Exception as e:
+        logger.warning("no-val-click: could not load Keitaro offers for mid fallback: %s", e)
+    return out
+
+
+def _host_to_mid_maps(
+    *,
+    analysis_day: date,
+    run_day: date,
+) -> Dict[int, Dict[Tuple[str, str], str]]:
+    """
+    Map (geo, host) -> merchant_id per feed.
+
+    Prefers yesterday's offers sheet (exact slot mapping). When those tabs were already
+    deleted (daily workflow order), fall back to today's fixim / offers host URLs.
+    """
+    spreadsheet_id = (KELKOO_SHEETS_SPREADSHEET_ID or "").strip()
+    if not spreadsheet_id:
+        return {}
+    try:
+        service = _get_sheets_service()
+    except Exception as e:
+        logger.warning("no-val-click: sheets unavailable for mid fallback: %s", e)
+        return {}
+
+    feeds = [1, 2]
+    if (FEED5_API_KEY or "").strip():
+        feeds.append(5)
+    out: Dict[int, Dict[Tuple[str, str], str]] = {f: {} for f in feeds}
+
+    def _ingest_offers_tab(day: date, feed_num: int) -> None:
+        rows = read_offers_sheet_rows(service, spreadsheet_id, f"{day.isoformat()}_offers_{feed_num}")
+        for row in rows:
+            geo = _normalize_geo(_geo_key_from_offer_country_cell(row.get("Country")))
+            mid = _normalize_merchant_id_from_sheet(row.get("Merchant ID"))
+            link = str(row.get("Store link") or row.get("Store Link") or "").strip()
+            host = _host_of(link)
+            if geo and mid and host:
+                out[feed_num].setdefault((geo, host), mid)
+
+    def _ingest_fixim_tab(day: date, feed_num: int) -> None:
+        title = f"{day.isoformat()}_fixim_{feed_num}"
+        quoted = title.replace("'", "''")
+        try:
+            values = (
+                service.values()
+                .get(spreadsheetId=spreadsheet_id, range=f"'{quoted}'!A:Z")
+                .execute()
+                .get("values")
+                or []
+            )
+        except Exception:
+            return
+        if len(values) < 2:
+            return
+        header = [str(h or "").strip().lower() for h in values[0]]
+        try:
+            i_geo = header.index("geo_origin")
+            i_id = header.index("id")
+            i_url = header.index("url")
+        except ValueError:
+            return
+        for row in values[1:]:
+            geo = _normalize_geo(row[i_geo] if i_geo < len(row) else "")
+            mid = _normalize_merchant_id_from_sheet(row[i_id] if i_id < len(row) else "")
+            host = _host_of(str(row[i_url] if i_url < len(row) else ""))
+            if geo and mid and host:
+                out[feed_num].setdefault((geo, host), mid)
+
+    for feed_num in feeds:
+        _ingest_offers_tab(analysis_day, feed_num)
+        if not out[feed_num]:
+            _ingest_offers_tab(run_day, feed_num)
+        if not out[feed_num]:
+            _ingest_fixim_tab(run_day, feed_num)
+            _ingest_fixim_tab(analysis_day, feed_num)
+
+    return out
+
+
+def _resolve_merchant_id_for_offer(
+    *,
+    offer_name: str,
+    feed_num: int,
+    geo: str,
+    slot_mid: str,
+    offers_by_name: Dict[str, Dict[str, Any]],
+    host_maps: Dict[int, Dict[Tuple[str, str], str]],
+) -> str:
+    mid = _normalize_merchant_id_from_sheet(slot_mid)
+    if mid:
+        return mid
+    offer = offers_by_name.get(offer_name) or {}
+    action = str(offer.get("action_payload") or offer.get("action") or "")
+    host = _host_of(_merchant_url_from_action(action))
+    if not host:
+        return ""
+    g = _normalize_geo(geo)
+    mid = (host_maps.get(feed_num) or {}).get((g, host)) or ""
+    if mid:
+        return mid
+    # Cross-feed host match as last resort (same Kelkoo merchant id often shared).
+    for fmap in host_maps.values():
+        mid = fmap.get((g, host)) or ""
+        if mid:
+            return mid
+    return ""
+
+
 def _lower_keys(row: Dict[str, Any]) -> Dict[str, Any]:
     return {str(k).lower(): v for k, v in row.items()}
 
@@ -287,8 +429,19 @@ def analyze_yesterday(
     slots: Dict[str, Dict[str, Any]] = {}
     nipuhim_offers: List[Dict[str, Any]] = []
     merchant_agg: Dict[Tuple[int, str, str], Dict[str, Any]] = {}
+    offers_by_name: Dict[str, Dict[str, Any]] = {}
+    host_maps: Dict[int, Dict[Tuple[str, str], str]] = {}
     if want_n:
         slots = _nipuhim_slots_from_sheet(run_day)
+        # Yesterday's offers tabs are often already deleted by merchant_pick time;
+        # resolve mid via Keitaro action host + today's fixim/offers.
+        if not slots:
+            logger.info(
+                "no-val-click: %s offers sheets empty/missing; using Keitaro URL + fixim host map",
+                run_day.isoformat(),
+            )
+        offers_by_name = _offers_by_name(client)
+        host_maps = _host_to_mid_maps(analysis_day=run_day, run_day=(run_date or datetime.now(timezone.utc).date()))
         for feed_num in _NIPUHIM_FEEDS:
             if feed_num == 5 and not (FEED5_API_KEY or "").strip():
                 continue
@@ -318,7 +471,14 @@ def analyze_yesterday(
                 if not slot:
                     continue
                 geo = slot["geo"]
-                mid = str(slot.get("merchant_id") or "").strip()
+                mid = _resolve_merchant_id_for_offer(
+                    offer_name=name,
+                    feed_num=int(slot["feed_num"]),
+                    geo=geo,
+                    slot_mid=str(slot.get("merchant_id") or ""),
+                    offers_by_name=offers_by_name,
+                    host_maps=host_maps,
+                )
                 item = {
                     **row,
                     "geo": geo,

@@ -913,7 +913,7 @@ def run_nipuhim_v2_keitaro_sync(
     cap = max_offers if max_offers is not None else KEITARO_SYNC_MAX_OFFERS_PER_GEO
 
     print(
-        f"6. Nipuhim Keitaro sync → NIPUHIM-feed* campaigns "
+        f"6. Nipuhim Keitaro sync -> NIPUHIM-feed* campaigns "
         f"(up to {cap} offers per geo, device flows) ..."
     )
 
@@ -940,7 +940,7 @@ def run_nipuhim_v2_keitaro_sync(
     if use_adexa:
         from integrations.nipuhim_v2_sync import sync_adexa_sheet_to_nipuhim_v2
 
-        print("   Nipuhim Adexa sync → NIPUHIM-adexa (1 merchant/geo) ...")
+        print("   Nipuhim Adexa sync -> NIPUHIM-adexa (1 merchant/geo) ...")
         if sync_adexa_sheet_to_nipuhim_v2(
             offers_adexa,
             max_offers=1,
@@ -1467,7 +1467,7 @@ def run_pla_offers_keitaro_blend_tail(
         return
 
     print(
-        f"6. Nipuhim Keitaro sync → NIPUHIM-feed* "
+        f"6. Nipuhim Keitaro sync -> NIPUHIM-feed* "
         f"(up to {KEITARO_SYNC_MAX_OFFERS_PER_GEO} offers per geo) ..."
     )
     print("   (Legacy HrQBXp sync skipped — live traffic is hub 94 → NIPUHIM-feed*.)")

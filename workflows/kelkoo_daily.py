@@ -52,6 +52,10 @@ MERCHANT_SKIP_LIST: Set[Tuple[str, str]] = {
     ("es", "100482516"),  # pce-instruments.com
     ("pt", "14390313"),   # girassol.com
     ("no", "6995723"),    # netonnet.no
+    # 2026-08-24: chronic / soft 0% Val_click on Nipuhim (API still matched)
+    ("fr", "100584969"),  # maisondelamedaille.com
+    ("it", "100527711"),  # smarterstore.it
+    ("it", "100522959"),  # capellopoint.it
 }
 
 
