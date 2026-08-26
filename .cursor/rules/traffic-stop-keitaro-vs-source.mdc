@@ -1,0 +1,27 @@
+---
+description: Stop spend at the traffic source or Keitaro feed weights — never pause Keitaro to cut spend
+alwaysApply: true
+---
+
+# Traffic stop: Keitaro vs traffic source
+
+**Keitaro is tracking + routing only.** Pausing a Keitaro campaign does **not** stop DSP/affiliate spend. Do not pause Keitaro campaigns to “stop traffic” or fix a down monetization feed.
+
+## What to do instead
+
+| Situation | Action |
+|-----------|--------|
+| Brand/multi-feed campaign, **more than one feed** attached and able to take traffic | In Keitaro: set the bad feed’s **share/weight to 0**, renormalize remaining feeds |
+| Brand campaign with **only one live feed** (others at 0 or absent), or feed-specific child (e.g. NIPUHIM-adexa / BLEND-adexa) | **Pause the traffic source** campaign(s) that send into that Keitaro alias (SK / ZP / EC / …), not Keitaro |
+| Unsure which source buys | Match SK (etc.) `trackingUrl` to the Keitaro campaign **alias**; pause those active source campaigns |
+
+## Anti-pattern (2026-08-26 Adexa outage)
+
+- Wrong: disabled Quality brand campaigns in Keitaro (`state=disabled`) while Adexa was down.
+- Corrected: reactivated Keitaro; paused SourceKnowledge campaigns whose tracking URL used those aliases.
+
+## Checklist before any “pause”
+
+1. Goal is stop **spend**? → traffic source API (`active: false` / equivalent).
+2. Goal is stop sending to **one affiliation** but keep the brand live? → Keitaro flow **shares** only.
+3. Confirm with dry-run which layer you will change; never default to Keitaro campaign disable.
