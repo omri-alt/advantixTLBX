@@ -382,12 +382,18 @@ def run_blend_potential_sheets(
     Adexa / Yadore use a delayed-conversion window (previous month through early
     current month) unless callers need an explicit override — here we always apply
     the delayed window for those feeds so continuous Blend merchants stay eligible.
+
+    Each feed is independent: one failure does not skip the rest. Returns True if
+    every feed succeeded, False if any failed (callers should still continue).
     """
     from blend_potential_merchants import _delayed_feed_month_to_yesterday_range
 
     script = Path(__file__).resolve().parent / "blend_potential_merchants.py"
-    ok = True
-    for feed in feeds or _blend_potential_feeds_for_run():
+    targets = list(feeds or _blend_potential_feeds_for_run())
+    if not targets:
+        return True
+    failed: list[str] = []
+    for feed in targets:
         feed_start, feed_end = start_str, end_str
         if feed in ("adexa", "yadore"):
             feed_start, feed_end = _delayed_feed_month_to_yesterday_range()
@@ -401,9 +407,18 @@ def run_blend_potential_sheets(
             "--end",
             feed_end,
         ]
+        print(f"   potential {feed}: {feed_start} → {feed_end} ...")
         r = subprocess.run(cmd)
-        ok = ok and (r.returncode == 0)
-    return ok
+        if r.returncode != 0:
+            failed.append(feed)
+            print(
+                f"   Warning: potential sheet for {feed} failed "
+                f"(exit {r.returncode}); continuing with other feeds."
+            )
+    if failed:
+        print(f"   Potential sheet failures: {', '.join(failed)}")
+        return False
+    return True
 
 
 def run_populate_blend_from_potential(
@@ -494,11 +509,16 @@ def run_blend_daily_steps(
     else:
         print("   7b. blend_sync_from_sheet (legacy Blend campaign + prune auto='v') ...")
         if not run_blend_sync_from_sheet():
-            print("   Blend Keitaro sync failed.")
-            sys.exit(1)
+            print(
+                "   Warning: Blend Keitaro sync failed; "
+                "continuing so other daily steps still run."
+            )
     if blend_v2_enabled:
         if not run_blend_v2_keitaro_sync(only_geo=only_geo):
-            sys.exit(1)
+            print(
+                "   Warning: Blend v2 sync had feed failure(s); "
+                "continuing so other daily steps still run."
+            )
     print()
 
 
@@ -903,6 +923,9 @@ def run_nipuhim_v2_keitaro_sync(
     """
     Sync today's offers sheets into NIPUHIM-feed1/2/5 (+ Adexa when enabled) child campaigns.
     Does not modify legacy HrQBXp sync.
+
+    Each feed is independent: a failure on one feed (e.g. Adexa down) does not skip
+    the others. Returns True if at least one attempted feed succeeded.
     """
     offers_1 = f"{date_str}_offers_1"
     offers_2 = f"{date_str}_offers_2"
@@ -917,40 +940,55 @@ def run_nipuhim_v2_keitaro_sync(
         f"(up to {cap} offers per geo, device flows) ..."
     )
 
-    if not run_update_offers_from_sheet_v2(offers_1, 1, max_offers=cap):
-        print("   Nipuhim v2 feed1 sync failed.")
-        return False
-    print()
+    ok_feeds: list[str] = []
+    failed_feeds: list[str] = []
+
+    def _one(label: str, fn) -> None:
+        try:
+            if fn():
+                ok_feeds.append(label)
+            else:
+                failed_feeds.append(label)
+                print(
+                    f"   Nipuhim v2 {label} sync failed; "
+                    f"continuing with remaining feeds."
+                )
+        except Exception as e:
+            failed_feeds.append(label)
+            print(
+                f"   Nipuhim v2 {label} sync error: {e}; "
+                f"continuing with remaining feeds."
+            )
+        print()
+
+    _one("feed1", lambda: run_update_offers_from_sheet_v2(offers_1, 1, max_offers=cap))
 
     if feed1_traffic_only:
         print("   Nipuhim v2: feed1 only (skipping feed2/feed5/adexa).")
-        return True
+        return bool(ok_feeds)
 
-    if not run_update_offers_from_sheet_v2(offers_2, 2, max_offers=cap):
-        print("   Nipuhim v2 feed2 sync failed.")
-        return False
-    print()
+    _one("feed2", lambda: run_update_offers_from_sheet_v2(offers_2, 2, max_offers=cap))
 
     if use_feed5:
-        if not run_update_offers_from_sheet_v2(offers_5, 5, max_offers=cap):
-            print("   Nipuhim v2 feed5 sync failed.")
-            return False
-        print()
+        _one("feed5", lambda: run_update_offers_from_sheet_v2(offers_5, 5, max_offers=cap))
 
     if use_adexa:
         from integrations.nipuhim_v2_sync import sync_adexa_sheet_to_nipuhim_v2
 
         print("   Nipuhim Adexa sync -> NIPUHIM-adexa (1 merchant/geo) ...")
-        if sync_adexa_sheet_to_nipuhim_v2(
-            offers_adexa,
-            max_offers=1,
-        ) != 0:
-            print("   Nipuhim v2 adexa sync failed.")
-            return False
-        print()
 
-    print("   Nipuhim v2 sync complete.")
-    return True
+        def _adexa() -> bool:
+            return sync_adexa_sheet_to_nipuhim_v2(offers_adexa, max_offers=1) == 0
+
+        _one("adexa", _adexa)
+
+    if failed_feeds:
+        print(f"   Nipuhim v2 feed failures: {', '.join(failed_feeds)}")
+    if ok_feeds:
+        print(f"   Nipuhim v2 sync complete for: {', '.join(ok_feeds)}")
+        return True
+    print("   Nipuhim v2 sync: no feeds succeeded.")
+    return False
 
 
 def run_update_offers_from_sheet(

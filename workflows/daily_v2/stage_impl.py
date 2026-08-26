@@ -78,6 +78,7 @@ def stage_monthly_log(ctx: RunContext) -> int:
 
 
 def stage_blend_potential(ctx: RunContext) -> int:
+    """Refresh potential* sheets. Feed failures are non-fatal so the day continues."""
     rdw = _import_daily()
     feeds = rdw._blend_potential_feeds_for_run()
     tabs = (
@@ -92,12 +93,17 @@ def stage_blend_potential(ctx: RunContext) -> int:
             return 0
         if rdw.run_blend_potential_sheets(ctx.start_str, ctx.end_str, feeds=feeds):
             print("   Done.")
-            return 0
-        print("   Warning: one or more potential sheets failed to update.")
-        return 1
+        else:
+            print(
+                "   Warning: one or more potential sheets failed to update; "
+                "continuing daily workflow with remaining feeds."
+            )
+        # Always exit 0 so a single feed (e.g. Adexa) cannot abort Kelkoo/Yadore/Nipuhim.
+        return 0
     except Exception as e:
         print(f"   Warning: could not update potential sheets: {e}")
-        return 1
+        print("   Continuing daily workflow despite potential-sheet error.")
+        return 0
 
 
 def stage_delete_prev_tabs(ctx: RunContext) -> int:
@@ -334,19 +340,27 @@ def _merchant_selection(ctx: RunContext) -> tuple[Dict[str, List[str]], Dict[str
             )
         except Exception as e:
             print(f"   Warning: could not load Adexa month used set: {e}")
-        chosen_adexa, details, adexa_logs = pick_adexa_merchants_one_per_geo(
-            adexa_geos,
-            exclude_used=used,
-        )
-        for line in adexa_logs:
-            print(f"   {line}")
-        ctx.write_json_artifact("chosen_adexa.json", chosen_adexa)
-        ctx.write_json_artifact("chosen_adexa_details.json", details)
-        ctx.write_json_artifact(
-            "adexa_month_used.json",
-            sorted([f"{g}:{m}" for g, m in used]),
-        )
-        print(f"   Adexa: {len(chosen_adexa)} geo(s) selected")
+        try:
+            chosen_adexa, details, adexa_logs = pick_adexa_merchants_one_per_geo(
+                adexa_geos,
+                exclude_used=used,
+            )
+            for line in adexa_logs:
+                print(f"   {line}")
+            ctx.write_json_artifact("chosen_adexa.json", chosen_adexa)
+            ctx.write_json_artifact("chosen_adexa_details.json", details)
+            ctx.write_json_artifact(
+                "adexa_month_used.json",
+                sorted([f"{g}:{m}" for g, m in used]),
+            )
+            print(f"   Adexa: {len(chosen_adexa)} geo(s) selected")
+        except Exception as e:
+            print(
+                f"   Warning: Adexa Nipuhim pick failed ({e}); "
+                f"continuing without Adexa merchants."
+            )
+            ctx.write_json_artifact("chosen_adexa.json", {})
+            ctx.write_json_artifact("chosen_adexa_details.json", [])
     return chosen1, chosen2, 0
 
 
@@ -449,51 +463,63 @@ def stage_pla_offers(ctx: RunContext) -> int:
 
         print("4c. Adexa Nipuhim: writing offers sheet (1 merchant/geo) ...")
         try:
-            details = ctx.read_json_artifact("chosen_adexa_details.json") or []
-        except Exception:
-            details = []
-        if not details:
-            # Re-pick if merchant_pick artifact missing (resume edge case).
-            from integrations.adexa_nipuhim_pick import pick_adexa_merchants_one_per_geo
-            from workflows.monthly_log_monetization import load_adexa_month_used_merchants
-
-            geos = sorted(partial_geos) if partial_geos else None
-            used = set()
             try:
-                used = load_adexa_month_used_merchants(
+                details = ctx.read_json_artifact("chosen_adexa_details.json") or []
+            except Exception:
+                details = []
+            if not details:
+                # Re-pick if merchant_pick artifact missing (resume edge case).
+                from integrations.adexa_nipuhim_pick import pick_adexa_merchants_one_per_geo
+                from workflows.monthly_log_monetization import load_adexa_month_used_merchants
+
+                geos = sorted(partial_geos) if partial_geos else None
+                used = set()
+                try:
+                    used = load_adexa_month_used_merchants(
+                        service, rdw.SPREADSHEET_ID, ctx.date_str
+                    )
+                except Exception as e:
+                    print(f"   Warning: could not load Adexa month used set: {e}")
+                chosen_adexa, details, adexa_logs = pick_adexa_merchants_one_per_geo(
+                    geos,
+                    exclude_used=used,
+                )
+                for line in adexa_logs:
+                    print(f"   {line}")
+                ctx.write_json_artifact("chosen_adexa.json", chosen_adexa)
+                ctx.write_json_artifact("chosen_adexa_details.json", details)
+            rows_adexa_new = offer_rows_from_adexa_picks(details)
+            if merge_offers_tabs and partial_geos:
+                existing_ax = read_offers_sheet_rows(
+                    service, rdw.SPREADSHEET_ID, offers_adexa
+                )
+                rows_adexa = merge_offers_replace_geos(
+                    existing_ax, rows_adexa_new, set(partial_geos)
+                )
+            else:
+                rows_adexa = rows_adexa_new
+            write_offers_sheet(service, rdw.SPREADSHEET_ID, offers_adexa, rows_adexa)
+            print(f"   {offers_adexa}: {len(rows_adexa)} offers (1 merchant/geo)")
+            try:
+                from workflows.monthly_log_monetization import (
+                    upsert_adexa_run_merchants_into_monthly_log,
+                )
+
+                n_ax = upsert_adexa_run_merchants_into_monthly_log(
                     service, rdw.SPREADSHEET_ID, ctx.date_str
                 )
+                print(
+                    f"   Adexa monthly log: upserted {n_ax} merchant row(s) "
+                    f"for {ctx.date_str}"
+                )
             except Exception as e:
-                print(f"   Warning: could not load Adexa month used set: {e}")
-            chosen_adexa, details, adexa_logs = pick_adexa_merchants_one_per_geo(
-                geos,
-                exclude_used=used,
-            )
-            for line in adexa_logs:
-                print(f"   {line}")
-            ctx.write_json_artifact("chosen_adexa.json", chosen_adexa)
-            ctx.write_json_artifact("chosen_adexa_details.json", details)
-        rows_adexa_new = offer_rows_from_adexa_picks(details)
-        if merge_offers_tabs and partial_geos:
-            existing_ax = read_offers_sheet_rows(service, rdw.SPREADSHEET_ID, offers_adexa)
-            rows_adexa = merge_offers_replace_geos(
-                existing_ax, rows_adexa_new, set(partial_geos)
-            )
-        else:
-            rows_adexa = rows_adexa_new
-        write_offers_sheet(service, rdw.SPREADSHEET_ID, offers_adexa, rows_adexa)
-        print(f"   {offers_adexa}: {len(rows_adexa)} offers (1 merchant/geo)")
-        try:
-            from workflows.monthly_log_monetization import (
-                upsert_adexa_run_merchants_into_monthly_log,
-            )
-
-            n_ax = upsert_adexa_run_merchants_into_monthly_log(
-                service, rdw.SPREADSHEET_ID, ctx.date_str
-            )
-            print(f"   Adexa monthly log: upserted {n_ax} merchant row(s) for {ctx.date_str}")
+                print(f"   Adexa monthly log upsert skipped: {e}")
         except Exception as e:
-            print(f"   Adexa monthly log upsert skipped: {e}")
+            print(
+                f"   Warning: Adexa offers sheet step failed ({e}); "
+                f"continuing without Adexa offers."
+            )
+            rows_adexa = []
 
     run_monthly_log_today = not offers_and_keitaro_only
     if run_monthly_log_today:
@@ -623,7 +649,11 @@ def stage_blend_v2(ctx: RunContext) -> int:
         if pg and len(pg) == 1:
             only_geo = next(iter(pg))
     if not rdw.run_blend_v2_keitaro_sync(only_geo=only_geo):
-        return 1
+        print(
+            "   Warning: Blend v2 had feed failure(s); "
+            "continuing so hub/domain/postback steps still run."
+        )
+    # Exit 0 so a single feed (e.g. Adexa) does not block later stages.
     return 0
 
 

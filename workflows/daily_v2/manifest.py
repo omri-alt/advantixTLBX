@@ -101,7 +101,14 @@ def _skip_trillion_activate(ctx: RunContext) -> bool:
 
 STAGES: tuple[StageDef, ...] = (
     StageDef("monthly_log", "0a - Monthly log (yesterday)", ()),
-    StageDef("blend_potential", "0b - Blend potential sheets", (), skip_if=_skip_offers_only),
+    StageDef(
+        "blend_potential",
+        "0b - Blend potential sheets",
+        (),
+        skip_if=_skip_offers_only,
+        # Per-feed refresh; Adexa/Yadore outages must not abort Kelkoo day.
+        fatal=False,
+    ),
     StageDef("delete_prev_tabs", "0 - Delete previous day tabs", (), skip_if=_skip_offers_only),
     StageDef(
         "download_fixim",
@@ -124,6 +131,7 @@ STAGES: tuple[StageDef, ...] = (
         "6 - Nipuhim Keitaro sync (NIPUHIM-feed*)",
         ("combined_offers",),
         skip_if=_skip_nipuhim_v2,
+        # Stage returns 0 when any feed succeeds; only hard-fails if all fail.
         fatal=True,
     ),
     StageDef(
@@ -138,14 +146,14 @@ STAGES: tuple[StageDef, ...] = (
         "7 - Blend populate + sync",
         ("combined_offers",),
         skip_if=_skip_blend,
-        fatal=True,
+        fatal=False,
     ),
     StageDef(
         "blend_v2",
         "7c - Blend v2 sync (BLEND-feed*)",
         ("blend",),
         skip_if=_skip_blend_v2,
-        fatal=True,
+        fatal=False,
     ),
     StageDef(
         "domain_demand",
