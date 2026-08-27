@@ -404,7 +404,8 @@ def build_nipuhim_v2_action_payload(
     if feed == 2:
         return (
             "https://sidehustlerbaby.com/klk-merchant"
-            f"?geo={geo}&merchantUrl={encoded}&pub_click_id={{subid}}"
+            f"?geo={geo}&merchantUrl={encoded}"
+            f"&pub_click_id={{subid}}&custom1={{subid}}"
         )
     acc = (account_id or FEED1_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID).strip()
     return (
@@ -424,15 +425,16 @@ def build_offer_action_payload(
     Build action_payload URL for a Kelkoo offer.
     feed=1: permanentLinkGo (Kelkoo) with account_id, {var10}, {subid}.
     feed=2: same rain shell as feed1-style Blend URLs; inner target is ``sidehustlerbaby.com/klk-merchant``
-    with literal ``geo`` + URL-encoded ``merchantUrl`` + ``pub_click_id={subid}`` (Keitaro macro), matching
-    ``https://shopli.city/rainotest?rain=https://sidehustlerbaby.com/klk-merchant?geo=...&merchantUrl=...``.
+    with literal ``geo`` + URL-encoded ``merchantUrl`` + ``pub_click_id={subid}`` and
+    ``custom1={subid}`` (partner log + Kelkoo custom1; both Keitaro macros).
     """
     geo = (geo or "").strip().lower()[:2]
     encoded = quote(product_url or "https://example.com/placeholder", safe="")
     if feed == 2:
         return (
             "https://shopli.city/rainotest?rain=https://sidehustlerbaby.com/klk-merchant"
-            f"?geo={geo}&merchantUrl={encoded}&pub_click_id={{subid}}"
+            f"?geo={geo}&merchantUrl={encoded}"
+            f"&pub_click_id={{subid}}&custom1={{subid}}"
         )
     acc = (account_id or FEED1_KELKOO_ACCOUNT_ID or KELKOO_ACCOUNT_ID).strip()
     return (
