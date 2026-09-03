@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Add ``&custom1={subid}`` to Keitaro feed2 (sidehustlerbaby) offer URLs.
+Add ``&custom2={subid}`` to Keitaro feed2 (sidehustlerbaby) offer URLs.
 
-Keeps existing ``pub_click_id={subid}`` for the partner log; ``custom1`` is what
-Kelkoo feed2 raw reports use for postback attribution.
+Keeps ``pub_click_id={subid}`` for the partner log. Sidehustler uses ``custom1`` and
+``publisherClickId`` internally; Kelkoo attribution needs ``custom2``.
+
+Also rewrites legacy ``custom1={subid}`` → ``custom2={subid}`` if present.
 
   python scripts/keitaro_feed2_add_custom1.py           # dry-run
   python scripts/keitaro_feed2_add_custom1.py --apply
@@ -25,8 +27,9 @@ from integrations.keitaro import KeitaroClientError  # noqa: E402
 
 MARKER = "sidehustlerbaby.com/klk-merchant"
 NEEDLE = "pub_click_id={subid}"
+CUSTOM2 = "custom2={subid}"
 CUSTOM1 = "custom1={subid}"
-REPL = f"{NEEDLE}&{CUSTOM1}"
+REPL = f"{NEEDLE}&{CUSTOM2}"
 
 
 def transform(payload: str) -> str | None:
@@ -34,8 +37,10 @@ def transform(payload: str) -> str | None:
     p = payload or ""
     if MARKER not in p:
         return None
-    if CUSTOM1 in p:
+    if CUSTOM2 in p:
         return None
+    if CUSTOM1 in p:
+        return p.replace(CUSTOM1, CUSTOM2, 1)
     if NEEDLE not in p:
         return None
     return p.replace(NEEDLE, REPL, 1)
@@ -44,7 +49,7 @@ def transform(payload: str) -> str | None:
 def main() -> int:
     apply = "--apply" in sys.argv
     print(
-        "Feed2 URL rewrite: keep pub_click_id={subid}, add custom1={subid} "
+        "Feed2 URL rewrite: keep pub_click_id={subid}, set custom2={subid} "
         f"on {MARKER} offers"
     )
     print("DRY RUN" if not apply else "APPLY")
@@ -83,13 +88,12 @@ def main() -> int:
 
     print()
     print(f"Done. {'Would update' if not apply else 'Updated'} {updated}; errors={errors}")
-    # sanity: builders
     from assistance import build_nipuhim_v2_action_payload, build_offer_action_payload
 
     v2 = build_nipuhim_v2_action_payload("fr", "https://example.com/", feed=2)
     blend = build_offer_action_payload("fr", "https://example.com/", feed=2)
-    assert CUSTOM1 in v2 and NEEDLE in v2, v2
-    assert CUSTOM1 in blend and NEEDLE in blend, blend
+    assert CUSTOM2 in v2 and NEEDLE in v2, v2
+    assert CUSTOM2 in blend and NEEDLE in blend, blend
     print("Builder check OK")
     return 1 if errors else 0
 

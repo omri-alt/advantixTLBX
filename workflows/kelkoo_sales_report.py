@@ -28,13 +28,12 @@ def _utc_yesterday_iso() -> str:
 
 
 def _click_id_from_raw_row(r: Dict[str, str], feed_index: int) -> str:
-    from config import kelkoo_raw_report_uses_custom1_subid
+    from config import kelkoo_raw_report_subid_custom_keys
 
-    if kelkoo_raw_report_uses_custom1_subid(feed_index=feed_index):
-        for key in ("custom1", "Custom1"):
-            v = r.get(key)
-            if v is not None and str(v).strip():
-                return str(v).strip()
+    for key in kelkoo_raw_report_subid_custom_keys(feed_index=feed_index):
+        v = r.get(key)
+        if v is not None and str(v).strip():
+            return str(v).strip()
     for key in ("publisherClickId", "PublisherClickId"):
         v = r.get(key)
         if v is not None and str(v).strip():

@@ -153,14 +153,13 @@ def fetch_kelkoo_raw_tsv(
 
 
 def _kelkoo_row_click_id(row: Dict[str, str], feed: str) -> str:
-    """Kelkoo2 raw reports carry Keitaro subid in ``custom1``; kelkoo1/5 use ``publisherClickId``."""
-    from config import kelkoo_raw_report_uses_custom1_subid
+    """Kelkoo2 raw reports carry Keitaro subid in ``custom2``; kelkoo1/5 use ``publisherClickId``."""
+    from config import kelkoo_raw_report_subid_custom_keys
 
-    if kelkoo_raw_report_uses_custom1_subid(feed_tag=feed):
-        for key in ("custom1", "Custom1"):
-            v = row.get(key)
-            if v is not None and str(v).strip():
-                return str(v).strip()
+    for key in kelkoo_raw_report_subid_custom_keys(feed_tag=feed):
+        v = row.get(key)
+        if v is not None and str(v).strip():
+            return str(v).strip()
     for key in ("publisherClickId", "PublisherClickId"):
         v = row.get(key)
         if v is not None and str(v).strip():

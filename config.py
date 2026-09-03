@@ -667,7 +667,7 @@ def raw_report_geos_for_postback_tag(feed_tag: str) -> tuple[str, ...]:
 
 def kelkoo_raw_report_uses_custom1_subid(*, feed_tag: str = "", feed_index: int = 0) -> bool:
     """
-    Some Kelkoo raw TSVs carry Keitaro subid in ``custom1`` (feed2 / feed4 by default);
+    Some Kelkoo raw TSVs carry Keitaro subid in a custom column (feed2 / feed4 by default);
     others use ``publisherClickId``. Override with ``FEEDn_RAW_USES_CUSTOM1=0|1``.
     """
     tag = (feed_tag or "").strip().lower()
@@ -680,10 +680,26 @@ def kelkoo_raw_report_uses_custom1_subid(*, feed_tag: str = "", feed_index: int 
             return False
     if idx == 2 or tag == "kelkoo2":
         return True
-    # New 4th Kelkoo (kelkoo4 / feed8): same custom1 convention as feed2 unless overridden.
+    # New 4th Kelkoo (kelkoo4 / feed8): custom1 subid column unless overridden.
     if idx == 4 or tag in ("kelkoo4", "kelkoo8"):
         return True
     return False
+
+
+def kelkoo_raw_report_subid_custom_keys(*, feed_tag: str = "", feed_index: int = 0) -> tuple[str, ...]:
+    """
+    Raw-report column(s) for Keitaro subid before ``publisherClickId`` fallback.
+
+    Feed2 (sidehustlerbaby): ``custom2`` — partner already uses ``custom1`` + ``publisherClickId``.
+    Feed4: ``custom1``.
+    """
+    if not kelkoo_raw_report_uses_custom1_subid(feed_tag=feed_tag, feed_index=feed_index):
+        return ()
+    tag = (feed_tag or "").strip().lower()
+    idx = feed_index or kelkoo_postback_tag_to_index(tag)
+    if idx == 2 or tag == "kelkoo2":
+        return ("custom2", "Custom2")
+    return ("custom1", "Custom1")
 
 
 def kelkoo_postback_revenue_share(*, feed_tag: str = "", feed_index: int = 0) -> float:
