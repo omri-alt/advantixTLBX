@@ -235,6 +235,20 @@ def _run_adexa_yadore_daily_postbacks_scheduled() -> None:
     run_adexa_yadore_daily_postbacks_scheduled(triggered_by="cron")
 
 
+def _run_hub_val_click_postbacks_scheduled() -> None:
+    """Daily: copy yesterday's child Val_click conversions onto hub campaign 94 (payout 0)."""
+    from config import HUB_VAL_CLICK_POSTBACK_SCHEDULER_ENABLED
+
+    if not HUB_VAL_CLICK_POSTBACK_SCHEDULER_ENABLED:
+        logger.info("Hub val_click postbacks skipped (HUB_VAL_CLICK_POSTBACK_SCHEDULER_ENABLED=0)")
+        return
+    from integrations.hub_val_click_postbacks import run_hub_val_click_postbacks
+
+    logger.info("=== Hub campaign val_click fan-in postbacks cron ===")
+    y = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    run_hub_val_click_postbacks(dry_run=False, date_from=y, date_to=y)
+
+
 def _run_daily_workflow_scheduled() -> None:
     """Daily workflow v2 (default 09:00 Asia/Jerusalem)."""
     from config import DAILY_WORKFLOW_SCHEDULER_ENABLED
@@ -394,6 +408,9 @@ def start_autoserver_scheduler() -> None:
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL,
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE,
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ,
+        HUB_VAL_CLICK_POSTBACK_SCHEDULER_HOUR_LOCAL,
+        HUB_VAL_CLICK_POSTBACK_SCHEDULER_MINUTE,
+        HUB_VAL_CLICK_POSTBACK_SCHEDULER_TZ,
         DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL,
         DAILY_WORKFLOW_SCHEDULER_MINUTE,
         DAILY_WORKFLOW_SCHEDULER_TZ,
@@ -630,6 +647,30 @@ def start_autoserver_scheduler() -> None:
     try:
         from zoneinfo import ZoneInfo
 
+        hub_vc_tz = ZoneInfo(HUB_VAL_CLICK_POSTBACK_SCHEDULER_TZ or "Asia/Jerusalem")
+    except Exception:
+        logger.warning(
+            "Invalid HUB_VAL_CLICK_POSTBACK_SCHEDULER_TZ %r; using Asia/Jerusalem",
+            HUB_VAL_CLICK_POSTBACK_SCHEDULER_TZ,
+        )
+        from zoneinfo import ZoneInfo
+
+        hub_vc_tz = ZoneInfo("Asia/Jerusalem")
+    _scheduler.add_job(
+        _run_hub_val_click_postbacks_scheduled,
+        trigger="cron",
+        hour=int(HUB_VAL_CLICK_POSTBACK_SCHEDULER_HOUR_LOCAL),
+        minute=int(HUB_VAL_CLICK_POSTBACK_SCHEDULER_MINUTE),
+        timezone=hub_vc_tz,
+        id="hub_val_click_postbacks",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
+    try:
+        from zoneinfo import ZoneInfo
+
         daily_wf_tz = ZoneInfo(DAILY_WORKFLOW_SCHEDULER_TZ or "Asia/Jerusalem")
     except Exception:
         logger.warning(
@@ -707,6 +748,7 @@ def start_autoserver_scheduler() -> None:
             "Effinity MTD postbacks at %02d:%02d %s; "
             "Kelkoo daily postbacks hourly %02d:00–%02d:00 %s (first try + retries); "
             "Adexa/Yadore daily postbacks at %02d:%02d %s; "
+            "Hub val_click fan-in daily %02d:%02d %s (yesterday UTC); "
             "Daily workflow v2 at %02d:%02d %s)"
         ),
         len(_automation_listeners) - 2,
@@ -735,6 +777,9 @@ def start_autoserver_scheduler() -> None:
         int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_HOUR_LOCAL),
         int(ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_MINUTE),
         ADEXA_YADORE_DAILY_POSTBACK_SCHEDULER_TZ,
+        int(HUB_VAL_CLICK_POSTBACK_SCHEDULER_HOUR_LOCAL),
+        int(HUB_VAL_CLICK_POSTBACK_SCHEDULER_MINUTE),
+        HUB_VAL_CLICK_POSTBACK_SCHEDULER_TZ,
         int(DAILY_WORKFLOW_SCHEDULER_HOUR_LOCAL),
         int(DAILY_WORKFLOW_SCHEDULER_MINUTE),
         DAILY_WORKFLOW_SCHEDULER_TZ,

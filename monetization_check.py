@@ -10,7 +10,8 @@ Output sheet: Matches
 For each (url, geo):
   - Kelkoo link check (feed1/2/5): GET …/search/link
   - Yadore deeplink (feed3): POST /v2/deeplink (coupon-inclusive; deeplink vs smartlink)
-  - Adexa (feed4): LinksMerchant homepage probe, then GetMerchant smartlink (Goffers golink)
+  - Adexa CPC (feed4): LinksMerchant homepage probe, then GetMerchant smartlink (Goffers golink)
+  - Adexa CPA: GetMerchantCPA catalog match (separate ``adexa_cpa`` column)
   - Shopnomix demand (feed6): GET …/api/v2/demand/:campaign_id (tile + coupons placements)
   - FlexOffers: static advertiser catalog match (no API) by hostname/URL only
 
@@ -32,7 +33,13 @@ load_dotenv()
 from config import FEED1_API_KEY, FEED2_API_KEY, FEED4_API_KEY, FEED5_API_KEY, shopnomix_monetization_enabled
 from integrations.kelkoo_search import kelkoo_merchant_link_check as kelkoo_check
 from integrations.yadore import merchant_monetization_check as yadore_merchant_check, YadoreClientError
-from integrations.adexa import merchant_monetization_check as adexa_merchant_check, AdexaClientError, normalize_merchant_homepage_url
+from integrations.adexa import (
+    merchant_monetization_check as adexa_merchant_check,
+    merchant_cpa_monetization_check as adexa_cpa_merchant_check,
+    AdexaClientError,
+    clear_adexa_merchant_list_caches,
+    normalize_merchant_homepage_url,
+)
 from integrations.shopnomix import (
     clear_demand_cache,
     demand_tile_check,
@@ -181,6 +188,15 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
         except AdexaClientError as e:
             return {"found": False, "note": str(e)[:200], "mode": "none"}
 
+    def _ax_cpa() -> Dict[str, Any]:
+        try:
+            kwargs: Dict[str, Any] = {}
+            if (merchant_id or "").strip():
+                kwargs["merchant_id"] = str(merchant_id).strip()
+            return adexa_cpa_merchant_check(url, geo, **kwargs)
+        except AdexaClientError as e:
+            return {"found": False, "note": str(e)[:200], "mode": "none"}
+
     def _sn_tile() -> Dict[str, Any]:
         try:
             return demand_tile_check(url, geo, early_exit=False)
@@ -209,6 +225,7 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
             futures[ex.submit(_k4)] = "k4"
         futures[ex.submit(_yadore)] = "yadore"
         futures[ex.submit(_ax)] = "ax"
+        futures[ex.submit(_ax_cpa)] = "ax_cpa"
         if shopnomix_monetization_enabled():
             futures[ex.submit(_sn_tile)] = "sn_tile"
             futures[ex.submit(_sn_coupons)] = "sn_coupons"
@@ -240,6 +257,8 @@ def _run_row_checks(url: str, geo: str, merchant_id: str = "") -> Dict[str, Any]
                 out[key] = {"found": False, "epc": "", "note": str(e)[:200]}
             elif key == "flexoffers":
                 out[key] = {"found": False, "mode": "catalog", "note": str(e)[:200]}
+            elif key == "ax_cpa":
+                out[key] = {"found": False, "note": str(e)[:200], "mode": "none"}
             else:
                 out[key] = {"found": False, "note": str(e)[:200]}
 
@@ -273,12 +292,16 @@ def main() -> None:
         "yadore_monetization",
         "yadore_nc_found",
         "yadore_c_found",
-        "adexa_found",
+        "adexa_cpc",
+        "adexa_cpa",
         "adexa_mode",
         "adexa_note",
         "adexa_smartlink_url",
         "adexa_keitaro_offer_url",
         "adexa_operator_hint",
+        "adexa_cpa_note",
+        "adexa_cpa_name",
+        "adexa_cpa_commission",
         "shopnomix_monetization",
         "shopnomix_tile_found",
         "shopnomix_coupons_found",
@@ -303,6 +326,7 @@ def main() -> None:
     ensure_sheet(service, OUTPUT_SHEET, header)
 
     clear_demand_cache()
+    clear_adexa_merchant_list_caches()
 
     rows = read_source_rows(service)
     if max_rows is not None:
@@ -323,6 +347,7 @@ def main() -> None:
         y_nc = r["ync"]
         y_c = r["yc"]
         ax = r["ax"]
+        ax_cpa = r.get("ax_cpa") or {"found": False}
         sn_tile = r.get("sn_tile") or {"found": False, "epc": ""}
         sn_coupons = r.get("sn_coupons") or {"found": False, "epc": ""}
         flex = r.get("flexoffers") or {"found": False}
@@ -344,12 +369,16 @@ def main() -> None:
         sn_coupons_found = bool(sn_coupons.get("found"))
         sn_class = shopnomix_feed_class(sn_tile_found, sn_coupons_found)
 
-        ax_found = bool(ax.get("found"))
+        ax_cpc_found = bool(ax.get("found"))
         ax_mode = str(ax.get("mode") or "")
         ax_note = str(ax.get("note") or "")
         ax_smartlink = str(ax.get("smartlink_url") or "")
         ax_keitaro = str(ax.get("keitaro_offer_url") or "")
         ax_hint = str(ax.get("operator_hint") or "")
+        ax_cpa_found = bool(ax_cpa.get("found"))
+        ax_cpa_note = str(ax_cpa.get("note") or "")
+        ax_cpa_name = str(ax_cpa.get("merchant_name") or "")
+        ax_cpa_commission = str(ax_cpa.get("commission") or "")
 
         out_rows.append(
             [
@@ -360,12 +389,16 @@ def main() -> None:
                 y_class,
                 str(y_nc_found),
                 str(y_c_found),
-                str(ax_found),
+                str(ax_cpc_found),
+                str(ax_cpa_found),
                 ax_mode,
                 ax_note,
                 ax_smartlink,
                 ax_keitaro,
                 ax_hint,
+                ax_cpa_note,
+                ax_cpa_name,
+                ax_cpa_commission,
                 sn_class,
                 str(sn_tile_found),
                 str(sn_coupons_found),

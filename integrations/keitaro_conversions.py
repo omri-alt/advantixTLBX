@@ -89,12 +89,14 @@ def iter_conversion_log(
     status: Optional[str] = None,
     page_size: int = _DEFAULT_PAGE_SIZE,
     columns: Optional[Sequence[str]] = None,
+    extra_filters: Optional[Sequence[Dict[str, str]]] = None,
 ) -> Iterable[Dict[str, Any]]:
     """
     Paginate conversion log rows in ``[date_from, date_to]`` (inclusive, UTC day bounds).
 
     ``status``: when set, only rows with that conversion status (e.g. ``LateSale``, ``SaleOur``).
     ``columns``: override default log columns (e.g. include ``sub_id_5`` for SK WL sync).
+    ``extra_filters``: additional Keitaro filter dicts (e.g. ``campaign_id`` EQUALS).
     """
     url = client._api_path("conversions/log")
     d0 = date_from.isoformat()
@@ -109,6 +111,8 @@ def iter_conversion_log(
             "offset": offset,
         }
         filt = _status_filter_expression(status or "")
+        if extra_filters:
+            filt.extend([f for f in extra_filters if isinstance(f, dict)])
         if filt:
             body["filters"] = filt
         try:

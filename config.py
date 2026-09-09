@@ -123,6 +123,40 @@ KEITARO_HUB_BLEND_DOMAIN_ENABLED = str(
 KEITARO_HUB_BLEND_TRAFFIC_SUB = (os.getenv("KEITARO_HUB_BLEND_TRAFFIC_SUB") or "sub_id_15").strip()
 KEITARO_HUB_BLEND_TRAFFIC_VALUE = (os.getenv("KEITARO_HUB_BLEND_TRAFFIC_VALUE") or "domain").strip()
 KEITARO_QUALITY_CAMPAIGN_GROUP = (os.getenv("KEITARO_QUALITY_CAMPAIGN_GROUP") or "Quality").strip()
+# Fan child Val_click conversions up to hub 94 (payout 0) so hub discrepancy is measurable.
+# Child log status is ``click`` (conversion_type ``Val_click``); hub click id is child ``external_id``.
+HUB_VAL_CLICK_POSTBACK_STATUS = (os.getenv("HUB_VAL_CLICK_POSTBACK_STATUS") or "click").strip()
+_hub_vc_state = (os.getenv("HUB_VAL_CLICK_POSTBACK_STATE_PATH") or "").strip()
+HUB_VAL_CLICK_POSTBACK_STATE_PATH = _hub_vc_state or str(
+    Path(__file__).resolve().parent / "data" / "hub_val_click_postback_state.json"
+)
+try:
+    HUB_VAL_CLICK_POSTBACK_LOOKBACK_DAYS = int(
+        (os.getenv("HUB_VAL_CLICK_POSTBACK_LOOKBACK_DAYS") or "2").strip() or "2"
+    )
+except Exception:
+    HUB_VAL_CLICK_POSTBACK_LOOKBACK_DAYS = 2
+HUB_VAL_CLICK_POSTBACK_LOOKBACK_DAYS = max(1, min(14, HUB_VAL_CLICK_POSTBACK_LOOKBACK_DAYS))
+HUB_VAL_CLICK_POSTBACK_SCHEDULER_ENABLED = str(
+    os.getenv("HUB_VAL_CLICK_POSTBACK_SCHEDULER_ENABLED") or "1"
+).strip().lower() not in ("0", "false", "no", "off")
+HUB_VAL_CLICK_POSTBACK_SCHEDULER_TZ = (
+    os.getenv("HUB_VAL_CLICK_POSTBACK_SCHEDULER_TZ") or "Asia/Jerusalem"
+).strip()
+try:
+    HUB_VAL_CLICK_POSTBACK_SCHEDULER_HOUR_LOCAL = int(
+        (os.getenv("HUB_VAL_CLICK_POSTBACK_SCHEDULER_HOUR_LOCAL") or "15").strip() or "15"
+    )
+except Exception:
+    HUB_VAL_CLICK_POSTBACK_SCHEDULER_HOUR_LOCAL = 15
+HUB_VAL_CLICK_POSTBACK_SCHEDULER_HOUR_LOCAL = max(0, min(23, HUB_VAL_CLICK_POSTBACK_SCHEDULER_HOUR_LOCAL))
+try:
+    HUB_VAL_CLICK_POSTBACK_SCHEDULER_MINUTE = int(
+        (os.getenv("HUB_VAL_CLICK_POSTBACK_SCHEDULER_MINUTE") or "0").strip() or "0"
+    )
+except Exception:
+    HUB_VAL_CLICK_POSTBACK_SCHEDULER_MINUTE = 0
+HUB_VAL_CLICK_POSTBACK_SCHEDULER_MINUTE = max(0, min(59, HUB_VAL_CLICK_POSTBACK_SCHEDULER_MINUTE))
 
 # Keitaro PHP admin bulk (POST /admin/?bulk): object names to try for removing offers.
 # - offers.update: postData {"id": N, "state": "deleted"} (soft-delete; matches UI response).
