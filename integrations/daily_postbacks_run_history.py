@@ -247,7 +247,7 @@ def postback_sources_enabled() -> list[str]:
 _SOURCE_LABELS = {
     "kelkoo1": "Kelkoo feed 1",
     "kelkoo2": "Kelkoo feed 2",
-    "kelkoo5": "Kelkoo feed 5",
+    "kelkoo5": "Kelkoo feed 5 (85% net)",
     "kelkoo4": "Kelkoo feed 4 (feed8 / 70% net)",
     "adexa": "Adexa",
     "yadore": "Yadore (clicks)",

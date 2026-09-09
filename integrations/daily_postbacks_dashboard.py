@@ -21,7 +21,7 @@ _DATE_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FEED_META: Tuple[Tuple[str, str], ...] = (
     ("kelkoo1", "Kelkoo feed 1"),
     ("kelkoo2", "Kelkoo feed 2"),
-    ("kelkoo5", "Kelkoo feed 5"),
+    ("kelkoo5", "Kelkoo feed 5 (85% net)"),
     ("kelkoo4", "Kelkoo feed 4 (feed8 / 70% net)"),
     ("adexa", "Adexa (feed 4)"),
     ("yadore", "Yadore clicks (feed 3)"),

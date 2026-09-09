@@ -347,6 +347,7 @@ def _affiliation_payloads(d_from: date, d_to: date) -> List[Dict[str, Any]]:
 _AFFIL_REVENUE_SHARE: Dict[str, str] = {
     "kelkoo2": "kelkoo2",
     "kelkoo4": "kelkoo4",
+    "kelkoo5": "kelkoo5",
 }
 
 
