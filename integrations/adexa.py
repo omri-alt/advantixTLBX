@@ -7,9 +7,13 @@ Adexa API helpers (feed4) — Link Monetizer + merchant list.
 
 **Smartlink fallback** — when LinksMerchant returns empty but ``GetMerchant`` has
 ``supportsOffer: 1`` and ``randomOffer`` (Goffers golink), ``merchant_monetization_check``
-reports ``mode=smartlink`` and builds a Keitaro golink URL with ``clickid={subid}``.
+probes the Goffers URL for a real off-Adexa pass-through (HTTP redirect or HTML
+meta-refresh to a non-Adexa host). Catalog presence alone is not enough — dead
+Goffers links (HTTP 200 empty, no redirect) are ``not monetized``. Verified golinks
+report ``mode=smartlink`` with ``smartlink_live=true``.
 
-When both LinksMerchant and golink work, ``mode=links+smartlink`` and both paths are reported.
+When both LinksMerchant and a **live** golink work, ``mode=links+smartlink`` and both paths
+are reported.
 ``normalize_merchant_homepage_url()`` fixes common ``www`` typos (e.g. ``wwwlampenwelt.de``).
 
 **GetMerchant** — list CPC merchants for a country (uses apiKey + siteID).
@@ -27,6 +31,8 @@ When both LinksMerchant and golink work, ``mode=links+smartlink`` and both paths
 """
 from __future__ import annotations
 
+import os
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, urlparse
@@ -593,6 +599,161 @@ def _apply_get_merchant_fields(out: Dict[str, Any], merchant: Dict[str, Any]) ->
             out["estimated_cpc"] = str(cpc)
 
 
+def _adexa_golink_live_probe_enabled() -> bool:
+    """When false, skip HTTP pass-through probe (catalog-only smartlink acceptance)."""
+    raw = (os.getenv("ADEXA_GOLINK_LIVE_PROBE") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _host_is_adexa_edge(host: str) -> bool:
+    h = (host or "").strip().lower()
+    if not h:
+        return False
+    return (
+        h == "go.adexad.com"
+        or h.endswith(".adexad.com")
+        or h == "api.adexad.com"
+        or "adexad.com" in h
+    )
+
+
+def _extract_meta_refresh_url(html: str) -> str:
+    """Parse ``meta http-equiv=refresh`` target URL from an HTML body (Goffers style)."""
+    text = html or ""
+    if not text:
+        return ""
+    # Goffers uses: <meta http-equiv="refresh" content="0;URL='https://...'">
+    # Nested quotes break naive content= capture — pull URL= directly.
+    if not re.search(r"(?is)http-equiv\s*=\s*[\"']?refresh[\"']?", text):
+        return ""
+    m = re.search(
+        r"""(?is)url\s*=\s*['"]?(https?://[^'"\s>]+)""",
+        text,
+    )
+    if not m:
+        return ""
+    return (m.group(1) or "").strip()
+
+
+def probe_adexa_golink_pass_through(
+    golink_url: str,
+    *,
+    timeout: float = 20.0,
+    clickid: str = "klblend_probe",
+) -> Dict[str, Any]:
+    """
+    Verify an Adexa Goffers / golink URL actually passes the click off Adexa.
+
+    Dead links (observed for catalog merchants that no longer monetize) often return
+    HTTP 200 with an empty body and no ``Location`` — catalog presence alone is a false
+    positive for traffic.
+
+    Live signals:
+    - HTTP 3xx with a ``Location`` that leaves Adexa edge hosts,
+    - HTML ``meta http-equiv=refresh`` (common Goffers response) targeting a
+      non-Adexa URL (often Kelkoo ``sitesearchGo``), or
+    - After following redirects, final URL host is not an Adexa edge host.
+    """
+    base = normalize_adexa_golink_url(golink_url) or (golink_url or "").strip()
+    out: Dict[str, Any] = {
+        "live": False,
+        "http": None,
+        "note": "empty_url",
+        "redirect_url": "",
+        "final_url": "",
+        "probe_url": base,
+    }
+    if not base.lower().startswith(("http://", "https://")):
+        out["note"] = "invalid_url"
+        return out
+    probe = base
+    if "clickid=" not in probe.lower():
+        sep = "&" if "?" in probe else "?"
+        probe = f"{probe}{sep}clickid={clickid}"
+    out["probe_url"] = probe
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; KLblend-AdexaProbe/1.0)",
+        "Accept": "*/*",
+    }
+    try:
+        r = requests.get(
+            probe,
+            timeout=timeout,
+            headers=headers,
+            allow_redirects=False,
+        )
+    except requests.RequestException as e:
+        out["note"] = f"request_error:{e}"
+        return out
+
+    out["http"] = int(r.status_code)
+    loc = (r.headers.get("Location") or "").strip()
+    out["redirect_url"] = loc[:2000]
+    if r.status_code in (301, 302, 303, 307, 308):
+        if not loc:
+            out["note"] = "redirect_no_location"
+            return out
+        loc_host = urlparse(loc).netloc.lower()
+        if loc.lower().startswith("/") or not _host_is_adexa_edge(loc_host):
+            out["live"] = True
+            out["note"] = "http_redirect"
+            out["final_url"] = loc[:2000]
+            return out
+        # Redirect stayed on Adexa — follow to see if a later hop leaves.
+
+    body = (r.text or "").strip()
+    if r.status_code == 200 and not body and not loc:
+        out["note"] = "empty_body_no_redirect"
+        return out
+
+    meta_url = _extract_meta_refresh_url(body) if body else ""
+    if meta_url:
+        meta_host = urlparse(meta_url).netloc.lower()
+        if meta_host and not _host_is_adexa_edge(meta_host):
+            out["live"] = True
+            out["note"] = "meta_refresh"
+            out["redirect_url"] = meta_url[:2000]
+            out["final_url"] = meta_url[:2000]
+            return out
+
+    try:
+        r2 = requests.get(
+            probe,
+            timeout=timeout,
+            headers=headers,
+            allow_redirects=True,
+        )
+    except requests.RequestException as e:
+        out["note"] = f"follow_error:{e}"
+        return out
+
+    out["http"] = int(r2.status_code)
+    final = str(r2.url or "")
+    out["final_url"] = final[:2000]
+    final_host = urlparse(final).netloc.lower()
+    if final_host and not _host_is_adexa_edge(final_host):
+        out["live"] = True
+        out["note"] = "redirected_off_adexa"
+        return out
+
+    body2 = (r2.text or "").strip()
+    meta_url2 = _extract_meta_refresh_url(body2) if body2 else ""
+    if meta_url2:
+        meta_host2 = urlparse(meta_url2).netloc.lower()
+        if meta_host2 and not _host_is_adexa_edge(meta_host2):
+            out["live"] = True
+            out["note"] = "meta_refresh"
+            out["redirect_url"] = meta_url2[:2000]
+            out["final_url"] = meta_url2[:2000]
+            return out
+
+    if not body2 and not r2.content:
+        out["note"] = "stayed_on_adexa_empty"
+        return out
+    out["note"] = "stayed_on_adexa"
+    return out
+
+
 def merchant_monetization_check(
     merchant_url: str,
     country_iso2: str,
@@ -610,6 +771,8 @@ def merchant_monetization_check(
     2. ``GetMerchant`` golink when ``supportsOffer`` + ``randomOffer``.
     3. When ``merchant_id`` is set and the merchant is absent from GetMerchant, synthesize
        a Goffers golink (common for stats-only merchants with ``merchantDomain``).
+    4. Goffers / synthetic golinks are HTTP-probed for a real off-Adexa pass-through
+       (disable with ``ADEXA_GOLINK_LIVE_PROBE=0``). Dead empty-200 Goffers → not monetized.
     """
     probe_url = normalize_merchant_homepage_url(merchant_url) or (merchant_url or "").strip()
     mid = str(merchant_id or "").strip()
@@ -630,7 +793,10 @@ def merchant_monetization_check(
         "redirect_url": links.get("redirect_url"),
         "links_found": links_found,
         "smartlink_found": False,
+        "smartlink_live": False,
         "smartlink_url": "",
+        "smartlink_probe_note": "",
+        "smartlink_final_url": "",
         "keitaro_offer_url": "",
         "keitaro_links_url": "",
         "keitaro_golink_url": "",
@@ -660,6 +826,7 @@ def merchant_monetization_check(
         )
     smartlink_found = False
     golink = ""
+    synth_by_mid = False
     links_keitaro = build_adexa_links_keitaro_payload(country_iso2, probe_url, site_id=site_id) if links_found else ""
     if merchant:
         _apply_get_merchant_fields(out, merchant)
@@ -674,11 +841,42 @@ def merchant_monetization_check(
         if synth:
             golink = synth
             smartlink_found = True
+            synth_by_mid = True
             out["merchant_id"] = mid
             out["smartlink_found"] = True
             out["smartlink_url"] = golink
             out["keitaro_golink_url"] = build_adexa_golink_keitaro_payload(golink)
             out["note"] = "smartlink_goffers_by_merchant_id"
+
+    # Catalog / synthetic Goffers must actually pass traffic (Norauto-class false positives).
+    links_note = str(out.get("note") or "")
+    if smartlink_found and golink and _adexa_golink_live_probe_enabled():
+        live = probe_adexa_golink_pass_through(
+            golink,
+            timeout=float(min(max(int(timeout or 20), 8), 30)),
+        )
+        out["smartlink_probe_note"] = str(live.get("note") or "")
+        out["smartlink_final_url"] = str(live.get("final_url") or live.get("redirect_url") or "")
+        if live.get("live"):
+            out["smartlink_live"] = True
+        else:
+            smartlink_found = False
+            out["smartlink_found"] = False
+            out["smartlink_live"] = False
+            out["keitaro_golink_url"] = ""
+            dead = str(live.get("note") or "dead")
+            if synth_by_mid:
+                out["note"] = f"smartlink_goffers_by_merchant_id_dead:{dead}"
+            else:
+                out["note"] = f"smartlink_dead:{dead}"
+            out["operator_hint"] = (
+                "GetMerchant listed a Goffers golink but the URL does not redirect off Adexa "
+                f"({dead}); treat as unmonetized for traffic."
+            )
+    elif smartlink_found and golink:
+        # Probe disabled — keep catalog acceptance (legacy).
+        out["smartlink_live"] = True
+        out["smartlink_probe_note"] = "probe_skipped"
 
     out["keitaro_links_url"] = links_keitaro
     if links_keitaro:
@@ -701,24 +899,36 @@ def merchant_monetization_check(
         return out
 
     if links_found:
+        out["found"] = True
+        out["mode"] = "links"
+        # Prefer LinksMerchant note when Goffers probe failed but links still work.
+        if not smartlink_found and str(out.get("note") or "").startswith("smartlink_"):
+            out["note"] = links_note or "http_redirect"
         out["operator_hint"] = "Use adexa_offer (LinksMerchant + raino) for feed4."
         return out
 
     if smartlink_found:
+        note = "smartlink_goffers_by_merchant_id" if synth_by_mid else "smartlink_goffers"
         out.update(
             {
                 "found": True,
                 "mode": "smartlink",
-                "note": "smartlink_goffers",
+                "note": note,
                 "operator_hint": (
                     "Homepage not monetized via LinksMerchant; use adexa_golink only "
-                    "(raw Goffers URL — not raino-wrapped)."
+                    "(raw Goffers URL — not raino-wrapped; live redirect verified)."
                 ),
             }
         )
         return out
 
     if merchant:
+        if out.get("note", "").startswith("smartlink_dead") or out.get("note", "").startswith(
+            "smartlink_goffers_by_merchant_id_dead"
+        ):
+            out["found"] = False
+            out["mode"] = "none"
+            return out
         if _truthy_flag(merchant.get("supportsLinks")):
             out["note"] = out["note"] or "supports_links_but_probe_failed"
         elif _truthy_flag(merchant.get("supportsOffer")):
@@ -726,7 +936,10 @@ def merchant_monetization_check(
         else:
             out["note"] = out["note"] or "merchant_no_links_or_offer"
     else:
-        out["note"] = out["note"] or "merchant_not_in_getmerchant"
+        if not (out.get("note") or "").startswith("smartlink"):
+            out["note"] = out["note"] or "merchant_not_in_getmerchant"
+    out["found"] = False
+    out["mode"] = "none"
     return out
 
 
@@ -736,21 +949,24 @@ def adexa_actionable_monetized(res: Dict[str, Any]) -> bool:
 
     Accepts:
     - LinksMerchant homepage redirect (``links_found``).
-    - GetMerchant Goffers golink (``smartlink_found`` + ``smartlink_url``), including
-      lookup by ``merchant_id`` from shopping stats — often more reliable than URL
-      host match when the stats merchant id maps to a real GetMerchant row.
+    - Goffers golink that passed the live pass-through probe (``smartlink_found`` +
+      ``smartlink_live``), including verified synthetic mid-based Goffers.
 
     Rejects:
-    - Synthetic Goffers URL when the merchant is absent from GetMerchant
-      (``note=smartlink_goffers_by_merchant_id``).
+    - Catalog / synthetic Goffers that do not redirect off Adexa.
+    - ``found`` without links or a live smartlink.
     """
     if not res.get("found"):
-        return False
-    if str(res.get("note") or "") == "smartlink_goffers_by_merchant_id":
         return False
     if res.get("links_found"):
         return True
     if res.get("smartlink_found") and str(res.get("smartlink_url") or "").strip():
+        # Prefer explicit probe result; absent key = legacy caller / probe skipped path.
+        if "smartlink_live" in res:
+            return bool(res.get("smartlink_live"))
+        note = str(res.get("note") or "")
+        if note == "smartlink_goffers_by_merchant_id" or note.startswith("smartlink_dead"):
+            return False
         return True
     return False
 

@@ -432,6 +432,10 @@ def run_potential_adexa(
                     note = str(res.get("note") or "not_monetized")
                     if note == "smartlink_goffers_by_merchant_id":
                         note = "unverified_synthetic_golink"
+                    elif note.startswith("smartlink_goffers_by_merchant_id_dead:"):
+                        note = "dead_synthetic_golink"
+                    elif note.startswith("smartlink_dead:"):
+                        note = "dead_golink"
                     monetization = f"not_monetized_adexa:{note}"
             except AdexaClientError as e:
                 monetization = f"not_monetized_adexa:{e}"
