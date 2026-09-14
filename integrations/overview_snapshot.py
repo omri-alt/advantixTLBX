@@ -160,6 +160,13 @@ def refresh_overview_snapshot() -> Tuple[Dict[str, Any], str]:
     from integrations.overview import build_overview_json
 
     data = build_overview_json()
+    # Keep Feed 2 publisher-API revenue cache warm for the homepage tile (best-effort).
+    try:
+        from integrations.kelkoo_api_revenue import refresh_kelkoo_feed_api_revenue
+
+        refresh_kelkoo_feed_api_revenue(feed_tag="kelkoo2")
+    except Exception:
+        logger.exception("Feed 2 API revenue refresh during overview snapshot failed")
     saved_utc = _utc_now()
     path = snapshot_path()
     path.parent.mkdir(parents=True, exist_ok=True)
