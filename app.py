@@ -65,8 +65,10 @@ from assistance import (
 )
 from kelkoo_late_sales import run_late_sales_flow
 from integrations.overview import (
+    queue_slice_kelkoo2_api_revenue_refresh,
     slice_affiliation_revenue,
     slice_ecomnia,
+    slice_kelkoo2_api_revenue,
     slice_revenue,
     slice_sourceknowledge,
     slice_zeropark,
@@ -2640,6 +2642,24 @@ def api_overview_slice_ecomnia():
 def api_overview_slice_affiliation_revenue():
     """Live Keitaro affiliation revenue (month start through yesterday)."""
     return jsonify(slice_affiliation_revenue())
+
+
+@app.route("/api/overview/slice/kelkoo2-api", methods=["GET"])
+def api_overview_slice_kelkoo2_api():
+    """
+    Kelkoo feed2 publisher raw-report revenue (CPC + sales, net @ FEED2 share).
+
+    Returns the on-disk cache for the current MTD window when present.
+    Query ``?refresh=1`` runs a synchronous rebuild (slow). Prefer POST refresh.
+    """
+    refresh = (request.args.get("refresh") or "").strip().lower() in ("1", "true", "yes")
+    return jsonify(slice_kelkoo2_api_revenue(refresh=refresh))
+
+
+@app.route("/api/overview/slice/kelkoo2-api/refresh", methods=["POST"])
+def api_overview_slice_kelkoo2_api_refresh():
+    """Queue a background rebuild of feed2 API revenue; poll GET until cached."""
+    return jsonify(queue_slice_kelkoo2_api_revenue_refresh()), 202
 
 
 @app.route("/api/v1/workflows/create-campaign", methods=["POST"])

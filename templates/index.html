@@ -64,6 +64,8 @@
     .overview .ov-actions .btn-sm,
     .ov-affil-head .btn-sm { font-size: 12px; padding: 6px 12px; border-radius: 8px; }
     .ov-affil-head .btn { margin-left: auto; }
+    .ov-affil-note { font-size: 12px; color: var(--muted); margin: 0 0 10px; line-height: 1.4; }
+    .ov-affil-note strong { color: #cbd5e1; font-weight: 600; }
     .ov-meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
     .ov-row-top { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
     @media (max-width: 720px) { .ov-row-top { grid-template-columns: 1fr; } }
@@ -355,18 +357,36 @@
       }
     }
 
+    var keitaroAffState = null;
+    var keitaroAffRanges = null;
+    var keitaro2ApiState = null;
+    var keitaro2ApiPollTimer = null;
+
     function renderAffiliation(aff, ranges) {
       var el = document.getElementById("tile-affiliation");
       if (!el) return;
       aff = aff || {};
-      var rows = Array.isArray(aff.rows) ? aff.rows : [];
+      keitaroAffState = aff;
+      keitaroAffRanges = ranges || keitaroAffRanges;
+      ranges = keitaroAffRanges || ranges || {};
+      var rows = Array.isArray(aff.rows) ? aff.rows.slice() : [];
       var err = aff.error || null;
       var sel = selectedAffiliationId();
-      if (sel !== "all" && !rows.some(function(r) { return r.id === sel; })) sel = "all";
+      var hasApiOpt = true;
+      if (sel !== "all" && sel !== "kelkoo2_api" && !rows.some(function(r) { return r.id === sel; })) {
+        sel = "all";
+      }
       var y = aff.yesterday;
       var m = aff.mtd;
       var label = "All affiliations";
-      if (sel !== "all") {
+      var apiMode = sel === "kelkoo2_api";
+      var api = keitaro2ApiState || {};
+      if (apiMode) {
+        y = api.yesterday;
+        m = api.mtd;
+        label = api.label || "Kelkoo 2 (Feed API)";
+        err = api.error || null;
+      } else if (sel !== "all") {
         for (var i = 0; i < rows.length; i++) {
           if (rows[i].id === sel) {
             y = rows[i].yesterday;
@@ -383,38 +403,95 @@
           r.label +
           "</option>";
       });
+      if (hasApiOpt) {
+        opts +=
+          '<option value="kelkoo2_api"' + (apiMode ? " selected" : "") +
+          ">Kelkoo 2 (Feed API)</option>";
+      }
       var from = (ranges && ranges.mtd_from) || "";
       var to = (ranges && ranges.mtd_to) || "";
       var windowLbl = from && to ? from + " → " + to : "1st of month through yesterday";
-      var tableRows = rows
-        .map(function(r) {
-          var cls = r.id === sel ? ' class="sel"' : "";
-          return (
-            "<tr" + cls + ">" +
-              "<td>" + r.label + "</td>" +
-              '<td class="num">' + money(r.yesterday) + "</td>" +
-              '<td class="num">' + money(r.mtd) + "</td>" +
-            "</tr>"
-          );
-        })
-        .join("");
-      tableRows +=
-        '<tr class="total">' +
-          "<td>Total</td>" +
-          '<td class="num">' + money(aff.yesterday) + "</td>" +
-          '<td class="num">' + money(aff.mtd) + "</td>" +
-        "</tr>";
+      var tableRows = "";
+      if (apiMode) {
+        var sharePct = api.share != null ? Math.round(Number(api.share) * 100) : 70;
+        tableRows =
+          "<tr class=\"sel\">" +
+            "<td>CPC (our net @" + sharePct + "%)</td>" +
+            '<td class="num">' + money(api.cpc_yesterday) + "</td>" +
+            '<td class="num">' + money(api.cpc_mtd) + "</td>" +
+          "</tr>" +
+          "<tr class=\"sel\">" +
+            "<td>Sales (our net @" + sharePct + "%)</td>" +
+            '<td class="num">' + money(api.sale_yesterday) + "</td>" +
+            '<td class="num">' + money(api.sale_mtd) + "</td>" +
+          "</tr>" +
+          '<tr class="total">' +
+            "<td>Total (our net @" + sharePct + "%)</td>" +
+            '<td class="num">' + money(api.yesterday) + "</td>" +
+            '<td class="num">' + money(api.mtd) + "</td>" +
+          "</tr>";
+      } else {
+        tableRows = rows
+          .map(function(r) {
+            var cls = r.id === sel ? ' class="sel"' : "";
+            return (
+              "<tr" + cls + ">" +
+                "<td>" + r.label + "</td>" +
+                '<td class="num">' + money(r.yesterday) + "</td>" +
+                '<td class="num">' + money(r.mtd) + "</td>" +
+              "</tr>"
+            );
+          })
+          .join("");
+        tableRows +=
+          '<tr class="total">' +
+            "<td>Total</td>" +
+            '<td class="num">' + money(aff.yesterday) + "</td>" +
+            '<td class="num">' + money(aff.mtd) + "</td>" +
+          "</tr>";
+      }
       var errHtml = err ? '<div class="err">Error: ' + String(err).slice(0, 200) + "</div>" : "";
-      var emptyNote = !rows.length && !err
+      var emptyNote = !apiMode && !rows.length && !err
         ? '<div class="muted" style="font-size:12px;margin-top:8px;">No affiliation split in this snapshot yet — use Refresh.</div>'
         : "";
+      var apiStatus = String(api.refresh_status || "");
+      var apiNote = "";
+      var apiBtnLabel = "Refresh";
+      if (apiMode) {
+        if (apiStatus === "missing" || (api.mtd == null && apiStatus !== "running" && apiStatus !== "ok" && apiStatus !== "cached")) {
+          apiNote =
+            '<div class="ov-affil-note">Feed 2 publisher API totals (not Keitaro), already scaled to <strong>our net share</strong>. Click <strong>Load Feed API</strong> to pull raw-report CPC + sales for this MTD window (may take a minute).</div>';
+          apiBtnLabel = "Load Feed API";
+        } else if (apiStatus === "running") {
+          apiNote =
+            '<div class="ov-affil-note"><span class="ov-spin" aria-hidden="true"></span> Loading Feed 2 API revenue…</div>';
+          apiBtnLabel = "Loading…";
+        } else {
+          var asOf = api.cached_utc || api.as_of_utc || "";
+          var sharePctNote = api.share != null ? Math.round(Number(api.share) * 100) : 70;
+          apiNote =
+            '<div class="ov-affil-note">Source: Kelkoo feed2 raw report · amounts shown are <strong>our net @' +
+            sharePctNote +
+            '%</strong> (same share as postbacks)' +
+            (asOf ? " · as of " + asOf : "") +
+            ".</div>";
+          apiBtnLabel = "Refresh Feed API";
+        }
+      }
+      var refreshBtnId = apiMode ? "overview-affil-api-refresh-btn" : "overview-affil-refresh-btn";
+      var refreshTitle = apiMode
+        ? "Rebuild Feed 2 API revenue from Kelkoo raw reports"
+        : "Rebuild snapshot from all traffic APIs (slow)";
       el.innerHTML =
         '<div class="ov-affil' + (err ? " has-err" : "") + '">' +
           '<div class="ov-affil-head">' +
             "<h4>Affiliation revenue</h4>" +
             '<label>Show <select id="overview-affil-select">' + opts + "</select></label>" +
-            '<button type="button" class="btn btn-sm" id="overview-affil-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh</button>' +
+            '<button type="button" class="btn btn-sm" id="' + refreshBtnId + '" title="' + refreshTitle + '"' +
+              (apiMode && apiStatus === "running" ? " disabled" : "") +
+            ">" + (apiMode ? apiBtnLabel : "Refresh") + "</button>" +
           "</div>" +
+          apiNote +
           '<div class="ov-affil-total">' +
             "<div>" +
               '<div class="lbl">Cumulative MTD · ' + label + "</div>" +
@@ -430,7 +507,7 @@
             "</div>" +
           "</div>" +
           "<table>" +
-            "<thead><tr><th>Affiliation</th><th class=\"num\">Yesterday</th><th class=\"num\">MTD</th></tr></thead>" +
+            "<thead><tr><th>" + (apiMode ? "Component" : "Affiliation") + "</th><th class=\"num\">Yesterday</th><th class=\"num\">MTD</th></tr></thead>" +
             "<tbody>" + tableRows + "</tbody>" +
           "</table>" +
           emptyNote +
@@ -440,9 +517,116 @@
       if (selEl) {
         selEl.addEventListener("change", function() {
           try { localStorage.setItem(AFFIL_SELECT_KEY, selEl.value || "all"); } catch (e) {}
-          renderAffiliation(aff, ranges);
+          if (selEl.value === "kelkoo2_api") {
+            ensureKelkoo2ApiLoaded();
+          } else {
+            stopKelkoo2ApiPoll();
+            renderAffiliation(keitaroAffState || aff, keitaroAffRanges || ranges);
+          }
         });
       }
+      if (apiMode && apiStatus === "running") {
+        startKelkoo2ApiPoll();
+      }
+    }
+
+    function stopKelkoo2ApiPoll() {
+      if (kelkoo2ApiPollTimer) {
+        clearInterval(kelkoo2ApiPollTimer);
+        keitaro2ApiPollTimer = null;
+      }
+    }
+
+    function applyKelkoo2ApiPayload(payload) {
+      var data = payload && payload.data ? payload.data : payload;
+      if (!data || typeof data !== "object") return;
+      keitaro2ApiState = data;
+      if (selectedAffiliationId() === "kelkoo2_api") {
+        renderAffiliation(keitaroAffState || {}, keitaroAffRanges || (payload && payload.ranges) || {});
+      }
+    }
+
+    function fetchKelkoo2ApiState() {
+      return fetch(kelkoo2ApiUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function(r) {
+          if (r.status === 401) throw new Error("HTTP 401 — sign in again");
+          if (!r.ok) {
+            return r.text().then(function(t) {
+              throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200));
+            });
+          }
+          return r.json();
+        })
+        .then(function(payload) {
+          applyKelkoo2ApiPayload(payload);
+          return payload;
+        });
+    }
+
+    function startKelkoo2ApiPoll() {
+      stopKelkoo2ApiPoll();
+      keitaro2ApiPollTimer = setInterval(function() {
+        fetchKelkoo2ApiState()
+          .then(function(payload) {
+            var st = payload && payload.data ? payload.data.refresh_status : (payload && payload.refresh_status);
+            if (st && st !== "running") stopKelkoo2ApiPoll();
+          })
+          .catch(function() {});
+      }, 4000);
+    }
+
+    function queueKelkoo2ApiRefresh() {
+      stopKelkoo2ApiPoll();
+      keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, { refresh_status: "running", error: null });
+      renderAffiliation(keitaroAffState || {}, keitaroAffRanges || {});
+      return fetch(kelkoo2ApiRefreshUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      })
+        .then(function(r) {
+          if (r.status === 401) throw new Error("HTTP 401 — sign in again");
+          if (!r.ok && r.status !== 202) {
+            return r.text().then(function(t) {
+              throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200));
+            });
+          }
+          return r.json();
+        })
+        .then(function(payload) {
+          applyKelkoo2ApiPayload(payload);
+          startKelkoo2ApiPoll();
+        })
+        .catch(function(e) {
+          keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, {
+            refresh_status: "error",
+            error: e && e.message ? e.message : String(e),
+          });
+          renderAffiliation(keitaroAffState || {}, keitaroAffRanges || {});
+        });
+    }
+
+    function ensureKelkoo2ApiLoaded() {
+      fetchKelkoo2ApiState()
+        .then(function(payload) {
+          var data = payload && payload.data ? payload.data : payload;
+          var st = data && data.refresh_status;
+          if (st === "missing" || (data && data.mtd == null && st !== "running")) {
+            return queueKelkoo2ApiRefresh();
+          }
+          if (st === "running") startKelkoo2ApiPoll();
+          else renderAffiliation(keitaroAffState || {}, keitaroAffRanges || {});
+        })
+        .catch(function(e) {
+          keitaro2ApiState = {
+            label: "Kelkoo 2 (Feed API)",
+            refresh_status: "error",
+            error: e && e.message ? e.message : String(e),
+            yesterday: null,
+            mtd: null,
+          };
+          renderAffiliation(keitaroAffState || {}, keitaroAffRanges || {});
+        });
     }
 
     var failEl = document.getElementById("overview-fail");
@@ -454,6 +638,8 @@
     var overviewUrl = {{ url_for("api_overview") | tojson }};
     var refreshUrl = {{ url_for("api_overview_refresh") | tojson }};
     var refreshStatusUrl = {{ url_for("api_overview_refresh_status") | tojson }};
+    var keitaro2ApiUrl = {{ url_for("api_overview_slice_kelkoo2_api") | tojson }};
+    var keitaro2ApiRefreshUrl = {{ url_for("api_overview_slice_kelkoo2_api_refresh") | tojson }};
 
     var TILE_KEYS = ["revenue", "zeropark", "sourceknowledge", "ecomnia", "trillion"];
     var TITLES = {
@@ -553,6 +739,9 @@
         netEl.innerHTML = cardHtml("Net (revenue − cost)", net.yesterday, net.mtd, netErr, false, netErr ? "err" : "ok");
       }
       renderAffiliation(data.affiliation_revenue || {}, rg);
+      if (selectedAffiliationId() === "kelkoo2_api") {
+        ensureKelkoo2ApiLoaded();
+      }
     }
 
     function loadSnapshotFromDisk() {
@@ -756,6 +945,9 @@
         var t = ev.target;
         if (t && t.id === "overview-affil-refresh-btn") {
           queueOverviewRefresh();
+        }
+        if (t && t.id === "overview-affil-api-refresh-btn") {
+          queueKelkoo2ApiRefresh();
         }
       });
     }

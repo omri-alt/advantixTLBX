@@ -18,7 +18,10 @@ from integrations.overview_costs import (
     fetch_zeropark_cost,
 )
 from integrations.overview_revenue import fetch_keitaro_affiliation_revenue
-
+from integrations.kelkoo_api_revenue import (
+    get_kelkoo_feed_api_revenue,
+    queue_kelkoo_feed_api_revenue_refresh,
+)
 
 def _nz(v: Any) -> float:
     if v is None:
@@ -122,6 +125,17 @@ def slice_trillion() -> Dict[str, Any]:
 
 def slice_affiliation_revenue() -> Dict[str, Any]:
     return _slice_envelope("affiliation_revenue", _safe_affiliation())
+
+
+def slice_kelkoo2_api_revenue(*, refresh: bool = False) -> Dict[str, Any]:
+    """Cached Kelkoo feed2 raw-report revenue (CPC + sales, net share applied)."""
+    data = get_kelkoo_feed_api_revenue(feed_tag="kelkoo2", refresh=refresh)
+    return _slice_envelope("kelkoo2_api_revenue", data)
+
+
+def queue_slice_kelkoo2_api_revenue_refresh() -> Dict[str, Any]:
+    data = queue_kelkoo_feed_api_revenue_refresh("kelkoo2")
+    return _slice_envelope("kelkoo2_api_revenue", data)
 
 
 def build_overview_json() -> Dict[str, Any]:
