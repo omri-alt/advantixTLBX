@@ -1,35 +1,31 @@
 """
-Kelkoo publisher raw-report revenue (Feed API), independent of Keitaro postbacks.
+Kelkoo publisher MTD revenue (Feed API) for the Control Center overview tile.
 
-Used by the Control Center overview so operators can compare Feed 2 API CPC/sale
-totals to the Keitaro affiliation row.
+Uses the fast aggregated report (``groupBy=day``), then applies the feed's
+postback net share (Feed 2 = 0.7). Independent of Keitaro.
 """
 from __future__ import annotations
 
-import csv
 import json
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta, timezone
-from io import StringIO
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional
 
 import requests
 
 from config import (
     kelkoo_api_key_for_postback_tag,
     kelkoo_postback_revenue_share,
-    raw_report_geos_for_postback_tag,
 )
-from integrations.daily_conversion_postbacks import fetch_kelkoo_raw_tsv
 
 logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FEED_TAG = "kelkoo2"
+AGGREGATED_URL = "https://api.kelkoogroup.net/publisher/reports/v1/aggregated"
 _REFRESH_LOCK = threading.Lock()
 _REFRESH_IN_FLIGHT: Dict[str, bool] = {}
 
@@ -60,7 +56,7 @@ def _mark_refresh_running(feed_tag: str, *, running: bool) -> None:
         pass
 
 
-def _refresh_marker_active(feed_tag: str, *, max_age_sec: float = 45 * 60) -> bool:
+def _refresh_marker_active(feed_tag: str, *, max_age_sec: float = 10 * 60) -> bool:
     path = running_marker_path(feed_tag)
     if not path.is_file():
         return False
@@ -84,80 +80,38 @@ def _f_money(v: Any) -> float:
         return 0.0
 
 
-def _daterange(start: date, end: date) -> List[date]:
-    if start > end:
-        return []
-    out: List[date] = []
-    cur = start
-    while cur <= end:
-        out.append(cur)
-        cur += timedelta(days=1)
-    return out
-
-
-def _sum_geo_day(
+def _empty_payload(
     *,
-    geo: str,
-    day: str,
-    api_key: str,
-    session: Optional[requests.Session] = None,
-    retries: int = 3,
+    tag: str,
+    share: float,
+    yesterday: date,
+    mtd_start: date,
+    mtd_end: date,
 ) -> Dict[str, Any]:
-    """Sum leadValid CPC for one geo/day. Amounts are gross (pre-share).
-
-    Note: ``saleValueInUsd`` is order GMV, not publisher commission — do not treat
-    it as revenue for the overview tile.
-    """
-    out: Dict[str, Any] = {
-        "geo": geo,
-        "day": day,
-        "http": 0,
-        "ready": False,
-        "unsupported": False,
-        "cpc_gross": 0.0,
-        "sale_gmv_gross": 0.0,
-        "n_cpc": 0,
-        "n_sale": 0,
+    return {
+        "feed": tag,
+        "label": "Kelkoo 2 (Feed API)" if tag == "kelkoo2" else f"{tag} (Feed API)",
+        "source": "kelkoo_aggregated",
+        "metric": "lead_estimated_revenue_usd",
+        "share": share,
+        "yesterday": None,
+        "mtd": None,
+        "yesterday_gross": None,
+        "mtd_gross": None,
+        "cpc_yesterday": None,
+        "cpc_mtd": None,
+        "sale_yesterday": 0.0,
+        "sale_mtd": 0.0,
+        "error": None,
+        "coverage_pct": 100.0,
+        "incomplete": False,
+        "ranges": {
+            "yesterday": yesterday.isoformat(),
+            "mtd_from": mtd_start.isoformat(),
+            "mtd_to": mtd_end.isoformat(),
+        },
+        "as_of_utc": _utc_now(),
     }
-    own_session = session is None
-    sess = session or requests.Session()
-    try:
-        status = 0
-        body = ""
-        for attempt in range(max(1, int(retries or 1))):
-            status, body = fetch_kelkoo_raw_tsv(geo, day, api_key, sess)
-            out["http"] = int(status)
-            if status == 400:
-                # Country not enabled for this publisher key — not a transient miss.
-                out["unsupported"] = True
-                return out
-            if status == 200 and (body or "").strip():
-                break
-            if attempt + 1 < max(1, int(retries or 1)):
-                time.sleep(0.35 * (attempt + 1))
-        else:
-            return out
-
-        out["ready"] = True
-        cpc_g = 0.0
-        sale_gmv = 0.0
-        n_cpc = 0
-        n_sale = 0
-        for row in csv.DictReader(StringIO(body), delimiter="\t"):
-            if (row.get("leadValid") or "").strip().lower() == "true":
-                cpc_g += _f_money(row.get("leadEstimatedRevenueInUsd"))
-                n_cpc += 1
-            if (row.get("sale") or "").strip().lower() == "true":
-                sale_gmv += _f_money(row.get("saleValueInUsd"))
-                n_sale += 1
-        out["cpc_gross"] = cpc_g
-        out["sale_gmv_gross"] = sale_gmv
-        out["n_cpc"] = n_cpc
-        out["n_sale"] = n_sale
-        return out
-    finally:
-        if own_session:
-            sess.close()
 
 
 def fetch_kelkoo_feed_api_revenue(
@@ -166,63 +120,31 @@ def fetch_kelkoo_feed_api_revenue(
     yesterday: date,
     mtd_start: date,
     mtd_end: date,
-    geos: Optional[Sequence[str]] = None,
+    geos: Optional[Any] = None,
     max_workers: int = 8,
 ) -> Dict[str, Any]:
     """
-    Sum Kelkoo raw-report **leadValid CPC** for the overview window.
+    MTD + yesterday lead estimated revenue from Kelkoo aggregated reports.
 
-    Returns net amounts (after ``kelkoo_postback_revenue_share``) as primary
-    ``yesterday`` / ``mtd``. Sale order GMV is reported separately and is **not**
-    included in revenue (``saleValueInUsd`` is basket value, not commission).
+    One ``groupBy=day`` call for the MTD window; amounts are net after
+    ``kelkoo_postback_revenue_share`` (Feed 2 = 0.7). Sale GMV is ignored.
     """
+    del geos, max_workers  # legacy kwargs kept for callers
     tag = (feed_tag or DEFAULT_FEED_TAG).strip().lower() or DEFAULT_FEED_TAG
     api_key = kelkoo_api_key_for_postback_tag(tag)
     share = float(kelkoo_postback_revenue_share(feed_tag=tag) or 1.0)
-    geo_list = [g.strip().lower() for g in (geos or raw_report_geos_for_postback_tag(tag)) if g and str(g).strip()]
-    days = _daterange(mtd_start, mtd_end)
-    y_key = yesterday.isoformat()
-
-    base: Dict[str, Any] = {
-        "feed": tag,
-        "label": "Kelkoo 2 (Feed API)" if tag == "kelkoo2" else f"{tag} (Feed API)",
-        "source": "kelkoo_raw_report",
-        "metric": "leadValid_cpc",
-        "share": share,
-        "yesterday": None,
-        "mtd": None,
-        "yesterday_gross": None,
-        "mtd_gross": None,
-        "cpc_yesterday": None,
-        "cpc_mtd": None,
-        "sale_gmv_yesterday": None,
-        "sale_gmv_mtd": None,
-        # Legacy aliases kept for older UI; always 0 (GMV is not revenue).
-        "sale_yesterday": 0.0,
-        "sale_mtd": 0.0,
-        "error": None,
-        "ready_geo_days": 0,
-        "failed_geo_days": 0,
-        "unsupported_geo_days": 0,
-        "geo_count": len(geo_list),
-        "day_count": len(days),
-        "coverage_pct": None,
-        "incomplete": False,
-        "ranges": {
-            "yesterday": y_key,
-            "mtd_from": mtd_start.isoformat(),
-            "mtd_to": mtd_end.isoformat(),
-        },
-        "as_of_utc": _utc_now(),
-    }
+    base = _empty_payload(
+        tag=tag,
+        share=share,
+        yesterday=yesterday,
+        mtd_start=mtd_start,
+        mtd_end=mtd_end,
+    )
 
     if not api_key:
         base["error"] = f"Missing API key for {tag}"
         return base
-    if not geo_list:
-        base["error"] = f"No raw-report geos configured for {tag}"
-        return base
-    if not days:
+    if mtd_start > mtd_end:
         base.update(
             {
                 "yesterday": 0.0,
@@ -231,105 +153,50 @@ def fetch_kelkoo_feed_api_revenue(
                 "mtd_gross": 0.0,
                 "cpc_yesterday": 0.0,
                 "cpc_mtd": 0.0,
-                "sale_gmv_yesterday": 0.0,
-                "sale_gmv_mtd": 0.0,
-                "coverage_pct": 100.0,
             }
         )
         return base
 
-    cpc_by_day: Dict[str, float] = {d.isoformat(): 0.0 for d in days}
-    gmv_by_day: Dict[str, float] = {d.isoformat(): 0.0 for d in days}
-    ready = 0
-    failed = 0
-    unsupported = 0
-    # Probe one day first so permanent HTTP 400 geos are not hammered for every MTD day.
-    probe_day = y_key if y_key in {d.isoformat() for d in days} else days[-1].isoformat()
-    skip_geos: set[str] = set()
-    workers = max(1, min(int(max_workers or 8), 10))
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    params = {
+        "start": mtd_start.isoformat(),
+        "end": mtd_end.isoformat(),
+        "groupBy": "day",
+        "format": "JSON",
+    }
+    try:
+        r = requests.get(AGGREGATED_URL, headers=headers, params=params, timeout=60)
+    except requests.RequestException as e:
+        base["error"] = f"Aggregated report request failed: {e}"
+        return base
+    if r.status_code != 200:
+        base["error"] = f"Aggregated report HTTP {r.status_code}: {(r.text or '')[:240]}"
+        return base
+    try:
+        rows = r.json()
+    except ValueError:
+        base["error"] = "Aggregated report returned invalid JSON"
+        return base
+    if not isinstance(rows, list):
+        base["error"] = "Aggregated report unexpected shape"
+        return base
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        probe_futs = {
-            pool.submit(
-                _sum_geo_day,
-                geo=geo,
-                day=probe_day,
-                api_key=api_key,
-                session=None,
-                retries=2,
-            ): geo
-            for geo in geo_list
-        }
-        for fut in as_completed(probe_futs):
-            geo = probe_futs[fut]
-            try:
-                row = fut.result()
-            except Exception:
-                continue
-            if row.get("unsupported"):
-                skip_geos.add(geo)
-                unsupported += 1
-
-    supported_list = [g for g in geo_list if g not in skip_geos]
-    jobs: List[Tuple[str, str]] = [(d.isoformat(), g) for d in days for g in supported_list]
-
-    def _run_jobs(job_list: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
-        """Fetch jobs; return list of (day, geo) that still need a retry."""
-        nonlocal ready
-        need_retry: List[Tuple[str, str]] = []
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futs = {
-                pool.submit(
-                    _sum_geo_day,
-                    geo=geo,
-                    day=day,
-                    api_key=api_key,
-                    session=None,
-                    retries=3,
-                ): (day, geo)
-                for day, geo in job_list
-            }
-            for fut in as_completed(futs):
-                day, geo = futs[fut]
-                try:
-                    row = fut.result()
-                except Exception as e:
-                    need_retry.append((day, geo))
-                    logger.info("Kelkoo API revenue %s %s/%s failed: %s", tag, day, geo, e)
-                    continue
-                if row.get("unsupported"):
-                    # Late discovery (should be rare after probe).
-                    skip_geos.add(geo)
-                    continue
-                if not row.get("ready"):
-                    need_retry.append((day, geo))
-                    continue
-                ready += 1
-                cpc_by_day[day] = float(cpc_by_day.get(day) or 0.0) + float(row.get("cpc_gross") or 0.0)
-                gmv_by_day[day] = float(gmv_by_day.get(day) or 0.0) + float(row.get("sale_gmv_gross") or 0.0)
-        return need_retry
-
-    pending = _run_jobs(jobs)
-    if pending:
-        time.sleep(1.0)
-        still = _run_jobs(pending)
-        failed = len(still)
-    else:
-        failed = 0
-
-    supported_geos = max(0, len(geo_list) - len(skip_geos))
-    expected = supported_geos * len(days)
-    coverage = (100.0 * ready / expected) if expected else 100.0
-    incomplete = bool(expected and ready < expected)
+    y_key = yesterday.isoformat()
+    cpc_by_day: Dict[str, float] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        day = str(row.get("day") or "")[:10]
+        if not day:
+            continue
+        # Prefer USD; fall back to EUR only if USD missing (should not happen with groupBy=day).
+        usd = row.get("leadEstimatedRevenueInUsd")
+        if usd is None or str(usd).strip() == "":
+            usd = row.get("leadEstimatedRevenueInEur")
+        cpc_by_day[day] = _f_money(usd)
 
     cpc_mtd = sum(cpc_by_day.values())
-    gmv_mtd = sum(gmv_by_day.values())
-    cpc_y = float(cpc_by_day.get(y_key) or 0.0) if y_key in cpc_by_day else 0.0
-    gmv_y = float(gmv_by_day.get(y_key) or 0.0) if y_key in gmv_by_day else 0.0
-
-    err = None
-    if incomplete and coverage < 85.0:
-        err = f"Incomplete raw-report coverage ({coverage:.0f}% of supported geo-days)"
+    cpc_y = float(cpc_by_day.get(y_key) or 0.0)
 
     base.update(
         {
@@ -337,20 +204,10 @@ def fetch_kelkoo_feed_api_revenue(
             "mtd_gross": round(cpc_mtd, 4),
             "cpc_yesterday": round(cpc_y * share, 4),
             "cpc_mtd": round(cpc_mtd * share, 4),
-            "sale_gmv_yesterday": round(gmv_y, 4),
-            "sale_gmv_mtd": round(gmv_mtd, 4),
-            "sale_yesterday": 0.0,
-            "sale_mtd": 0.0,
             "yesterday": round(cpc_y * share, 4),
             "mtd": round(cpc_mtd * share, 4),
-            "ready_geo_days": ready,
-            "failed_geo_days": failed,
-            "unsupported_geo_days": unsupported,
-            "unsupported_geos": sorted(skip_geos),
-            "supported_geo_count": supported_geos,
-            "coverage_pct": round(coverage, 1),
-            "incomplete": incomplete,
-            "error": err,
+            "day_count": len(cpc_by_day),
+            "error": None,
             "as_of_utc": _utc_now(),
         }
     )
@@ -399,7 +256,7 @@ def refresh_kelkoo_feed_api_revenue(
     mtd_start: Optional[date] = None,
     mtd_end: Optional[date] = None,
 ) -> Dict[str, Any]:
-    """Compute and persist Feed API revenue for the overview window."""
+    """Compute and persist Feed API revenue for the overview window (fast aggregated)."""
     from integrations.overview import overview_period
 
     y, m0, m1 = overview_period()
@@ -413,13 +270,12 @@ def refresh_kelkoo_feed_api_revenue(
     with _REFRESH_LOCK:
         if _REFRESH_IN_FLIGHT.get(tag) or _refresh_marker_active(tag):
             cached = read_cached_kelkoo_feed_api_revenue(tag)
-            if cached:
+            if cached and cached.get("mtd") is not None:
                 out = dict(cached)
                 out["refresh_status"] = "running"
                 return out
             stub = missing_kelkoo_feed_api_revenue(tag)
             stub["refresh_status"] = "running"
-            stub["error"] = None
             return stub
         _REFRESH_IN_FLIGHT[tag] = True
         _mark_refresh_running(tag, running=True)
@@ -430,7 +286,7 @@ def refresh_kelkoo_feed_api_revenue(
             mtd_start=mtd_start,
             mtd_end=mtd_end,
         )
-        data["refresh_status"] = "ok"
+        data["refresh_status"] = "ok" if not data.get("error") else "error"
         write_cached_kelkoo_feed_api_revenue(data, tag)
         return data
     except Exception as e:
@@ -446,51 +302,20 @@ def refresh_kelkoo_feed_api_revenue(
 
 
 def missing_kelkoo_feed_api_revenue(feed_tag: str = DEFAULT_FEED_TAG) -> Dict[str, Any]:
-    from integrations.overview import overview_period, ranges_dict
+    from integrations.overview import overview_period
 
     yesterday, mtd_start, mtd_end = overview_period()
     tag = (feed_tag or DEFAULT_FEED_TAG).strip().lower() or DEFAULT_FEED_TAG
-    return {
-        "feed": tag,
-        "label": "Kelkoo 2 (Feed API)" if tag == "kelkoo2" else f"{tag} (Feed API)",
-        "source": "kelkoo_raw_report",
-        "share": float(kelkoo_postback_revenue_share(feed_tag=tag) or 1.0),
-        "yesterday": None,
-        "mtd": None,
-        "error": None,
-        "refresh_status": "missing",
-        "ranges": ranges_dict(yesterday, mtd_start, mtd_end),
-        "as_of_utc": None,
-    }
-
-
-def _merge_last_known_figures(dst: Dict[str, Any], prev: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Keep last known MTD/yesterday on running/error stubs so the UI does not blank out."""
-    if not prev or not isinstance(prev, dict):
-        return dst
-    for key in (
-        "yesterday",
-        "mtd",
-        "yesterday_gross",
-        "mtd_gross",
-        "cpc_yesterday",
-        "cpc_mtd",
-        "sale_gmv_yesterday",
-        "sale_gmv_mtd",
-        "share",
-        "coverage_pct",
-        "incomplete",
-        "ready_geo_days",
-        "failed_geo_days",
-        "unsupported_geo_days",
-        "supported_geo_count",
-        "geo_count",
-        "day_count",
-        "metric",
-    ):
-        if dst.get(key) is None and prev.get(key) is not None:
-            dst[key] = prev[key]
-    return dst
+    share = float(kelkoo_postback_revenue_share(feed_tag=tag) or 1.0)
+    out = _empty_payload(
+        tag=tag,
+        share=share,
+        yesterday=yesterday,
+        mtd_start=mtd_start,
+        mtd_end=mtd_end,
+    )
+    out["refresh_status"] = "missing"
+    return out
 
 
 def get_kelkoo_feed_api_revenue(
@@ -499,10 +324,11 @@ def get_kelkoo_feed_api_revenue(
     refresh: bool = False,
 ) -> Dict[str, Any]:
     """
-    Return cached Feed API revenue for the current MTD window.
+    Return Feed API revenue for the current MTD window.
 
-    Does not auto-compute on miss (raw multi-geo MTD is slow). Pass ``refresh=True``
-    or call :func:`queue_kelkoo_feed_api_revenue_refresh` from the UI.
+    Cache hit is instant. On miss (or ``refresh=True``), runs the fast aggregated
+    fetch synchronously (~5–15s) so the homepage tile can show numbers without a
+    long background poll.
     """
     from integrations.overview import overview_period, ranges_dict
 
@@ -529,96 +355,46 @@ def get_kelkoo_feed_api_revenue(
     if cached is not None:
         out = dict(cached)
         st = str(out.get("refresh_status") or "")
+        if out.get("mtd") is not None and st in ("ok", "cached", ""):
+            out["refresh_status"] = "cached" if st != "ok" else "ok"
+            if running:
+                # Keep showing last good numbers while a refresh is in flight.
+                out["refresh_status"] = "running"
+            return out
         if running:
             out["refresh_status"] = "running"
-            out["error"] = None
             return out
-        if st == "running":
-            # Stale in-progress stub (worker died / marker expired).
-            # Keep last figures if present; otherwise mark missing so the UI re-queues.
-            if out.get("mtd") is None:
-                out["refresh_status"] = "missing"
-                out["error"] = None
-            else:
-                out["refresh_status"] = "cached"
+        if st == "error" or out.get("mtd") is None:
+            # Fall through to sync rebuild.
+            pass
+        else:
+            out.setdefault("refresh_status", "cached")
             return out
-        # Failed refresh with no numbers must not stick forever — UI should re-queue.
-        if st == "error" and out.get("mtd") is None:
-            out["refresh_status"] = "missing"
-            out["error"] = None
-            return out
-        out.setdefault("refresh_status", "cached")
-        return out
 
-    # Wrong-window or corrupt cache: still surface a running marker across workers.
-    any_cached = read_cached_kelkoo_feed_api_revenue(tag)
-    stub = missing_kelkoo_feed_api_revenue(tag)
     if running:
+        stub = missing_kelkoo_feed_api_revenue(tag)
         stub["refresh_status"] = "running"
-        _merge_last_known_figures(stub, any_cached)
-    elif any_cached and any_cached.get("mtd") is not None:
-        # Stale MTD window — keep last figures visible while UI queues a rebuild.
-        _merge_last_known_figures(stub, any_cached)
-        stub["refresh_status"] = "missing"
-        stub["error"] = None
-    return stub
+        return stub
+
+    # Fast enough to compute inline on first load / miss.
+    return refresh_kelkoo_feed_api_revenue(
+        feed_tag=tag,
+        yesterday=yesterday,
+        mtd_start=mtd_start,
+        mtd_end=mtd_end,
+    )
 
 
 def queue_kelkoo_feed_api_revenue_refresh(feed_tag: str = DEFAULT_FEED_TAG) -> Dict[str, Any]:
-    """Start a background refresh; return immediately with ``refresh_status``."""
-    from integrations.overview import overview_period
+    """
+    Rebuild Feed API revenue.
 
+    Aggregated MTD is fast, so this runs synchronously and returns the final
+    payload (UI can still treat 202 + poll as best-effort).
+    """
     tag = (feed_tag or DEFAULT_FEED_TAG).strip().lower() or DEFAULT_FEED_TAG
-    prev = read_cached_kelkoo_feed_api_revenue(tag)
-    with _REFRESH_LOCK:
-        already = bool(_REFRESH_IN_FLIGHT.get(tag)) or _refresh_marker_active(tag)
-        if already:
-            cached = dict(prev or missing_kelkoo_feed_api_revenue(tag))
-            cached["refresh_status"] = "running"
-            cached["queued"] = False
-            cached["error"] = None
-            return cached
-        _REFRESH_IN_FLIGHT[tag] = True
-        _mark_refresh_running(tag, running=True)
-
-    # Persist a running stub so other workers / GET polls see progress immediately.
-    # Keep prior figures so a multi-minute MTD fetch does not blank the homepage tile.
-    stub = missing_kelkoo_feed_api_revenue(tag)
-    stub["refresh_status"] = "running"
-    stub["error"] = None
-    _merge_last_known_figures(stub, prev)
-    try:
-        write_cached_kelkoo_feed_api_revenue(stub, tag)
-    except Exception:
-        pass
-
-    def _run() -> None:
-        yesterday, mtd_start, mtd_end = overview_period()
-        try:
-            data = fetch_kelkoo_feed_api_revenue(
-                feed_tag=tag,
-                yesterday=yesterday,
-                mtd_start=mtd_start,
-                mtd_end=mtd_end,
-            )
-            data["refresh_status"] = "ok"
-            write_cached_kelkoo_feed_api_revenue(data, tag)
-        except Exception:
-            logger.exception("Kelkoo Feed API revenue refresh failed for %s", tag)
-            try:
-                err = missing_kelkoo_feed_api_revenue(tag)
-                err["error"] = "Feed API revenue refresh failed"
-                err["refresh_status"] = "error"
-                _merge_last_known_figures(err, prev)
-                write_cached_kelkoo_feed_api_revenue(err, tag)
-            except Exception:
-                pass
-        finally:
-            with _REFRESH_LOCK:
-                _REFRESH_IN_FLIGHT[tag] = False
-            _mark_refresh_running(tag, running=False)
-
-    threading.Thread(target=_run, name=f"kelkoo-api-rev-{tag}", daemon=True).start()
-    out = dict(stub)
-    out["queued"] = True
+    data = refresh_kelkoo_feed_api_revenue(feed_tag=tag)
+    out = dict(data)
+    out["queued"] = False
+    out["sync"] = True
     return out

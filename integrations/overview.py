@@ -128,7 +128,7 @@ def slice_affiliation_revenue() -> Dict[str, Any]:
 
 
 def slice_kelkoo2_api_revenue(*, refresh: bool = False) -> Dict[str, Any]:
-    """Cached Kelkoo feed2 raw-report leadValid CPC (net @ FEED2 share; GMV excluded)."""
+    """Kelkoo feed2 aggregated MTD lead revenue (net @ FEED2 share)."""
     data = get_kelkoo_feed_api_revenue(feed_tag="kelkoo2", refresh=refresh)
     return _slice_envelope("kelkoo2_api_revenue", data)
 

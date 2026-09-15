@@ -2702,10 +2702,10 @@ def api_overview_slice_affiliation_revenue():
 @app.route("/api/overview/slice/kelkoo2-api", methods=["GET"])
 def api_overview_slice_kelkoo2_api():
     """
-    Kelkoo feed2 publisher raw-report revenue (leadValid CPC net @ FEED2 share).
+    Kelkoo feed2 collectible MTD (aggregated lead revenue × FEED2 share).
 
-    Returns the on-disk cache for the current MTD window when present.
-    Query ``?refresh=1`` runs a synchronous rebuild (slow). Prefer POST refresh.
+    Cache hit is instant; miss rebuilds synchronously via aggregated reports (~5–15s).
+    Query ``?refresh=1`` forces a rebuild.
     """
     try:
         refresh = (request.args.get("refresh") or "").strip().lower() in ("1", "true", "yes")
@@ -2717,9 +2717,9 @@ def api_overview_slice_kelkoo2_api():
 
 @app.route("/api/overview/slice/kelkoo2-api/refresh", methods=["POST"])
 def api_overview_slice_kelkoo2_api_refresh():
-    """Queue a background rebuild of feed2 API revenue; poll GET until cached."""
+    """Rebuild feed2 API revenue (fast aggregated; returns completed payload)."""
     try:
-        return jsonify(queue_slice_kelkoo2_api_revenue_refresh()), 202
+        return jsonify(queue_slice_kelkoo2_api_revenue_refresh()), 200
     except Exception as e:
         logger.exception("POST /api/overview/slice/kelkoo2-api/refresh failed")
         return jsonify({"error": str(e), "slice": "kelkoo2_api_revenue"}), 500
