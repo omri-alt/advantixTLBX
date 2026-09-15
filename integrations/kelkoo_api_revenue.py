@@ -100,39 +100,64 @@ def _sum_geo_day(
     geo: str,
     day: str,
     api_key: str,
-    session: requests.Session,
+    session: Optional[requests.Session] = None,
+    retries: int = 3,
 ) -> Dict[str, Any]:
-    """Sum leadValid CPC + sale USD for one geo/day. Amounts are gross (pre-share)."""
-    status, body = fetch_kelkoo_raw_tsv(geo, day, api_key, session)
+    """Sum leadValid CPC for one geo/day. Amounts are gross (pre-share).
+
+    Note: ``saleValueInUsd`` is order GMV, not publisher commission — do not treat
+    it as revenue for the overview tile.
+    """
     out: Dict[str, Any] = {
         "geo": geo,
         "day": day,
-        "http": int(status),
+        "http": 0,
         "ready": False,
+        "unsupported": False,
         "cpc_gross": 0.0,
-        "sale_gross": 0.0,
+        "sale_gmv_gross": 0.0,
         "n_cpc": 0,
         "n_sale": 0,
     }
-    if status != 200 or not (body or "").strip():
+    own_session = session is None
+    sess = session or requests.Session()
+    try:
+        status = 0
+        body = ""
+        for attempt in range(max(1, int(retries or 1))):
+            status, body = fetch_kelkoo_raw_tsv(geo, day, api_key, sess)
+            out["http"] = int(status)
+            if status == 400:
+                # Country not enabled for this publisher key — not a transient miss.
+                out["unsupported"] = True
+                return out
+            if status == 200 and (body or "").strip():
+                break
+            if attempt + 1 < max(1, int(retries or 1)):
+                time.sleep(0.35 * (attempt + 1))
+        else:
+            return out
+
+        out["ready"] = True
+        cpc_g = 0.0
+        sale_gmv = 0.0
+        n_cpc = 0
+        n_sale = 0
+        for row in csv.DictReader(StringIO(body), delimiter="\t"):
+            if (row.get("leadValid") or "").strip().lower() == "true":
+                cpc_g += _f_money(row.get("leadEstimatedRevenueInUsd"))
+                n_cpc += 1
+            if (row.get("sale") or "").strip().lower() == "true":
+                sale_gmv += _f_money(row.get("saleValueInUsd"))
+                n_sale += 1
+        out["cpc_gross"] = cpc_g
+        out["sale_gmv_gross"] = sale_gmv
+        out["n_cpc"] = n_cpc
+        out["n_sale"] = n_sale
         return out
-    out["ready"] = True
-    cpc_g = 0.0
-    sale_g = 0.0
-    n_cpc = 0
-    n_sale = 0
-    for row in csv.DictReader(StringIO(body), delimiter="\t"):
-        if (row.get("leadValid") or "").strip().lower() == "true":
-            cpc_g += _f_money(row.get("leadEstimatedRevenueInUsd"))
-            n_cpc += 1
-        if (row.get("sale") or "").strip().lower() == "true":
-            sale_g += _f_money(row.get("saleValueInUsd"))
-            n_sale += 1
-    out["cpc_gross"] = cpc_g
-    out["sale_gross"] = sale_g
-    out["n_cpc"] = n_cpc
-    out["n_sale"] = n_sale
-    return out
+    finally:
+        if own_session:
+            sess.close()
 
 
 def fetch_kelkoo_feed_api_revenue(
@@ -145,10 +170,11 @@ def fetch_kelkoo_feed_api_revenue(
     max_workers: int = 8,
 ) -> Dict[str, Any]:
     """
-    Sum Kelkoo raw-report CPC (leadValid) + sale USD for the overview window.
+    Sum Kelkoo raw-report **leadValid CPC** for the overview window.
 
     Returns net amounts (after ``kelkoo_postback_revenue_share``) as primary
-    ``yesterday`` / ``mtd``, plus gross/cpc/sale breakdowns.
+    ``yesterday`` / ``mtd``. Sale order GMV is reported separately and is **not**
+    included in revenue (``saleValueInUsd`` is basket value, not commission).
     """
     tag = (feed_tag or DEFAULT_FEED_TAG).strip().lower() or DEFAULT_FEED_TAG
     api_key = kelkoo_api_key_for_postback_tag(tag)
@@ -161,6 +187,7 @@ def fetch_kelkoo_feed_api_revenue(
         "feed": tag,
         "label": "Kelkoo 2 (Feed API)" if tag == "kelkoo2" else f"{tag} (Feed API)",
         "source": "kelkoo_raw_report",
+        "metric": "leadValid_cpc",
         "share": share,
         "yesterday": None,
         "mtd": None,
@@ -168,13 +195,19 @@ def fetch_kelkoo_feed_api_revenue(
         "mtd_gross": None,
         "cpc_yesterday": None,
         "cpc_mtd": None,
-        "sale_yesterday": None,
-        "sale_mtd": None,
+        "sale_gmv_yesterday": None,
+        "sale_gmv_mtd": None,
+        # Legacy aliases kept for older UI; always 0 (GMV is not revenue).
+        "sale_yesterday": 0.0,
+        "sale_mtd": 0.0,
         "error": None,
         "ready_geo_days": 0,
         "failed_geo_days": 0,
+        "unsupported_geo_days": 0,
         "geo_count": len(geo_list),
         "day_count": len(days),
+        "coverage_pct": None,
+        "incomplete": False,
         "ranges": {
             "yesterday": y_key,
             "mtd_from": mtd_start.isoformat(),
@@ -198,68 +231,105 @@ def fetch_kelkoo_feed_api_revenue(
                 "mtd_gross": 0.0,
                 "cpc_yesterday": 0.0,
                 "cpc_mtd": 0.0,
-                "sale_yesterday": 0.0,
-                "sale_mtd": 0.0,
+                "sale_gmv_yesterday": 0.0,
+                "sale_gmv_mtd": 0.0,
+                "coverage_pct": 100.0,
             }
         )
         return base
 
     cpc_by_day: Dict[str, float] = {d.isoformat(): 0.0 for d in days}
-    sale_by_day: Dict[str, float] = {d.isoformat(): 0.0 for d in days}
+    gmv_by_day: Dict[str, float] = {d.isoformat(): 0.0 for d in days}
     ready = 0
     failed = 0
+    unsupported = 0
     jobs: List[Tuple[str, str]] = [(d.isoformat(), g) for d in days for g in geo_list]
+    # Geos that returned HTTP 400 — skip remaining days for that geo in this run.
+    skip_geos: set[str] = set()
 
-    session = requests.Session()
-    try:
-        with ThreadPoolExecutor(max_workers=max(1, min(int(max_workers or 8), 16))) as pool:
+    workers = max(1, min(int(max_workers or 8), 12))
+
+    def _run_jobs(job_list: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        """Fetch jobs; return list of (day, geo) that still need a retry."""
+        nonlocal ready, unsupported
+        need_retry: List[Tuple[str, str]] = []
+        work = [(day, geo) for day, geo in job_list if geo not in skip_geos]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
             futs = {
                 pool.submit(
                     _sum_geo_day,
                     geo=geo,
                     day=day,
                     api_key=api_key,
-                    session=session,
+                    session=None,
+                    retries=3,
                 ): (day, geo)
-                for day, geo in jobs
+                for day, geo in work
             }
             for fut in as_completed(futs):
                 day, geo = futs[fut]
                 try:
                     row = fut.result()
                 except Exception as e:
-                    failed += 1
+                    need_retry.append((day, geo))
                     logger.info("Kelkoo API revenue %s %s/%s failed: %s", tag, day, geo, e)
                     continue
+                if row.get("unsupported"):
+                    if geo not in skip_geos:
+                        skip_geos.add(geo)
+                    unsupported += 1
+                    continue
                 if not row.get("ready"):
-                    failed += 1
+                    need_retry.append((day, geo))
                     continue
                 ready += 1
                 cpc_by_day[day] = float(cpc_by_day.get(day) or 0.0) + float(row.get("cpc_gross") or 0.0)
-                sale_by_day[day] = float(sale_by_day.get(day) or 0.0) + float(row.get("sale_gross") or 0.0)
-    finally:
-        session.close()
+                gmv_by_day[day] = float(gmv_by_day.get(day) or 0.0) + float(row.get("sale_gmv_gross") or 0.0)
+        return need_retry
+
+    pending = _run_jobs(jobs)
+    if pending:
+        time.sleep(1.0)
+        still = _run_jobs(pending)
+        failed = len(still)
+    else:
+        failed = 0
+
+    # Expected coverage excludes permanently unsupported geos discovered this run.
+    supported_geos = max(0, len(geo_list) - len(skip_geos))
+    expected = supported_geos * len(days)
+    coverage = (100.0 * ready / expected) if expected else 100.0
+    incomplete = bool(expected and ready < expected)
 
     cpc_mtd = sum(cpc_by_day.values())
-    sale_mtd = sum(sale_by_day.values())
+    gmv_mtd = sum(gmv_by_day.values())
     cpc_y = float(cpc_by_day.get(y_key) or 0.0) if y_key in cpc_by_day else 0.0
-    sale_y = float(sale_by_day.get(y_key) or 0.0) if y_key in sale_by_day else 0.0
-    gross_mtd = cpc_mtd + sale_mtd
-    gross_y = cpc_y + sale_y
+    gmv_y = float(gmv_by_day.get(y_key) or 0.0) if y_key in gmv_by_day else 0.0
+
+    err = None
+    if incomplete and coverage < 85.0:
+        err = f"Incomplete raw-report coverage ({coverage:.0f}% of supported geo-days)"
 
     base.update(
         {
-            "yesterday_gross": round(gross_y, 4),
-            "mtd_gross": round(gross_mtd, 4),
+            "yesterday_gross": round(cpc_y, 4),
+            "mtd_gross": round(cpc_mtd, 4),
             "cpc_yesterday": round(cpc_y * share, 4),
             "cpc_mtd": round(cpc_mtd * share, 4),
-            "sale_yesterday": round(sale_y * share, 4),
-            "sale_mtd": round(sale_mtd * share, 4),
-            "yesterday": round(gross_y * share, 4),
-            "mtd": round(gross_mtd * share, 4),
+            "sale_gmv_yesterday": round(gmv_y, 4),
+            "sale_gmv_mtd": round(gmv_mtd, 4),
+            "sale_yesterday": 0.0,
+            "sale_mtd": 0.0,
+            "yesterday": round(cpc_y * share, 4),
+            "mtd": round(cpc_mtd * share, 4),
             "ready_geo_days": ready,
             "failed_geo_days": failed,
-            "error": None,
+            "unsupported_geo_days": unsupported,
+            "unsupported_geos": sorted(skip_geos),
+            "supported_geo_count": supported_geos,
+            "coverage_pct": round(coverage, 1),
+            "incomplete": incomplete,
+            "error": err,
             "as_of_utc": _utc_now(),
         }
     )

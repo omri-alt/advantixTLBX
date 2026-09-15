@@ -542,14 +542,16 @@
       var st = String(api.refresh_status || "");
       var err = api.error || null;
       var sharePct = api.share != null ? Math.round(Number(api.share) * 100) : 70;
-      var badgeKind = err ? "err" : (st === "running" || st === "missing" || api.mtd == null ? "wait" : "ok");
+      var cov = api.coverage_pct != null ? Math.round(Number(api.coverage_pct)) : null;
+      var badgeKind = err ? "err" : (st === "running" || st === "missing" || api.mtd == null ? "wait" : (api.incomplete ? "wait" : "ok"));
       var badgeLabel = badgeKind === "ok" ? "OK" : badgeKind === "err" ? "Issue" : "…";
       var btnLabel = st === "running" ? "Loading…" : (api.mtd == null ? "Load" : "Refresh");
-      var note = "Publisher API · our net @" + sharePct + "% (not Keitaro)";
+      var note = "Publisher API · leadValid CPC net @" + sharePct + "% (not Keitaro; sales GMV excluded)";
       if (st === "running") {
-        note = "Loading Feed 2 raw-report revenue…";
+        note = "Loading Feed 2 raw-report CPC…";
       } else if (api.cached_utc || api.as_of_utc) {
         note += " · as of " + (api.cached_utc || api.as_of_utc);
+        if (cov != null) note += " · coverage " + cov + "%";
       }
       el.innerHTML =
         '<div class="ov-feed2' + (err ? " has-err" : "") + '">' +
@@ -559,12 +561,12 @@
             '<button type="button" class="btn btn-sm" id="overview-feed2-api-refresh-btn" title="Rebuild from Kelkoo feed2 raw reports"' +
               (st === "running" ? " disabled" : "") + ">" + btnLabel + "</button>" +
           "</div>" +
-          '<div class="lbl">MTD (our net)</div>' +
+          '<div class="lbl">MTD (our net CPC)</div>' +
           '<div class="amt">' + money(api.mtd) + "</div>" +
           '<div class="ov-feed2-grid">' +
             "<div><div class=\"lbl\">Yesterday</div><div class=\"sub\">" + money(api.yesterday) + "</div></div>" +
-            "<div><div class=\"lbl\">CPC MTD</div><div class=\"sub\">" + money(api.cpc_mtd) + "</div></div>" +
-            "<div><div class=\"lbl\">Sales MTD</div><div class=\"sub\">" + money(api.sale_mtd) + "</div></div>" +
+            "<div><div class=\"lbl\">CPC MTD</div><div class=\"sub\">" + money(api.cpc_mtd != null ? api.cpc_mtd : api.mtd) + "</div></div>" +
+            "<div><div class=\"lbl\">Coverage</div><div class=\"sub\">" + (cov != null ? cov + "%" : "—") + "</div></div>" +
             "<div><div class=\"lbl\">Share</div><div class=\"sub\">" + sharePct + "%</div></div>" +
           "</div>" +
           '<div class="ov-feed2-note">' + note + "</div>" +
