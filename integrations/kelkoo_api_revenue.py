@@ -464,6 +464,35 @@ def missing_kelkoo_feed_api_revenue(feed_tag: str = DEFAULT_FEED_TAG) -> Dict[st
     }
 
 
+def _merge_last_known_figures(dst: Dict[str, Any], prev: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Keep last known MTD/yesterday on running/error stubs so the UI does not blank out."""
+    if not prev or not isinstance(prev, dict):
+        return dst
+    for key in (
+        "yesterday",
+        "mtd",
+        "yesterday_gross",
+        "mtd_gross",
+        "cpc_yesterday",
+        "cpc_mtd",
+        "sale_gmv_yesterday",
+        "sale_gmv_mtd",
+        "share",
+        "coverage_pct",
+        "incomplete",
+        "ready_geo_days",
+        "failed_geo_days",
+        "unsupported_geo_days",
+        "supported_geo_count",
+        "geo_count",
+        "day_count",
+        "metric",
+    ):
+        if dst.get(key) is None and prev.get(key) is not None:
+            dst[key] = prev[key]
+    return dst
+
+
 def get_kelkoo_feed_api_revenue(
     *,
     feed_tag: str = DEFAULT_FEED_TAG,
@@ -500,20 +529,38 @@ def get_kelkoo_feed_api_revenue(
     if cached is not None:
         out = dict(cached)
         st = str(out.get("refresh_status") or "")
-        if running and st not in ("ok", "cached"):
+        if running:
             out["refresh_status"] = "running"
-        elif not running and st == "running":
-            # Stale in-progress stub (worker died / marker expired) — treat as miss.
+            out["error"] = None
+            return out
+        if st == "running":
+            # Stale in-progress stub (worker died / marker expired).
+            # Keep last figures if present; otherwise mark missing so the UI re-queues.
+            if out.get("mtd") is None:
+                out["refresh_status"] = "missing"
+                out["error"] = None
+            else:
+                out["refresh_status"] = "cached"
+            return out
+        # Failed refresh with no numbers must not stick forever — UI should re-queue.
+        if st == "error" and out.get("mtd") is None:
             out["refresh_status"] = "missing"
-            out["mtd"] = None
-            out["yesterday"] = None
-        else:
-            out.setdefault("refresh_status", "cached")
+            out["error"] = None
+            return out
+        out.setdefault("refresh_status", "cached")
         return out
 
+    # Wrong-window or corrupt cache: still surface a running marker across workers.
+    any_cached = read_cached_kelkoo_feed_api_revenue(tag)
     stub = missing_kelkoo_feed_api_revenue(tag)
     if running:
         stub["refresh_status"] = "running"
+        _merge_last_known_figures(stub, any_cached)
+    elif any_cached and any_cached.get("mtd") is not None:
+        # Stale MTD window — keep last figures visible while UI queues a rebuild.
+        _merge_last_known_figures(stub, any_cached)
+        stub["refresh_status"] = "missing"
+        stub["error"] = None
     return stub
 
 
@@ -522,21 +569,24 @@ def queue_kelkoo_feed_api_revenue_refresh(feed_tag: str = DEFAULT_FEED_TAG) -> D
     from integrations.overview import overview_period
 
     tag = (feed_tag or DEFAULT_FEED_TAG).strip().lower() or DEFAULT_FEED_TAG
+    prev = read_cached_kelkoo_feed_api_revenue(tag)
     with _REFRESH_LOCK:
         already = bool(_REFRESH_IN_FLIGHT.get(tag)) or _refresh_marker_active(tag)
         if already:
-            cached = read_cached_kelkoo_feed_api_revenue(tag) or missing_kelkoo_feed_api_revenue(tag)
-            out = dict(cached)
-            out["refresh_status"] = "running"
-            out["queued"] = False
-            return out
+            cached = dict(prev or missing_kelkoo_feed_api_revenue(tag))
+            cached["refresh_status"] = "running"
+            cached["queued"] = False
+            cached["error"] = None
+            return cached
         _REFRESH_IN_FLIGHT[tag] = True
         _mark_refresh_running(tag, running=True)
 
     # Persist a running stub so other workers / GET polls see progress immediately.
+    # Keep prior figures so a multi-minute MTD fetch does not blank the homepage tile.
     stub = missing_kelkoo_feed_api_revenue(tag)
     stub["refresh_status"] = "running"
     stub["error"] = None
+    _merge_last_known_figures(stub, prev)
     try:
         write_cached_kelkoo_feed_api_revenue(stub, tag)
     except Exception:
@@ -559,6 +609,7 @@ def queue_kelkoo_feed_api_revenue_refresh(feed_tag: str = DEFAULT_FEED_TAG) -> D
                 err = missing_kelkoo_feed_api_revenue(tag)
                 err["error"] = "Feed API revenue refresh failed"
                 err["refresh_status"] = "error"
+                _merge_last_known_figures(err, prev)
                 write_cached_kelkoo_feed_api_revenue(err, tag)
             except Exception:
                 pass

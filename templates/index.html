@@ -446,6 +446,14 @@
     var keitaro2ApiState = null;
     var keitaro2ApiPollTimer = null;
     var keitaro2ApiBootstrapped = false;
+    var keitaro2ApiEnsureInFlight = false;
+    var keitaro2ApiPollStartedMs = 0;
+    var keitaro2ApiAutoRetries = 0;
+    // Declare URLs before any Feed 2 fetch helpers (avoid TDZ / undefined URL races).
+    var keitaro2ApiUrl = {{ url_for("api_overview_slice_kelkoo2_api") | tojson }};
+    var keitaro2ApiRefreshUrl = {{ url_for("api_overview_slice_kelkoo2_api_refresh") | tojson }};
+    var KEITARO2_API_POLL_MAX_MS = 12 * 60 * 1000;
+    var KEITARO2_API_AUTO_RETRY_MAX = 2;
 
     var affCarouselIndex = 0;
 
@@ -543,54 +551,69 @@
       var err = api.error || null;
       var sharePct = api.share != null ? Math.round(Number(api.share) * 100) : 70;
       var cov = api.coverage_pct != null ? Math.round(Number(api.coverage_pct)) : null;
-      var badgeKind = err ? "err" : (st === "running" || st === "missing" || api.mtd == null ? "wait" : (api.incomplete ? "wait" : "ok"));
+      var loading = st === "running";
+      var needsLoad = api.mtd == null && !loading;
+      // Soft coverage warnings should not look like a hard failure when numbers exist.
+      var softErr = !!(err && api.mtd != null);
+      var badgeKind = (err && !softErr) ? "err" : (loading || needsLoad || st === "missing" ? "wait" : (api.incomplete || softErr ? "wait" : "ok"));
       var badgeLabel = badgeKind === "ok" ? "OK" : badgeKind === "err" ? "Issue" : "…";
-      var btnLabel = st === "running" ? "Loading…" : (api.mtd == null ? "Load" : "Refresh");
-      var note = "Publisher API · leadValid CPC net @" + sharePct + "% (not Keitaro; sales GMV excluded)";
-      if (st === "running") {
-        note = "Loading Feed 2 raw-report CPC…";
+      var btnLabel = loading ? "Loading…" : (needsLoad ? "Load" : "Refresh");
+      var note = "What we'll collect · leadValid CPC net @" + sharePct + "% (Kelkoo Feed 2 API, not Keitaro; order GMV excluded)";
+      if (loading) {
+        var elapsedSec = keitaro2ApiPollStartedMs ? Math.max(0, Math.round((Date.now() - keitaro2ApiPollStartedMs) / 1000)) : 0;
+        note = "Loading Feed 2 raw-report CPC across geos (often 2–3+ min)" +
+          (elapsedSec ? " · " + elapsedSec + "s" : "") + "…";
       } else if (api.cached_utc || api.as_of_utc) {
         note += " · as of " + (api.cached_utc || api.as_of_utc);
         if (cov != null) note += " · coverage " + cov + "%";
+      } else if (needsLoad) {
+        note = "No Feed 2 API cache yet — click Load or wait for auto-fetch.";
       }
       el.innerHTML =
-        '<div class="ov-feed2' + (err ? " has-err" : "") + '">' +
+        '<div class="ov-feed2' + ((err && !softErr) ? " has-err" : "") + '">' +
           '<div class="ov-feed2-head">' +
             "<h4>Feed 2 revenue (API)</h4>" +
             '<span class="ov-badge ' + badgeKind + '" style="position:static;">' + badgeLabel + "</span>" +
             '<button type="button" class="btn btn-sm" id="overview-feed2-api-refresh-btn" title="Rebuild from Kelkoo feed2 raw reports"' +
-              (st === "running" ? " disabled" : "") + ">" + btnLabel + "</button>" +
+              (loading ? " disabled" : "") + ">" + btnLabel + "</button>" +
           "</div>" +
-          '<div class="lbl">MTD (our net CPC)</div>' +
+          '<div class="lbl">MTD collectible (net CPC)</div>' +
           '<div class="amt">' + money(api.mtd) + "</div>" +
           '<div class="ov-feed2-grid">' +
-            "<div><div class=\"lbl\">Yesterday</div><div class=\"sub\">" + money(api.yesterday) + "</div></div>" +
-            "<div><div class=\"lbl\">CPC MTD</div><div class=\"sub\">" + money(api.cpc_mtd != null ? api.cpc_mtd : api.mtd) + "</div></div>" +
-            "<div><div class=\"lbl\">Coverage</div><div class=\"sub\">" + (cov != null ? cov + "%" : "—") + "</div></div>" +
+            "<div><div class=\"lbl\">Yesterday collectible</div><div class=\"sub\">" + money(api.yesterday) + "</div></div>" +
             "<div><div class=\"lbl\">Share</div><div class=\"sub\">" + sharePct + "%</div></div>" +
+            "<div><div class=\"lbl\">Coverage</div><div class=\"sub\">" + (cov != null ? cov + "%" : "—") + "</div></div>" +
+            "<div><div class=\"lbl\">Status</div><div class=\"sub\">" + (loading ? "Loading" : (st || "—")) + "</div></div>" +
           "</div>" +
           '<div class="ov-feed2-note">' + note + "</div>" +
-          (err ? '<div class="err">Error: ' + String(err).slice(0, 180) + "</div>" : "") +
+          (err ? '<div class="err">' + (softErr ? "Note: " : "Error: ") + String(err).slice(0, 180) + "</div>" : "") +
         "</div>";
     }
 
     function stopKelkoo2ApiPoll() {
-      if (kelkoo2ApiPollTimer) {
-        clearInterval(kelkoo2ApiPollTimer);
+      if (keitaro2ApiPollTimer) {
+        clearInterval(keitaro2ApiPollTimer);
         keitaro2ApiPollTimer = null;
       }
     }
 
-    function applyKelkoo2ApiPayload(payload) {
+    function applyKijiji2ApiPayload(payload) {
       var data = payload && payload.data ? payload.data : payload;
       if (!data || typeof data !== "object") return;
+      // Preserve last figures if a running/missing stub omits them.
+      if (keitaro2ApiState && data.mtd == null && keitaro2ApiState.mtd != null) {
+        data = Object.assign({}, data);
+        ["yesterday", "mtd", "cpc_yesterday", "cpc_mtd", "share", "coverage_pct"].forEach(function(k) {
+          if (data[k] == null && keitaro2ApiState[k] != null) data[k] = keitaro2ApiState[k];
+        });
+      }
       keitaro2ApiState = data;
       if (payload && payload.ranges) keitaroAffRanges = Object.assign({}, keitaroAffRanges || {}, payload.ranges);
       renderFeed2ApiTile();
     }
 
-    function fetchKelkoo2ApiState() {
-      return fetch(kelkoo2ApiUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+    function fetchKijiji2ApiState() {
+      return fetch(keitaro2ApiUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
         .then(function(r) {
           if (r.status === 401) throw new Error("HTTP 401 — sign in again");
           if (!r.ok) {
@@ -601,34 +624,64 @@
           return r.json();
         })
         .then(function(payload) {
-          applyKelkoo2ApiPayload(payload);
+          applyKijiji2ApiPayload(payload);
           return payload;
         });
     }
 
-    function startKelkoo2ApiPoll() {
-      stopKelkoo2ApiPoll();
+    function maybeRetryFeed2AfterMiss(data) {
+      var st = data && data.refresh_status;
+      if (data && data.mtd == null && st !== "running" && keitaro2ApiAutoRetries < KEITARO2_API_AUTO_RETRY_MAX) {
+        keitaro2ApiAutoRetries += 1;
+        keitaro2ApiBootstrapped = false;
+        return queueKijiji2ApiRefresh();
+      }
+      return null;
+    }
+
+    function startKijiji2ApiPoll() {
+      stopKijiji2ApiPoll();
+      if (!keitaro2ApiPollStartedMs) keitaro2ApiPollStartedMs = Date.now();
       keitaro2ApiPollTimer = setInterval(function() {
-        fetchKelkoo2ApiState()
+        fetchKijiji2ApiState()
           .then(function(payload) {
             var data = payload && payload.data ? payload.data : payload;
             var st = data && data.refresh_status;
-            if (st && st !== "running") {
-              stopKelkoo2ApiPoll();
-              if (data && data.mtd == null && st === "missing") {
-                keitaro2ApiBootstrapped = false;
+            renderFeed2ApiTile();
+            if (st === "running") {
+              if (Date.now() - keitaro2ApiPollStartedMs > KEITARO2_API_POLL_MAX_MS) {
+                stopKijiji2ApiPoll();
+                if (data && data.mtd == null && keitaro2ApiAutoRetries < KEITARO2_API_AUTO_RETRY_MAX) {
+                  keitaro2ApiAutoRetries += 1;
+                  keitaro2ApiPollStartedMs = 0;
+                  return queueKijiji2ApiRefresh();
+                }
+                keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, {
+                  refresh_status: "error",
+                  error: "Feed 2 API refresh still running after 12 minutes — try Refresh, or check runtime/kelkoo2_api_revenue.running on the server",
+                });
+                renderFeed2ApiTile();
               }
+              return;
             }
+            stopKijiji2ApiPoll();
+            keitaro2ApiPollStartedMs = 0;
+            if (data && data.mtd != null && (st === "ok" || st === "cached")) {
+              keitaro2ApiAutoRetries = 0;
+              return;
+            }
+            maybeRetryFeed2AfterMiss(data);
           })
           .catch(function() {});
       }, 3000);
     }
 
-    function queueKelkoo2ApiRefresh() {
-      stopKelkoo2ApiPoll();
+    function queueKijiji2ApiRefresh() {
+      stopKijiji2ApiPoll();
+      keitaro2ApiPollStartedMs = Date.now();
       keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, { refresh_status: "running", error: null });
       renderFeed2ApiTile();
-      return fetch(kelkoo2ApiRefreshUrl, {
+      return fetch(keitaro2ApiRefreshUrl, {
         method: "POST",
         credentials: "same-origin",
         headers: { Accept: "application/json" },
@@ -643,7 +696,7 @@
           return r.json();
         })
         .then(function(payload) {
-          applyKelkoo2ApiPayload(payload);
+          applyKijiji2ApiPayload(payload);
           startKelkoo2ApiPoll();
         })
         .catch(function(e) {
@@ -652,12 +705,16 @@
             error: e && e.message ? e.message : String(e),
           });
           renderFeed2ApiTile();
+          // Network blip: allow another bootstrap pass later.
+          keitaro2ApiBootstrapped = false;
         });
     }
 
-    function ensureKelkoo2ApiLoaded() {
+    function ensureKijiji2ApiLoaded() {
+      if (keitaro2ApiEnsureInFlight) return Promise.resolve();
+      keitaro2ApiEnsureInFlight = true;
       renderFeed2ApiTile();
-      return fetchKelkoo2ApiState()
+      return fetchKijiji2ApiState()
         .then(function(payload) {
           var data = payload && payload.data ? payload.data : payload;
           var st = data && data.refresh_status;
@@ -665,30 +722,39 @@
           var wantTo = (keitaroAffRanges && keitaroAffRanges.mtd_to) || (payload.ranges && payload.ranges.mtd_to) || "";
           var gotFrom = data && data.ranges ? data.ranges.mtd_from : "";
           var gotTo = data && data.ranges ? data.ranges.mtd_to : "";
-          var staleWindow = !!(wantFrom && wantTo && (gotFrom !== wantFrom || gotTo !== wantTo));
-          if (st === "missing" || staleWindow || (data && data.mtd == null && st !== "running" && st !== "error")) {
+          var staleWindow = !!(wantFrom && wantTo && gotFrom && gotTo && (gotFrom !== wantFrom || gotTo !== wantTo));
+          // Always queue when MTD is missing (including stuck error caches) unless already running.
+          if (st === "running") {
+            startKijiji2ApiPoll();
+            return;
+          }
+          if (st === "missing" || staleWindow || !data || data.mtd == null) {
             return queueKelkoo2ApiRefresh();
           }
-          if (st === "running") startKelkoo2ApiPoll();
-          else renderFeed2ApiTile();
+          renderFeed2ApiTile();
         })
         .catch(function(e) {
-          keitaro2ApiState = {
+          keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, {
             label: "Feed 2 revenue (API)",
             refresh_status: "error",
             error: e && e.message ? e.message : String(e),
-            yesterday: null,
-            mtd: null,
-          };
+          });
           renderFeed2ApiTile();
+          keitaro2ApiBootstrapped = false;
+        })
+        .finally(function() {
+          keitaro2ApiEnsureInFlight = false;
         });
     }
 
     function bootstrapFeed2ApiTile() {
-      // Re-ensure whenever we still have no MTD numbers (overview refresh can race the first load).
-      if (kelkoo2ApiBootstrapped && keitaro2ApiState && keitaro2ApiState.mtd != null) return;
-      if (kelkoo2ApiBootstrapped && keitaro2ApiState && keitaro2ApiState.refresh_status === "running") return;
-      if (kelkoo2ApiBootstrapped && keitaro2ApiState && keitaro2ApiState.refresh_status === "error") return;
+      // Re-ensure whenever we still have no MTD numbers (overview snapshot load can race).
+      if (keitaro2ApiEnsureInFlight) return;
+      if (keitaro2ApiState && keitaro2ApiState.refresh_status === "running") {
+        if (!keitaro2ApiPollTimer) startKelkoo2ApiPoll();
+        return;
+      }
+      if (keitaro2ApiBootstrapped && keitaro2ApiState && keitaro2ApiState.mtd != null) return;
       keitaro2ApiBootstrapped = true;
       ensureKijiji2ApiLoaded();
     }
@@ -702,8 +768,6 @@
     var overviewUrl = {{ url_for("api_overview") | tojson }};
     var refreshUrl = {{ url_for("api_overview_refresh") | tojson }};
     var refreshStatusUrl = {{ url_for("api_overview_refresh_status") | tojson }};
-    var keitaro2ApiUrl = {{ url_for("api_overview_slice_kelkoo2_api") | tojson }};
-    var keitaro2ApiRefreshUrl = {{ url_for("api_overview_slice_kelkoo2_api_refresh") | tojson }};
 
     var TILE_KEYS = ["revenue", "zeropark", "sourceknowledge", "ecomnia", "trillion"];
     var TITLES = {
@@ -718,7 +782,8 @@
     if (!rangesEl || !failEl) return;
 
     // Feed 2 API tile loads independently of the overview snapshot.
-    setTimeout(function() { bootstrapFeed2ApiTile(); }, 0);
+    bootstrapFeed2ApiTile();
+
 
     if (snapHintEl) {
       var hrs = Array.isArray(ovHrs) && ovHrs.length ? ovHrs : [11, 16];
@@ -744,11 +809,12 @@
       if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC + TR)", null, null, "Loading snapshot…", false, "wait");
       var affEl = document.getElementById("tile-affiliation");
       if (affEl) affEl.innerHTML = affiliationLoadingHtml();
-      var f2 = document.getElementById("tile-feed2-api");
-      if (f2) {
-        keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, { refresh_status: "missing" });
+      // Do not reset Feed 2 API tile here — it loads independently and snapshot
+      // loading used to stomp running/ok state back to "missing".
+      if (!keitaro2ApiState) {
         renderFeed2ApiTile();
       }
+      bootstrapFeed2ApiTile();
     }
 
     function setTilesLoading() {
