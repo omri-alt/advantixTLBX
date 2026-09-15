@@ -10,6 +10,7 @@ import csv
 import json
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from io import StringIO
@@ -40,6 +41,40 @@ def _utc_now() -> str:
 def cache_path(feed_tag: str = DEFAULT_FEED_TAG) -> Path:
     tag = (feed_tag or DEFAULT_FEED_TAG).strip().lower() or DEFAULT_FEED_TAG
     return ROOT / "runtime" / f"{tag}_api_revenue.json"
+
+
+def running_marker_path(feed_tag: str = DEFAULT_FEED_TAG) -> Path:
+    tag = (feed_tag or DEFAULT_FEED_TAG).strip().lower() or DEFAULT_FEED_TAG
+    return ROOT / "runtime" / f"{tag}_api_revenue.running"
+
+
+def _mark_refresh_running(feed_tag: str, *, running: bool) -> None:
+    path = running_marker_path(feed_tag)
+    try:
+        if running:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_utc_now(), encoding="utf-8")
+        elif path.is_file():
+            path.unlink()
+    except OSError:
+        pass
+
+
+def _refresh_marker_active(feed_tag: str, *, max_age_sec: float = 45 * 60) -> bool:
+    path = running_marker_path(feed_tag)
+    if not path.is_file():
+        return False
+    try:
+        age = time.time() - path.stat().st_mtime
+        if age > max_age_sec:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            return False
+        return True
+    except OSError:
+        return False
 
 
 def _f_money(v: Any) -> float:
@@ -285,20 +320,18 @@ def refresh_kelkoo_feed_api_revenue(
         mtd_end = m1
     tag = (feed_tag or DEFAULT_FEED_TAG).strip().lower() or DEFAULT_FEED_TAG
     with _REFRESH_LOCK:
-        if _REFRESH_IN_FLIGHT.get(tag):
+        if _REFRESH_IN_FLIGHT.get(tag) or _refresh_marker_active(tag):
             cached = read_cached_kelkoo_feed_api_revenue(tag)
             if cached:
                 out = dict(cached)
                 out["refresh_status"] = "running"
                 return out
-            return {
-                "feed": tag,
-                "error": "Feed API revenue refresh already running",
-                "refresh_status": "running",
-                "yesterday": None,
-                "mtd": None,
-            }
+            stub = missing_kelkoo_feed_api_revenue(tag)
+            stub["refresh_status"] = "running"
+            stub["error"] = None
+            return stub
         _REFRESH_IN_FLIGHT[tag] = True
+        _mark_refresh_running(tag, running=True)
     try:
         data = fetch_kelkoo_feed_api_revenue(
             feed_tag=tag,
@@ -309,9 +342,16 @@ def refresh_kelkoo_feed_api_revenue(
         data["refresh_status"] = "ok"
         write_cached_kelkoo_feed_api_revenue(data, tag)
         return data
+    except Exception as e:
+        err = missing_kelkoo_feed_api_revenue(tag)
+        err["error"] = str(e)
+        err["refresh_status"] = "error"
+        write_cached_kelkoo_feed_api_revenue(err, tag)
+        raise
     finally:
         with _REFRESH_LOCK:
             _REFRESH_IN_FLIGHT[tag] = False
+        _mark_refresh_running(tag, running=False)
 
 
 def missing_kelkoo_feed_api_revenue(feed_tag: str = DEFAULT_FEED_TAG) -> Dict[str, Any]:
@@ -359,7 +399,7 @@ def get_kelkoo_feed_api_revenue(
         )
 
     with _REFRESH_LOCK:
-        running = bool(_REFRESH_IN_FLIGHT.get(tag))
+        running = bool(_REFRESH_IN_FLIGHT.get(tag)) or _refresh_marker_active(tag)
 
     cached = read_cached_kelkoo_feed_api_revenue(
         tag,
@@ -368,7 +408,16 @@ def get_kelkoo_feed_api_revenue(
     )
     if cached is not None:
         out = dict(cached)
-        out.setdefault("refresh_status", "running" if running else "cached")
+        st = str(out.get("refresh_status") or "")
+        if running and st not in ("ok", "cached"):
+            out["refresh_status"] = "running"
+        elif not running and st == "running":
+            # Stale in-progress stub (worker died / marker expired) — treat as miss.
+            out["refresh_status"] = "missing"
+            out["mtd"] = None
+            out["yesterday"] = None
+        else:
+            out.setdefault("refresh_status", "cached")
         return out
 
     stub = missing_kelkoo_feed_api_revenue(tag)
@@ -379,19 +428,40 @@ def get_kelkoo_feed_api_revenue(
 
 def queue_kelkoo_feed_api_revenue_refresh(feed_tag: str = DEFAULT_FEED_TAG) -> Dict[str, Any]:
     """Start a background refresh; return immediately with ``refresh_status``."""
+    from integrations.overview import overview_period
+
     tag = (feed_tag or DEFAULT_FEED_TAG).strip().lower() or DEFAULT_FEED_TAG
     with _REFRESH_LOCK:
-        already = bool(_REFRESH_IN_FLIGHT.get(tag))
-    if already:
-        cached = read_cached_kelkoo_feed_api_revenue(tag) or missing_kelkoo_feed_api_revenue(tag)
-        out = dict(cached)
-        out["refresh_status"] = "running"
-        out["queued"] = False
-        return out
+        already = bool(_REFRESH_IN_FLIGHT.get(tag)) or _refresh_marker_active(tag)
+        if already:
+            cached = read_cached_kelkoo_feed_api_revenue(tag) or missing_kelkoo_feed_api_revenue(tag)
+            out = dict(cached)
+            out["refresh_status"] = "running"
+            out["queued"] = False
+            return out
+        _REFRESH_IN_FLIGHT[tag] = True
+        _mark_refresh_running(tag, running=True)
+
+    # Persist a running stub so other workers / GET polls see progress immediately.
+    stub = missing_kelkoo_feed_api_revenue(tag)
+    stub["refresh_status"] = "running"
+    stub["error"] = None
+    try:
+        write_cached_kelkoo_feed_api_revenue(stub, tag)
+    except Exception:
+        pass
 
     def _run() -> None:
+        yesterday, mtd_start, mtd_end = overview_period()
         try:
-            refresh_kelkoo_feed_api_revenue(feed_tag=tag)
+            data = fetch_kelkoo_feed_api_revenue(
+                feed_tag=tag,
+                yesterday=yesterday,
+                mtd_start=mtd_start,
+                mtd_end=mtd_end,
+            )
+            data["refresh_status"] = "ok"
+            write_cached_kelkoo_feed_api_revenue(data, tag)
         except Exception:
             logger.exception("Kelkoo Feed API revenue refresh failed for %s", tag)
             try:
@@ -401,10 +471,12 @@ def queue_kelkoo_feed_api_revenue_refresh(feed_tag: str = DEFAULT_FEED_TAG) -> D
                 write_cached_kelkoo_feed_api_revenue(err, tag)
             except Exception:
                 pass
+        finally:
+            with _REFRESH_LOCK:
+                _REFRESH_IN_FLIGHT[tag] = False
+            _mark_refresh_running(tag, running=False)
 
     threading.Thread(target=_run, name=f"kelkoo-api-rev-{tag}", daemon=True).start()
-    cached = read_cached_kelkoo_feed_api_revenue(tag) or missing_kelkoo_feed_api_revenue(tag)
-    out = dict(cached)
-    out["refresh_status"] = "running"
+    out = dict(stub)
     out["queued"] = True
     return out

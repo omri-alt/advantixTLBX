@@ -69,8 +69,9 @@
                 <tr><td><code>POST /api/overview/refresh</code></td><td>Rebuild snapshot from live APIs.</td></tr>
               </tbody>
             </table>
-            <p><strong>Affiliation revenue</strong> is Keitaro conversion revenue from the <strong>1st of the current UTC month through yesterday</strong>, split by monetization network (Kelkoo 1/2/4/5, Yadore, Adexa, Shopnomix, Effinity, FlexOffers). The top <strong>Revenue</strong> and <strong>Net</strong> tiles use this same total (not a separate unsplit Keitaro report). Use the dropdown to show one affiliation’s cumulative total. Unmapped offers land in <strong>Other</strong>.</p>
+            <p><strong>Affiliation revenue</strong> is Keitaro conversion revenue from the <strong>1st of the current UTC month through yesterday</strong>, split by monetization network (Kelkoo 1/2/4/5, Yadore, Adexa, Shopnomix, Effinity, FlexOffers). The top <strong>Revenue</strong> and <strong>Net</strong> tiles use this same total. The affiliation card shows MTD/yesterday totals plus a <strong>carousel</strong> of per-feed numbers. Unmapped offers land in <strong>Other</strong>.</p>
             <p>The homepage also shows a dedicated <strong>Feed 2 revenue (API)</strong> tile next to Revenue/Net: Kelkoo publisher raw-report CPC + sales at our net share (default 70%). It auto-loads on page open (and refreshes with the scheduled overview rebuild); it does not change the top Revenue/Net totals.</p>
+            <p>Failed AutoServer jobs surface as a red banner (with consecutive failure count). Each failed run is retried once automatically before the failure is logged.</p>
             <p><strong>Caveat:</strong> Auto rebuild runs twice daily by default at <strong>11:00</strong> and <strong>16:00</strong> <code>Asia/Jerusalem</code> (<code>OVERVIEW_SCHEDULER_ENABLED</code>, <code>OVERVIEW_SNAPSHOT_HOURS</code>, <code>OVERVIEW_SNAPSHOT_TZ</code>). Legacy single-hour: <code>OVERVIEW_SNAPSHOT_HOUR</code>. After deploy, <code>OVERVIEW_SNAPSHOT_BOOTSTRAP</code> (default <code>missing</code>) rebuilds the overview if the file is absent or schema-stale (no affiliation block), and fills missing domain-demand / Blend-cap caches. Force all: <code>always</code>. Cron: <code>python cli/refresh_dashboard_snapshots.py</code>.</p>
             <p><a href="{{ url_for('ui_home') }}">Open Control Center →</a></p>
           </div>
@@ -82,13 +83,14 @@
         <details class="help-acc" open data-help-search="domain demand hub trillion">
           <summary>Homepage widget (hub campaign 94)</summary>
           <div class="help-acc-body">
-            <p>Shows live fill of the domain-demand bill for traffic into Keitaro hub <strong>94</strong> (Trillion domain buying — successor to the old Mehilot / Zeropark plan view). Demand lines come from the morning daily workflow; delivered clicks refresh from Keitaro without rebuilding demand. <strong>Refresh</strong> also resumes Trillion campaigns for geo×device segments that are underfilled (<code>RESUME_NEEDED</code>); morning daily step <strong>7g</strong> does the same after the bill is built.</p>
+            <p>The homepage shows a compact summary: total demand, supplied clicks, last update, geos under delivery (&lt;90% fill), and geos delivered all (≥90%). Open <a href="{{ url_for('ui_domain_demand') }}">Domain demand fill</a> for the full geo×device table. Demand lines come from the morning daily workflow; delivered clicks refresh from Keitaro without rebuilding demand. <strong>Refresh</strong> also resumes Trillion campaigns for underfilled segments; morning daily step <strong>7g</strong> does the same after the bill is built.</p>
             <p><strong>Yesterday review:</strong> <a href="{{ url_for('ui_trillion_yesterday_review') }}">Trillion yesterday domain review</a> — archived bill vs delivered clicks, daily budget hit check, bulk budget/CPC bumps via Trillion API.</p>
             <table>
               <thead><tr><th>Action</th><th>Description</th></tr></thead>
               <tbody>
-                <tr><td><code>GET /api/domain-demand-progress</code></td><td>Cached summary + geo × device segments (stale cache may queue a background refresh).</td></tr>
+                <tr><td><code>GET /api/domain-demand-progress</code></td><td>Cached summary + geo lists + geo × device segments.</td></tr>
                 <tr><td><code>POST /api/domain-demand-progress/refresh</code></td><td>Refresh delivered clicks and write the domain-demand sheet.</td></tr>
+                <tr><td><code>/domain-demand</code></td><td>Full geo×device table page.</td></tr>
               </tbody>
             </table>
             <p><strong>Caveat:</strong> After nightly rollover the live bill is empty until the morning daily run — the widget shows <code>awaiting_daily</code>. Sheet: <code>DOMAIN_DEMAND_SHEET_ID</code>.</p>
@@ -99,6 +101,7 @@
 
       <section class="help-group help-section" id="daily-automations" data-help-search="workflow daily keitaro blend monetization nipuhim">
         <h2>Daily automations</h2>
+        <p style="font-size:14px;color:#9aa4b2;margin:0 0 12px;">The homepage lists <strong>Daily workflow (v2)</strong> and <strong>Blend Workflow</strong> only. Other workflows (legacy daily, Keitaro sync, detach, stop-closed, monetization check) remain available via their workflow URLs below / Help. Matchmaking is under Tools.</p>
         <p style="font-size:14px;color:#9aa4b2;margin:0 0 12px;">Each workflow runs a Python script with optional CLI args. The UI builds args from templates + optional fields + free-text <code>extra_args</code>.</p>
 
         {% for key, wf in workflows.items() %}
@@ -403,12 +406,14 @@ python scripts/keitaro_feed_balance_checkmon_sync.py --campaign-id 60</pre>
             <table>
               <thead><tr><th>API</th><th>Purpose</th></tr></thead>
               <tbody>
-                <tr><td><code>GET /api/automations</code></td><td>Status + last run per job.</td></tr>
+                <tr><td><code>GET /api/automations</code></td><td>Status + last run per job (includes consecutive_failures).</td></tr>
+                <tr><td><code>GET /api/automations/failures</code></td><td>Jobs whose latest run failed (homepage banner).</td></tr>
                 <tr><td><code>GET /api/automations/log?limit=20</code></td><td>Recent run log entries.</td></tr>
                 <tr><td><code>GET /api/automations/trigger/all</code></td><td>202 — queue all <code>run_manually</code>.</td></tr>
                 <tr><td><code>GET /api/automations/trigger/&lt;ClassName&gt;</code></td><td>202 — queue one job.</td></tr>
               </tbody>
             </table>
+            <p>On failure, <code>BaseAutomation._wrap_run</code> retries the job <strong>once</strong> immediately, then logs the final outcome (<code>retried: true</code> when a retry happened). The homepage shows a banner with consecutive failure streaks.</p>
             <p>Run log file: <code>data/autoserver_run_log.json</code> (trimmed to <code>AUTOSERVER_RUN_LOG_MAX</code>). Disable scheduler on extra Gunicorn workers: <code>AUTOSERVER_SCHEDULER_ENABLED=0</code>.</p>
             <p><a href="{{ url_for('ui_automations') }}">Open automations UI →</a></p>
           </div>

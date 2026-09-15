@@ -143,6 +143,59 @@ def _normalize_segments(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return segs
 
 
+def geo_fill_lists(
+    segments: List[Dict[str, Any]],
+    *,
+    ok_threshold: float = 90.0,
+) -> Dict[str, Any]:
+    """
+    Aggregate geo×device segments by geo and split into under-delivery vs delivered-all.
+
+    Under: fill < ``ok_threshold`` (default 90%). Delivered all: fill ≥ threshold.
+    Geos with no demand are omitted.
+    """
+    by_geo: Dict[str, Dict[str, float]] = {}
+    for s in segments or []:
+        geo = str(s.get("geo") or "").strip().lower()
+        if not geo:
+            continue
+        demand = float(s.get("demand_clicks") or 0)
+        delivered = float(s.get("delivered_clicks") or 0)
+        if demand <= 0 and delivered <= 0:
+            continue
+        bucket = by_geo.setdefault(geo, {"demand": 0.0, "delivered": 0.0})
+        bucket["demand"] += demand
+        bucket["delivered"] += delivered
+
+    under: List[Dict[str, Any]] = []
+    ok: List[Dict[str, Any]] = []
+    for geo, b in sorted(by_geo.items()):
+        demand = float(b["demand"])
+        delivered = float(b["delivered"])
+        if demand <= 0:
+            continue
+        pct = round(100.0 * delivered / demand, 1)
+        row = {
+            "geo": geo,
+            "demand_clicks": int(round(demand)),
+            "delivered_clicks": int(round(delivered)),
+            "remaining": int(round(max(0.0, demand - delivered))),
+            "fill_pct": pct,
+            "level": _level_for_fill(pct),
+        }
+        if pct >= ok_threshold:
+            ok.append(row)
+        else:
+            under.append(row)
+    under.sort(key=lambda r: (float(r.get("fill_pct") or 0), str(r.get("geo") or "")))
+    ok.sort(key=lambda r: (-float(r.get("fill_pct") or 0), str(r.get("geo") or "")))
+    return {
+        "under_geos": under,
+        "ok_geos": ok,
+        "ok_threshold": ok_threshold,
+    }
+
+
 def _totals_block(summary: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     def one(key: str) -> Dict[str, Any]:
         r = summary.get(key) or {}
@@ -231,6 +284,7 @@ def _ui_payload_from_raw(raw: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
     summary = _summary_index(list(raw.get("summary") or []))
     segments = _normalize_segments(list(raw.get("summary_by_geo") or []))
     totals = _totals_block(summary)
+    geo_lists = geo_fill_lists(segments)
     errors: List[str] = []
     if raw.get("error"):
         errors.append(str(raw["error"]))
@@ -248,6 +302,9 @@ def _ui_payload_from_raw(raw: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
         "reason": reason,
         "totals": totals,
         "segments": segments,
+        "under_geos": geo_lists["under_geos"],
+        "ok_geos": geo_lists["ok_geos"],
+        "ok_threshold": geo_lists["ok_threshold"],
         "errors": errors,
         "logs": raw.get("logs") or [],
         "sheet_id": (DOMAIN_DEMAND_SHEET_ID or "").strip(),
@@ -345,6 +402,12 @@ def get_api_payload(*, allow_background_refresh: bool = True) -> Dict[str, Any]:
     }
     if data:
         out.update(data)
+        # Backfill geo lists for older caches that predate the summary fields.
+        if "under_geos" not in out or "ok_geos" not in out:
+            geo_lists = geo_fill_lists(list(out.get("segments") or []))
+            out["under_geos"] = geo_lists["under_geos"]
+            out["ok_geos"] = geo_lists["ok_geos"]
+            out["ok_threshold"] = geo_lists["ok_threshold"]
     else:
         out.update(
             {
@@ -352,6 +415,9 @@ def get_api_payload(*, allow_background_refresh: bool = True) -> Dict[str, Any]:
                 "calendar_day": None,
                 "segments": [],
                 "totals": {},
+                "under_geos": [],
+                "ok_geos": [],
+                "ok_threshold": 90.0,
                 "errors": ["No cached domain-demand progress yet"],
                 "hub_campaign_id": int(KEITARO_HUB_CAMPAIGN_ID),
             }

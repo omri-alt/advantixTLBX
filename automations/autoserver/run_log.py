@@ -33,6 +33,7 @@ def append_run(
     finished_at: datetime,
     status: str,
     error: Optional[str],
+    retried: bool = False,
 ) -> None:
     entry: Dict[str, Any] = {
         "automation": automation,
@@ -42,6 +43,8 @@ def append_run(
         "status": status,
         "error": error,
     }
+    if retried:
+        entry["retried"] = True
     path = _log_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
@@ -100,4 +103,61 @@ def last_run_by_automation() -> Dict[str, Dict[str, Any]]:
         name = str(row.get("automation") or "")
         if name and name not in out:
             out[name] = row
+    return out
+
+
+def consecutive_failures_by_automation() -> Dict[str, int]:
+    """
+    Count trailing ``error`` runs per automation (newest first until a ``success``).
+    """
+    path = _log_path()
+    if not path.exists():
+        return {}
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(rows, list):
+        return {}
+    counts: Dict[str, int] = {}
+    done: set[str] = set()
+    for row in reversed(rows):
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("automation") or "")
+        if not name or name in done:
+            continue
+        st = str(row.get("status") or "").strip().lower()
+        if st == "error":
+            counts[name] = int(counts.get(name) or 0) + 1
+            continue
+        if st == "success":
+            done.add(name)
+            counts.setdefault(name, 0)
+            continue
+        # Unknown status — stop counting for this automation.
+        done.add(name)
+        counts.setdefault(name, 0)
+    return counts
+
+
+def failed_automations_summary() -> List[Dict[str, Any]]:
+    """Automations whose newest run is ``error``, with consecutive failure streak."""
+    last_map = last_run_by_automation()
+    streaks = consecutive_failures_by_automation()
+    out: List[Dict[str, Any]] = []
+    for name, lr in last_map.items():
+        if str((lr or {}).get("status") or "").strip().lower() != "error":
+            continue
+        out.append(
+            {
+                "class_name": name,
+                "error": (lr or {}).get("error"),
+                "finished_at": (lr or {}).get("finished_at"),
+                "triggered_by": (lr or {}).get("triggered_by"),
+                "retried": bool((lr or {}).get("retried")),
+                "consecutive_failures": int(streaks.get(name) or 1),
+            }
+        )
+    out.sort(key=lambda r: (-int(r.get("consecutive_failures") or 0), str(r.get("class_name") or "")))
     return out

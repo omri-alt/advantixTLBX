@@ -89,6 +89,60 @@
     .ov-feed2-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-top: 8px; }
     .ov-feed2-note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.35; }
     .ov-feed2 .err { font-size: 11px; color: #fdba74; margin-top: 8px; }
+    .ov-affil-carousel { display: flex; align-items: stretch; gap: 10px; margin-top: 10px; }
+    .ov-affil-carousel .nav {
+      border: 1px solid var(--line); background: #17223a; color: var(--text);
+      border-radius: 10px; width: 36px; cursor: pointer; font: inherit; font-size: 18px;
+    }
+    .ov-affil-carousel .nav:disabled { opacity: 0.4; cursor: not-allowed; }
+    .ov-affil-slide {
+      flex: 1; border: 1px solid var(--line); border-radius: 12px; background: #0f172a;
+      padding: 12px 14px; min-height: 88px;
+    }
+    .ov-affil-slide .feed-name { font-size: 14px; font-weight: 600; color: #cbd5e1; margin: 0 0 8px; }
+    .ov-affil-slide .feed-metrics { display: flex; gap: 20px; flex-wrap: wrap; }
+    .ov-affil-dots { display: flex; gap: 6px; justify-content: center; margin-top: 10px; }
+    .ov-affil-dots button {
+      width: 8px; height: 8px; border-radius: 50%; border: 0; padding: 0;
+      background: #334155; cursor: pointer;
+    }
+    .ov-affil-dots button.on { background: var(--accent); }
+    .dd-summary {
+      border: 1px solid var(--line); border-radius: 12px; background: #151f33;
+      padding: 12px 14px; margin: 0 0 12px;
+    }
+    .dd-summary-head {
+      display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 10px;
+    }
+    .dd-summary-head h3 { margin: 0; font-size: 14px; font-weight: 600; color: #cbd5e1; }
+    .dd-summary-head .btn { margin-left: auto; }
+    .dd-metrics {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px;
+      margin-bottom: 10px;
+    }
+    .dd-metric .lbl { font-size: 11px; color: var(--muted); }
+    .dd-metric .val { font-size: 18px; font-weight: 700; margin-top: 2px; }
+    .dd-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 720px) { .dd-lists { grid-template-columns: 1fr; } }
+    .dd-list h4 { margin: 0 0 6px; font-size: 12px; color: #cbd5e1; }
+    .dd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .dd-chip {
+      display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px;
+      background: #1e293b; border: 1px solid var(--line); color: #e2e8f0;
+    }
+    .dd-chip.under { border-color: rgba(245,158,11,.45); color: #fcd34d; }
+    .dd-chip.ok { border-color: rgba(34,197,94,.35); color: #86efac; }
+    .as-fail-banner {
+      display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
+      margin: 0 0 14px; padding: 12px 14px; border-radius: 12px;
+      border: 1px solid rgba(239,68,68,.4); background: rgba(239,68,68,.12); color: #fecaca;
+    }
+    .as-fail-banner[hidden] { display: none !important; }
+    .as-fail-banner a { color: #93c5fd; }
+    .as-fail-banner .pb-dismiss {
+      border: 0; background: transparent; color: #fecaca; font-size: 18px; cursor: pointer; line-height: 1;
+    }
+
     .ov-row-costs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
     .ov-affil {
       margin: 0 0 12px;
@@ -206,6 +260,10 @@
       <span class="pb-msg" id="sk-wl-sync-text"></span>
       <button type="button" class="pb-dismiss" id="sk-wl-sync-dismiss" aria-label="Dismiss notice">×</button>
     </div>
+    <div id="as-fail-banner" class="as-fail-banner" role="alert" aria-live="polite" hidden>
+      <span class="pb-msg" id="as-fail-text"></span>
+      <button type="button" class="pb-dismiss" id="as-fail-dismiss" aria-label="Dismiss notice">×</button>
+    </div>
     <div class="hero">
       <div>
         <h1 class="title">KLblend Control Center</h1>
@@ -241,32 +299,30 @@
     </section>
 
     <section class="blend-cap" id="domain-demand-widget" aria-live="polite">
-      <details class="bc-panel" id="domain-demand-details" open>
-        <summary>
-          <span class="bc-summary-title">Domain demand fill (hub 94)</span>
-          <span class="bc-summary-stats" id="domain-demand-summary-line">Loading…</span>
-          <a class="btn btn-sm" href="{{ url_for('ui_trillion_yesterday_review') }}" style="text-decoration:none;" onclick="event.stopPropagation();">Yesterday review</a>
-          <button type="button" class="btn btn-sm" id="domain-demand-refresh-btn" title="Refresh delivered clicks from Keitaro" onclick="event.stopPropagation();">Refresh</button>
-        </summary>
-        <div class="bc-panel-body">
-          <p class="muted" style="margin:10px 0;font-size:13px;max-width:860px;">
-            Live Trillion domain traffic into Keitaro hub campaign 94 vs today’s demand bill (replaces the old Mehilot / Zeropark plan widget).
-            <a href="{{ url_for('ui_trillion_yesterday_review') }}" style="color:#93c5fd;font-size:12px;margin-left:8px;">Yesterday underdelivery review →</a>
-            <span class="bc-pill green" style="vertical-align:middle;">≥90%</span>
-            <span class="bc-pill yellow" style="vertical-align:middle;">50–89%</span>
-            <span class="bc-pill red" style="vertical-align:middle;">&lt;50%</span>
-            <a href="{{ url_for('ui_help') }}#domain-demand" style="color:#6b7280;font-size:12px;margin-left:6px;">?</a>
-          </p>
-          <div class="bc-actions" style="margin-bottom:10px;">
-            <span class="muted" id="domain-demand-totals" style="font-size:12px;"></span>
-            <span class="muted" id="domain-demand-meta"></span>
+      <div class="dd-summary" id="domain-demand-summary">
+        <div class="dd-summary-head">
+          <h3>Domain demand fill (hub 94)</h3>
+          <a class="btn btn-sm" href="{{ url_for('ui_domain_demand') }}" style="text-decoration:none;">See full list →</a>
+          <button type="button" class="btn btn-sm" id="domain-demand-refresh-btn" title="Refresh delivered clicks from Keitaro">Refresh</button>
+        </div>
+        <div class="dd-metrics" id="domain-demand-metrics">
+          <div class="dd-metric"><div class="lbl">Demand today</div><div class="val" id="dd-demand">—</div></div>
+          <div class="dd-metric"><div class="lbl">Supplied</div><div class="val" id="dd-supplied">—</div></div>
+          <div class="dd-metric"><div class="lbl">Last update</div><div class="val" id="dd-updated" style="font-size:13px;font-weight:600;">—</div></div>
+        </div>
+        <div class="dd-lists">
+          <div class="dd-list">
+            <h4>Under delivery (&lt;90%)</h4>
+            <div class="dd-chips" id="dd-under">Loading…</div>
           </div>
-          <div id="domain-demand-err" class="bc-err" style="display:none;"></div>
-          <div class="blend-cap-table-wrap">
-            <div id="domain-demand-body" class="bc-empty">Loading domain demand…</div>
+          <div class="dd-list">
+            <h4>Delivered all (≥90%)</h4>
+            <div class="dd-chips" id="dd-ok">Loading…</div>
           </div>
         </div>
-      </details>
+        <div id="domain-demand-err" class="bc-err" style="display:none;margin-top:10px;"></div>
+        <div class="muted" id="domain-demand-meta" style="font-size:12px;margin-top:8px;"></div>
+      </div>
     </section>
 
     <section class="tools-section" aria-label="Tools">
@@ -293,6 +349,9 @@
         <a class="ql-card" href="{{ url_for('ui_trillion_yesterday_review') }}">
           <h3>Trillion yesterday review</h3>
         </a>
+        <a class="ql-card" href="{{ url_for('ui_domain_demand') }}">
+          <h3>Domain demand fill</h3>
+        </a>
         <a class="ql-card" href="{{ url_for('ui_matchmaking_hub') }}">
           <h3>Matchmaking</h3>
         </a>
@@ -301,6 +360,7 @@
 
     <section class="automations-section" aria-label="Daily automations">
       <h2 class="section-title">Daily automations</h2>
+      <p class="section-lead">Daily v2 and Blend. Matchmaking and other workflows are under Tools / Help.</p>
     </section>
 
     <div class="grid">
@@ -387,6 +447,8 @@
     var keitaro2ApiPollTimer = null;
     var keitaro2ApiBootstrapped = false;
 
+    var affCarouselIndex = 0;
+
     function renderAffiliation(aff, ranges) {
       var el = document.getElementById("tile-affiliation");
       if (!el) return;
@@ -398,61 +460,45 @@
       var err = aff.error || null;
       var sel = selectedAffiliationId();
       if (sel !== "all" && !rows.some(function(r) { return r.id === sel; })) sel = "all";
-      var y = aff.yesterday;
-      var m = aff.mtd;
-      var label = "All affiliations";
       if (sel !== "all") {
         for (var i = 0; i < rows.length; i++) {
-          if (rows[i].id === sel) {
-            y = rows[i].yesterday;
-            m = rows[i].mtd;
-            label = rows[i].label;
-            break;
-          }
+          if (rows[i].id === sel) { affCarouselIndex = i; break; }
         }
       }
-      var opts = '<option value="all"' + (sel === "all" ? " selected" : "") + ">All affiliations</option>";
-      rows.forEach(function(r) {
-        opts +=
-          '<option value="' + r.id + '"' + (sel === r.id ? " selected" : "") + ">" +
-          r.label +
-          "</option>";
-      });
+      if (affCarouselIndex >= rows.length) affCarouselIndex = 0;
+      if (affCarouselIndex < 0) affCarouselIndex = 0;
+      var y = aff.yesterday;
+      var m = aff.mtd;
       var from = (ranges && ranges.mtd_from) || "";
       var to = (ranges && ranges.mtd_to) || "";
       var windowLbl = from && to ? from + " → " + to : "1st of month through yesterday";
-      var tableRows = rows
-        .map(function(r) {
-          var cls = r.id === sel ? ' class="sel"' : "";
-          return (
-            "<tr" + cls + ">" +
-              "<td>" + r.label + "</td>" +
-              '<td class="num">' + money(r.yesterday) + "</td>" +
-              '<td class="num">' + money(r.mtd) + "</td>" +
-            "</tr>"
-          );
-        })
-        .join("");
-      tableRows +=
-        '<tr class="total">' +
-          "<td>Total (Keitaro)</td>" +
-          '<td class="num">' + money(aff.yesterday) + "</td>" +
-          '<td class="num">' + money(aff.mtd) + "</td>" +
-        "</tr>";
+      var slide = rows.length ? rows[affCarouselIndex] : null;
+      var slideHtml = "";
+      if (slide) {
+        slideHtml =
+          '<div class="ov-affil-slide">' +
+            '<div class="feed-name">' + slide.label + "</div>" +
+            '<div class="feed-metrics">' +
+              "<div><div class=\"lbl\">Yesterday</div><div class=\"sub\">" + money(slide.yesterday) + "</div></div>" +
+              "<div><div class=\"lbl\">MTD</div><div class=\"sub\">" + money(slide.mtd) + "</div></div>" +
+            "</div>" +
+          "</div>";
+      } else {
+        slideHtml = '<div class="ov-affil-slide"><div class="muted">No affiliation rows yet.</div></div>';
+      }
+      var dots = rows.map(function(r, idx) {
+        return '<button type="button" data-aff-dot="' + idx + '" class="' + (idx === affCarouselIndex ? "on" : "") + '" title="' + r.label + '"></button>';
+      }).join("");
       var errHtml = err ? '<div class="err">Error: ' + String(err).slice(0, 200) + "</div>" : "";
-      var emptyNote = !rows.length && !err
-        ? '<div class="muted" style="font-size:12px;margin-top:8px;">No affiliation split in this snapshot yet — use Refresh.</div>'
-        : "";
       el.innerHTML =
         '<div class="ov-affil' + (err ? " has-err" : "") + '">' +
           '<div class="ov-affil-head">' +
             "<h4>Affiliation revenue (Keitaro)</h4>" +
-            '<label>Show <select id="overview-affil-select">' + opts + "</select></label>" +
             '<button type="button" class="btn btn-sm" id="overview-affil-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh</button>' +
           "</div>" +
           '<div class="ov-affil-total">' +
             "<div>" +
-              '<div class="lbl">Cumulative MTD · ' + label + "</div>" +
+              '<div class="lbl">Cumulative MTD · All</div>' +
               '<div class="amt">' + money(m) + "</div>" +
             "</div>" +
             "<div>" +
@@ -464,20 +510,29 @@
               '<div class="sub">' + windowLbl + "</div>" +
             "</div>" +
           "</div>" +
-          "<table>" +
-            "<thead><tr><th>Affiliation</th><th class=\"num\">Yesterday</th><th class=\"num\">MTD</th></tr></thead>" +
-            "<tbody>" + tableRows + "</tbody>" +
-          "</table>" +
-          emptyNote +
+          '<div class="ov-affil-carousel">' +
+            '<button type="button" class="nav" id="aff-prev" ' + (rows.length < 2 ? "disabled" : "") + ">‹</button>" +
+            slideHtml +
+            '<button type="button" class="nav" id="aff-next" ' + (rows.length < 2 ? "disabled" : "") + ">›</button>" +
+          "</div>" +
+          (dots ? '<div class="ov-affil-dots">' + dots + "</div>" : "") +
           errHtml +
         "</div>";
-      var selEl = document.getElementById("overview-affil-select");
-      if (selEl) {
-        selEl.addEventListener("change", function() {
-          try { localStorage.setItem(AFFIL_SELECT_KEY, selEl.value || "all"); } catch (e) {}
-          renderAffiliation(keitaroAffState || aff, keitaroAffRanges || ranges);
-        });
+      function go(idx) {
+        if (!rows.length) return;
+        affCarouselIndex = (idx + rows.length) % rows.length;
+        try { localStorage.setItem(AFFIL_SELECT_KEY, rows[affCarouselIndex].id); } catch (e) {}
+        renderAffiliation(keitaroAffState || aff, keitaroAffRanges || ranges);
       }
+      var prev = document.getElementById("aff-prev");
+      var next = document.getElementById("aff-next");
+      if (prev) prev.addEventListener("click", function() { go(affCarouselIndex - 1); });
+      if (next) next.addEventListener("click", function() { go(affCarouselIndex + 1); });
+      el.querySelectorAll("[data-aff-dot]").forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          go(parseInt(btn.getAttribute("data-aff-dot"), 10) || 0);
+        });
+      });
     }
 
     function renderFeed2ApiTile() {
@@ -554,11 +609,17 @@
       keitaro2ApiPollTimer = setInterval(function() {
         fetchKelkoo2ApiState()
           .then(function(payload) {
-            var st = payload && payload.data ? payload.data.refresh_status : (payload && payload.refresh_status);
-            if (st && st !== "running") stopKelkoo2ApiPoll();
+            var data = payload && payload.data ? payload.data : payload;
+            var st = data && data.refresh_status;
+            if (st && st !== "running") {
+              stopKelkoo2ApiPoll();
+              if (data && data.mtd == null && st === "missing") {
+                keitaro2ApiBootstrapped = false;
+              }
+            }
           })
           .catch(function() {});
-      }, 4000);
+      }, 3000);
     }
 
     function queueKelkoo2ApiRefresh() {
@@ -603,7 +664,7 @@
           var gotFrom = data && data.ranges ? data.ranges.mtd_from : "";
           var gotTo = data && data.ranges ? data.ranges.mtd_to : "";
           var staleWindow = !!(wantFrom && wantTo && (gotFrom !== wantFrom || gotTo !== wantTo));
-          if (st === "missing" || staleWindow || (data && data.mtd == null && st !== "running")) {
+          if (st === "missing" || staleWindow || (data && data.mtd == null && st !== "running" && st !== "error")) {
             return queueKelkoo2ApiRefresh();
           }
           if (st === "running") startKelkoo2ApiPoll();
@@ -622,9 +683,12 @@
     }
 
     function bootstrapFeed2ApiTile() {
-      if (kelkoo2ApiBootstrapped) return;
+      // Re-ensure whenever we still have no MTD numbers (overview refresh can race the first load).
+      if (kelkoo2ApiBootstrapped && keitaro2ApiState && keitaro2ApiState.mtd != null) return;
+      if (kelkoo2ApiBootstrapped && keitaro2ApiState && keitaro2ApiState.refresh_status === "running") return;
+      if (kelkoo2ApiBootstrapped && keitaro2ApiState && keitaro2ApiState.refresh_status === "error") return;
       keitaro2ApiBootstrapped = true;
-      ensureKelkoo2ApiLoaded();
+      ensureKijiji2ApiLoaded();
     }
 
     var failEl = document.getElementById("overview-fail");
@@ -650,6 +714,9 @@
     var AFFIL_SELECT_KEY = "klblend-overview-affiliation";
 
     if (!rangesEl || !failEl) return;
+
+    // Feed 2 API tile loads independently of the overview snapshot.
+    setTimeout(function() { bootstrapFeed2ApiTile(); }, 0);
 
     if (snapHintEl) {
       var hrs = Array.isArray(ovHrs) && ovHrs.length ? ovHrs : [11, 16];
@@ -1050,144 +1117,59 @@
   <script>
   (function() {
     var metaEl = document.getElementById("domain-demand-meta");
-    var totalsEl = document.getElementById("domain-demand-totals");
-    var summaryLine = document.getElementById("domain-demand-summary-line");
-    var bodyEl = document.getElementById("domain-demand-body");
     var errEl = document.getElementById("domain-demand-err");
     var refreshBtn = document.getElementById("domain-demand-refresh-btn");
+    var demandEl = document.getElementById("dd-demand");
+    var suppliedEl = document.getElementById("dd-supplied");
+    var updatedEl = document.getElementById("dd-updated");
+    var underEl = document.getElementById("dd-under");
+    var okEl = document.getElementById("dd-ok");
     var apiUrl = {{ url_for("api_domain_demand_progress") | tojson }};
     var refreshUrl = {{ url_for("api_domain_demand_progress_refresh") | tojson }};
     var pollMs = 20 * 60 * 1000;
-    var lastData = null;
+    if (!metaEl || !underEl) return;
 
-    if (!metaEl || !bodyEl) return;
-
-    function esc(s) {
-      return String(s == null ? "" : s)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-    }
-
-    function barWidth(pct) {
-      if (pct == null || isNaN(pct)) return 0;
-      return Math.max(0, Math.min(100, pct));
-    }
-
-    function fmtFill(block) {
-      if (!block) return "—";
-      var pct = block.fill_pct;
-      var d = block.demand_clicks || 0;
-      var g = block.delivered_clicks || 0;
-      if (!d && !g) return "—";
-      return g + "/" + d + (pct != null ? " (" + pct + "%)" : "");
-    }
-
-    function renderSummary(data) {
-      var parts = [];
-      if (data && data.calendar_day) parts.push(data.calendar_day);
-      if (data && data.status === "awaiting_daily") {
-        parts.push("awaiting morning bill");
-      } else {
-        var segs = (data && data.segments) || [];
-        var counts = { green: 0, yellow: 0, red: 0 };
-        segs.forEach(function(s) {
-          if ((s.demand_clicks || 0) <= 0) return;
-          var lvl = s.level || "none";
-          if (counts[lvl] != null) counts[lvl] += 1;
-        });
-        parts.push("green " + counts.green + " · yellow " + counts.yellow + " · red " + counts.red);
-        if (data && data.trillion_hint) parts.push("hub " + data.trillion_hint);
-      }
-      if (data && data.trillion_resume && (data.trillion_resume.resumed || 0) > 0) {
-        parts.push("resumed " + data.trillion_resume.resumed + " Trillion segment(s)");
-      }
-      if (data && data.updated_at) {
-        parts.push("updated " + String(data.updated_at).replace("T", " ").replace("Z", " UTC"));
-      }
-      if (summaryLine) summaryLine.textContent = parts.join(" · ");
-    }
-
-    function renderTotals(data) {
-      if (!totalsEl) return;
-      var t = (data && data.totals) || {};
-      totalsEl.textContent =
-        "Hub " + fmtFill(t.hub) +
-        " · Nipuhim " + fmtFill(t.nipuhim) +
-        " · Blend " + fmtFill(t.blend);
-    }
-
-    function renderTable(data) {
-      if (data && data.status === "awaiting_daily") {
-        bodyEl.className = "bc-empty";
-        bodyEl.textContent = (data.message || "Awaiting morning domain-demand bill.") +
-          " Refresh after the daily workflow runs.";
-        return;
-      }
-      var segs = ((data && data.segments) || []).filter(function(s) {
-        return (s.demand_clicks || 0) > 0 || (s.delivered_clicks || 0) > 0;
-      });
-      if (!segs.length) {
-        bodyEl.className = "bc-empty";
-        bodyEl.textContent = "No geo × device demand segments yet.";
-        return;
-      }
-      var rows = segs.map(function(s) {
-        var pct = s.fill_pct;
-        var lvl = s.level || "none";
-        var bw = barWidth(pct);
-        return (
-          "<tr>" +
-          "<td>" + esc((s.geo || "").toUpperCase()) + "</td>" +
-          "<td>" + esc(s.device || "") + "</td>" +
-          '<td class="num">' + esc(s.demand_clicks) + "</td>" +
-          '<td class="num">' + esc(s.delivered_clicks) + "</td>" +
-          '<td class="num">' + esc(s.remaining) + "</td>" +
-          '<td class="num">' + (pct != null ? esc(pct) + "%" : "—") + "</td>" +
-          "<td><span class=\"bc-pill " + esc(lvl) + "\">" + esc(lvl) + "</span></td>" +
-          "<td><div class=\"bc-bar\"><span class=\"" + esc(lvl) + "\" style=\"width:" + bw + "%\"></span></div></td>" +
-          "<td>" + esc(s.trillion_status || "—") + "</td>" +
-          "<td>" + esc(s.trillion_hint || "") +
-          (s.trillion_hint === "RESUME_NEEDED" ? " <span class=\"muted\">(click Refresh)</span>" : "") +
-          "</td>" +
-          "</tr>"
-        );
+    function chips(list, cls) {
+      if (!list || !list.length) return '<span class="muted">None</span>';
+      return list.map(function(g) {
+        var pct = g.fill_pct != null ? g.fill_pct + "%" : "";
+        return '<span class="dd-chip ' + cls + '">' +
+          String(g.geo || "").toUpperCase() +
+          (pct ? " " + pct : "") +
+          "</span>";
       }).join("");
-      bodyEl.className = "";
-      bodyEl.innerHTML =
-        "<table><thead><tr>" +
-        "<th>Geo</th><th>Device</th>" +
-        '<th class="num">Demand</th><th class="num">Delivered</th><th class="num">Left</th><th class="num">Filled</th>' +
-        "<th>Level</th><th>Progress</th><th>Trillion</th><th>Hint</th>" +
-        "</tr></thead><tbody>" + rows + "</tbody></table>";
-    }
-
-    function renderMeta(data) {
-      var parts = [];
-      if (data && data.hub_campaign_id) parts.push("campaign " + data.hub_campaign_id);
-      if (data && data.stale) parts.push("stale cache");
-      if (data && data.refresh_queued) parts.push("background refresh queued");
-      metaEl.textContent = parts.join(" · ") || "";
-    }
-
-    function renderErrors(data) {
-      var errs = (data && data.errors) || [];
-      if (!errs.length) {
-        errEl.style.display = "none";
-        errEl.textContent = "";
-        return;
-      }
-      errEl.style.display = "block";
-      errEl.textContent = errs.join(" · ");
     }
 
     function paint(data) {
-      lastData = data;
-      renderSummary(data);
-      renderTotals(data);
-      renderMeta(data);
-      renderErrors(data);
-      renderTable(data);
+      var t = (data && data.totals && data.totals.hub) || {};
+      if (demandEl) demandEl.textContent = t.demand_clicks != null ? t.demand_clicks : "—";
+      if (suppliedEl) suppliedEl.textContent = t.delivered_clicks != null ? t.delivered_clicks : "—";
+      var updated = (data && (data.updated_at || data.cache_saved_utc)) || "";
+      if (updatedEl) {
+        updatedEl.textContent = updated
+          ? String(updated).replace("T", " ").replace("Z", " UTC")
+          : "—";
+      }
+      if (data && data.status === "awaiting_daily") {
+        underEl.innerHTML = '<span class="muted">Awaiting morning bill</span>';
+        okEl.innerHTML = '<span class="muted">—</span>';
+      } else {
+        underEl.innerHTML = chips(data.under_geos || [], "under");
+        okEl.innerHTML = chips(data.ok_geos || [], "ok");
+      }
+      var parts = [];
+      if (data && data.calendar_day) parts.push(data.calendar_day);
+      if (data && data.stale) parts.push("stale cache");
+      if (data && data.refresh_queued) parts.push("background refresh queued");
+      metaEl.textContent = parts.join(" · ");
+      var errs = (data && data.errors) || [];
+      if (errs.length) {
+        errEl.style.display = "block";
+        errEl.textContent = errs.join(" · ");
+      } else {
+        errEl.style.display = "none";
+        errEl.textContent = "";
+      }
     }
 
     function load() {
@@ -1196,18 +1178,20 @@
           if (!r.ok) throw new Error("HTTP " + r.status);
           return r.json();
         })
-        .then(function(data) { paint(data); })
+        .then(paint)
         .catch(function(e) {
           metaEl.textContent = "Could not load";
-          bodyEl.className = "bc-empty";
-          bodyEl.textContent = "Failed to load: " + (e && e.message ? e.message : String(e));
+          underEl.innerHTML = '<span class="muted">Failed</span>';
+          if (errEl) {
+            errEl.style.display = "block";
+            errEl.textContent = e && e.message ? e.message : String(e);
+          }
         });
     }
 
     if (refreshBtn) {
       refreshBtn.addEventListener("click", function(ev) {
         ev.preventDefault();
-        ev.stopPropagation();
         refreshBtn.disabled = true;
         metaEl.textContent = "Refreshing…";
         fetch(refreshUrl, {
@@ -1223,10 +1207,12 @@
             }
             return r.json();
           })
-          .then(function(data) { paint(data); })
+          .then(paint)
           .catch(function(e) {
-            errEl.style.display = "block";
-            errEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
+            if (errEl) {
+              errEl.style.display = "block";
+              errEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
+            }
             return load();
           })
           .finally(function() { refreshBtn.disabled = false; });
@@ -1235,6 +1221,67 @@
 
     load();
     setInterval(load, pollMs);
+  })();
+  </script>
+  <script>
+  (function() {
+    var banner = document.getElementById("as-fail-banner");
+    var textEl = document.getElementById("as-fail-text");
+    var dismissBtn = document.getElementById("as-fail-dismiss");
+    if (!banner || !textEl) return;
+    var url = {{ url_for("api_automations_failures") | tojson }};
+    var automationsUrl = {{ url_for("ui_automations") | tojson }};
+    var lsKey = "klblend-as-fail-dismiss";
+
+    function show(failures) {
+      if (!failures || !failures.length) {
+        banner.setAttribute("hidden", "hidden");
+        return;
+      }
+      var sig = failures.map(function(f) {
+        return f.class_name + ":" + (f.consecutive_failures || 1) + ":" + (f.finished_at || "");
+      }).join("|");
+      try {
+        if (sessionStorage.getItem(lsKey) === sig) {
+          banner.setAttribute("hidden", "hidden");
+          return;
+        }
+      } catch (e) {}
+      var lines = failures.slice(0, 6).map(function(f) {
+        var n = f.consecutive_failures || 1;
+        var label = f.label || f.class_name;
+        var err = f.error ? String(f.error).slice(0, 120) : "failed";
+        return "<strong>" + label + "</strong> failed " + n + " time" + (n === 1 ? "" : "s") +
+          " in a row — " + err;
+      }).join("<br>");
+      if (failures.length > 6) {
+        lines += "<br>+" + (failures.length - 6) + " more";
+      }
+      textEl.innerHTML =
+        lines +
+        ' · <a href="' + automationsUrl + '">Open AutoServer →</a>';
+      banner.removeAttribute("hidden");
+      banner.setAttribute("data-sig", sig);
+    }
+
+    fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data) return;
+        show(data.failures || []);
+      })
+      .catch(function() {});
+
+    if (dismissBtn) {
+      dismissBtn.addEventListener("click", function() {
+        try {
+          sessionStorage.setItem(lsKey, banner.getAttribute("data-sig") || "1");
+        } catch (e) {}
+        banner.setAttribute("hidden", "hidden");
+      });
+    }
+  })();
+  </script>
   })();
   </script>
 </body>

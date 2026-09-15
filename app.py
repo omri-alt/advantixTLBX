@@ -99,7 +99,12 @@ from integrations.ecomnia_console import (
 )
 from integrations.ecomnia_run_history import load_state, record_run, update_cache
 from automations.autoserver import AUTOMATION_SPECS
-from automations.autoserver.run_log import last_run_by_automation, read_entries_newest_first
+from automations.autoserver.run_log import (
+    consecutive_failures_by_automation,
+    failed_automations_summary,
+    last_run_by_automation,
+    read_entries_newest_first,
+)
 from scheduler.autoserver_scheduler import (
     ensure_automations_initialized,
     get_automation_listeners,
@@ -492,6 +497,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             "(NIPUHIM-feed* under hub 94), Blend — one subprocess per stage."
         ),
         "group": "daily-automations",
+        "show_on_home": True,
         "args_hint": "Rare flags only, e.g. --dry-run --skip-late-sales --feed1-traffic-only",
         "args_templates": [],
     },
@@ -504,6 +510,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             "Nipuhim → NIPUHIM-feed* (hub 94). Use if staged v2 has issues."
         ),
         "group": "daily-automations",
+        "show_on_home": False,
         "args_hint": "Rare flags only, e.g. --dry-run --skip-late-sales --feed1-traffic-only",
         "args_templates": [],
     },
@@ -512,6 +519,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "script": "run_keitaro_sync_v2.py",
         "description": "Sync offers sheets into NIPUHIM-feed* hub children only (device flows). Legacy HrQBXp unchanged.",
         "group": "daily-automations",
+        "show_on_home": False,
         "args_hint": "Optional: --date YYYY-MM-DD --feed1-traffic-only",
         "args_templates": [
             {"label": "Default (today)", "value": ""},
@@ -524,6 +532,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "script": "run_keitaro_sync.py",
         "description": "Sync offers from sheets to Keitaro only.",
         "group": "daily-automations",
+        "show_on_home": False,
         "args_hint": "Optional args, e.g. --date 2026-03-08",
         "args_templates": [
             {"label": "Default (today)", "value": ""},
@@ -538,6 +547,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             "Nipuhim stream (same campaign as daily Keitaro). Optional dry-run; see Help daily flags."
         ),
         "group": "daily-automations",
+        "show_on_home": False,
         "args_hint": "Optional: --delete-detached (after detach)",
         "args_templates": [
             {"label": "Dry run (no API writes)", "value": "--dry-run"},
@@ -553,6 +563,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             "``adexa``/``yadore``). Kelkoo rows use feed API keys for prune checks; other feeds use direct offer URLs."
         ),
         "group": "daily-automations",
+        "show_on_home": True,
         "args_hint": "Optional args, e.g. --geo fr --skip-potential (feed: use dropdown)",
         "args_templates": [
             {"label": "Default (extra args empty)", "value": ""},
@@ -572,6 +583,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
             "from the Blend tab (e.g. after editing clickCap). Does not touch potentialKelkoo sheets."
         ),
         "group": "daily-automations",
+        "show_on_home": False,
         "args_hint": "Optional: --geo fr",
         "args_templates": [
             {"label": "All geos", "value": ""},
@@ -585,6 +597,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "script": "monetization_check.py",
         "description": "Check source URLs against Kelkoo/Yadore/Adexa/Shopnomix/FlexOffers and write Matches sheet.",
         "group": "match-making",
+        "show_on_home": False,
         "args_hint": "Optional args, e.g. --max-rows 20",
         "args_templates": [
             {"label": "Default (no limit)", "value": ""},
@@ -597,6 +610,7 @@ WORKFLOWS: Dict[str, Dict[str, Any]] = {
         "script": "blend_stop_closed_merchants.py",
         "description": "During-day: set non-monetized auto=v Blend offers share=0 (Kelkoo1/2 only).",
         "group": "daily-automations",
+        "show_on_home": False,
         "args_hint": "Optional args, e.g. --geo it",
         "args_templates": [
             {"label": "All geos", "value": ""},
@@ -1027,26 +1041,36 @@ def _sk_optimizer_sheet_link_context() -> dict[str, Any]:
 def ui_home():
     group_titles: Dict[str, str] = {
         "daily-automations": "Daily Automations",
-        "match-making": "Match Making",
     }
     group_desc: Dict[str, str] = {
-        "daily-automations": "Run and monitor core production automations.",
-        "match-making": "Monetization checks for manual entries and sheets.",
+        "daily-automations": "Core production workflows. Other tools live under Tools / Help.",
     }
 
     groups: Dict[str, Dict[str, Any]] = {}
     for key, wf in WORKFLOWS.items():
+        if not wf.get("show_on_home"):
+            continue
         group_key = wf.get("group") or "other"
-        groups.setdefault(group_key, {"title": group_titles.get(group_key, group_key), "description": group_desc.get(group_key, ""), "items": []})
-        groups[group_key]["items"].append({
-            "key": key,
-            "title": wf["title"],
-            "description": wf["description"],
-            "last_run": _load_last_run(key),
-        })
+        if group_key == "match-making":
+            continue
+        groups.setdefault(
+            group_key,
+            {
+                "title": group_titles.get(group_key, group_key),
+                "description": group_desc.get(group_key, ""),
+                "items": [],
+            },
+        )
+        groups[group_key]["items"].append(
+            {
+                "key": key,
+                "title": wf["title"],
+                "description": wf["description"],
+                "last_run": _load_last_run(key),
+            }
+        )
 
-    # Keep a stable order inside groups (daily -> keitaro-sync, then others by insertion order)
-    ordered_group_keys = ["daily-automations", "match-making"]
+    ordered_group_keys = ["daily-automations"]
     out_groups: list[dict[str, Any]] = []
     for gk in ordered_group_keys:
         if gk in groups:
@@ -2470,6 +2494,12 @@ def api_domain_demand_progress_refresh():
         return jsonify({"status": "error", "error": str(e), "refreshed": False}), 500
 
 
+@app.route("/domain-demand", methods=["GET"])
+def ui_domain_demand():
+    """Full geo×device domain-demand fill table (hub 94)."""
+    return render_template("domain_demand.html")
+
+
 @app.route("/domain-demand/yesterday-review")
 def ui_trillion_yesterday_review():
     """Yesterday underdelivered domain segments + Trillion budget/CPC recommendations."""
@@ -2521,12 +2551,17 @@ def api_trillion_yesterday_review_apply():
 def _api_automations_payload() -> Dict[str, Any]:
     ensure_automations_initialized()
     last_map = last_run_by_automation()
+    streaks = consecutive_failures_by_automation()
     listeners = get_automation_listeners()
     by_class = {a.__class__.__name__: a for a in listeners}
+    label_by_class = {s["class_name"]: s["label"] for s in AUTOMATION_SPECS}
     rows: list[dict[str, Any]] = []
     for spec in AUTOMATION_SPECS:
         cn = spec["class_name"]
         lr = last_map.get(cn)
+        if isinstance(lr, dict):
+            lr = dict(lr)
+            lr["consecutive_failures"] = int(streaks.get(cn) or 0)
         actions = spec.get("actions") or [{"id": "default", "label": "Trigger"}]
         rows.append(
             {
@@ -2538,13 +2573,33 @@ def _api_automations_payload() -> Dict[str, Any]:
                 "actions": actions,
             }
         )
-    return {"scheduler_running": scheduler_running(), "automations": rows}
+    failures = []
+    for f in failed_automations_summary():
+        cn = str(f.get("class_name") or "")
+        failures.append({**f, "label": label_by_class.get(cn) or cn})
+    return {
+        "scheduler_running": scheduler_running(),
+        "automations": rows,
+        "failures": failures,
+    }
 
 
 @app.route("/api/automations", methods=["GET"])
 def api_automations():
     """List AutoServer automations + scheduler state + last run per job (from run log)."""
     return jsonify(_api_automations_payload())
+
+
+@app.route("/api/automations/failures", methods=["GET"])
+def api_automations_failures():
+    """Automations whose latest run failed, with consecutive failure streaks (homepage banner)."""
+    ensure_automations_initialized()
+    label_by_class = {s["class_name"]: s["label"] for s in AUTOMATION_SPECS}
+    failures = []
+    for f in failed_automations_summary():
+        cn = str(f.get("class_name") or "")
+        failures.append({**f, "label": label_by_class.get(cn) or cn})
+    return jsonify({"failures": failures, "count": len(failures)})
 
 
 @app.route("/api/automations/log", methods=["GET"])

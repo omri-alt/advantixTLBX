@@ -128,12 +128,17 @@
       cardsEl.innerHTML = items.map(function(a) {
         var lr = a.last_run || null;
         var ok = lr && lr.status === "success";
+        var streak = lr && lr.consecutive_failures ? Number(lr.consecutive_failures) : 0;
         var badge = lr
-          ? '<span class="badge ' + (ok ? "ok" : "err") + '">' + (ok ? "✅ success" : "❌ error") + "</span>"
+          ? '<span class="badge ' + (ok ? "ok" : "err") + '">' +
+            (ok ? "✅ success" : ("❌ error" + (streak > 1 ? (" ×" + streak) : ""))) +
+            "</span>"
           : '<span class="muted">No run yet</span>';
         var ts = lr ? (lr.finished_at || lr.started_at || "") : "";
         var errHtml = lr && lr.error
-          ? "<details class=\"errcoll\"><summary>Error detail</summary><div class=\"errbox\">" + esc(lr.error) + "</div></details>"
+          ? "<details class=\"errcoll\"><summary>Error detail" +
+            (streak > 1 ? (" (" + streak + " in a row)") : "") +
+            "</summary><div class=\"errbox\">" + esc(lr.error) + "</div></details>"
           : "";
         var actionButtons = (a.actions || []).map(function(action) {
           var actionId = action && action.id ? String(action.id) : "default";

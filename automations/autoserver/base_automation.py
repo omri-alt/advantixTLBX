@@ -33,16 +33,31 @@ class BaseAutomation(ABC):
         raise NotImplementedError
 
     def _wrap_run(self, triggered_by: str, fn: Callable[[], None]) -> dict[str, Any]:
+        """
+        Run ``fn`` once; on failure retry immediately once, then log the final outcome.
+
+        A successful retry is logged as ``status=success`` with ``retried=true``.
+        A failed retry is logged as ``status=error`` with ``retried=true``.
+        """
         name = self.__class__.__name__
         started = datetime.now(timezone.utc)
         err: Optional[str] = None
         status = "success"
+        retried = False
         try:
             fn()
         except Exception as e:
-            status = "error"
-            err = str(e)
-            logger.exception("%s failed (%s)", name, triggered_by)
+            retried = True
+            logger.exception("%s failed (%s) — retrying once", name, triggered_by)
+            try:
+                fn()
+                err = None
+                status = "success"
+                logger.info("%s recovered on retry (%s)", name, triggered_by)
+            except Exception as e2:
+                status = "error"
+                err = str(e2)
+                logger.exception("%s failed again after retry (%s)", name, triggered_by)
         finished = datetime.now(timezone.utc)
         append_run(
             automation=name,
@@ -51,10 +66,12 @@ class BaseAutomation(ABC):
             finished_at=finished,
             status=status,
             error=err,
+            retried=retried,
         )
         return {
             "status": status,
             "error": err,
+            "retried": retried,
             "started_at": started.isoformat(),
             "finished_at": finished.isoformat(),
         }
