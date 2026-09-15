@@ -243,17 +243,40 @@ def fetch_kelkoo_feed_api_revenue(
     ready = 0
     failed = 0
     unsupported = 0
-    jobs: List[Tuple[str, str]] = [(d.isoformat(), g) for d in days for g in geo_list]
-    # Geos that returned HTTP 400 — skip remaining days for that geo in this run.
+    # Probe one day first so permanent HTTP 400 geos are not hammered for every MTD day.
+    probe_day = y_key if y_key in {d.isoformat() for d in days} else days[-1].isoformat()
     skip_geos: set[str] = set()
+    workers = max(1, min(int(max_workers or 8), 10))
 
-    workers = max(1, min(int(max_workers or 8), 12))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        probe_futs = {
+            pool.submit(
+                _sum_geo_day,
+                geo=geo,
+                day=probe_day,
+                api_key=api_key,
+                session=None,
+                retries=2,
+            ): geo
+            for geo in geo_list
+        }
+        for fut in as_completed(probe_futs):
+            geo = probe_futs[fut]
+            try:
+                row = fut.result()
+            except Exception:
+                continue
+            if row.get("unsupported"):
+                skip_geos.add(geo)
+                unsupported += 1
+
+    supported_list = [g for g in geo_list if g not in skip_geos]
+    jobs: List[Tuple[str, str]] = [(d.isoformat(), g) for d in days for g in supported_list]
 
     def _run_jobs(job_list: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
         """Fetch jobs; return list of (day, geo) that still need a retry."""
-        nonlocal ready, unsupported
+        nonlocal ready
         need_retry: List[Tuple[str, str]] = []
-        work = [(day, geo) for day, geo in job_list if geo not in skip_geos]
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futs = {
                 pool.submit(
@@ -264,7 +287,7 @@ def fetch_kelkoo_feed_api_revenue(
                     session=None,
                     retries=3,
                 ): (day, geo)
-                for day, geo in work
+                for day, geo in job_list
             }
             for fut in as_completed(futs):
                 day, geo = futs[fut]
@@ -275,9 +298,8 @@ def fetch_kelkoo_feed_api_revenue(
                     logger.info("Kelkoo API revenue %s %s/%s failed: %s", tag, day, geo, e)
                     continue
                 if row.get("unsupported"):
-                    if geo not in skip_geos:
-                        skip_geos.add(geo)
-                    unsupported += 1
+                    # Late discovery (should be rare after probe).
+                    skip_geos.add(geo)
                     continue
                 if not row.get("ready"):
                     need_retry.append((day, geo))
@@ -295,7 +317,6 @@ def fetch_kelkoo_feed_api_revenue(
     else:
         failed = 0
 
-    # Expected coverage excludes permanently unsupported geos discovered this run.
     supported_geos = max(0, len(geo_list) - len(skip_geos))
     expected = supported_geos * len(days)
     coverage = (100.0 * ready / expected) if expected else 100.0
