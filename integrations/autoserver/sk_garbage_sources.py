@@ -222,6 +222,8 @@ class GarbagePassContext:
         self._log_rows: List[dict] = []
         self._log_by_sub: Dict[str, dict] = {}
         self._sub_to_row_index: Dict[str, int] = {}
+        self._pending_appends: List[dict] = []
+        self._pending_updates: Dict[int, dict] = {}
 
     @classmethod
     def begin(cls, blacklist_fn: Callable[[int, List[str]], List[str]]) -> "GarbagePassContext":
@@ -315,9 +317,8 @@ class GarbagePassContext:
                     f"(threshold {self._threshold})"
                 ),
             }
-            _append_garbage_log_row(self._tools_id, new_row)
+            self._pending_appends.append(new_row)
             self._log_by_sub[sid] = new_row
-            self._sub_to_row_index[sid] = len(self._log_rows) + 2
             self._log_rows.append(new_row)
             self.summary["yellow_new"] += 1
             return
@@ -330,7 +331,7 @@ class GarbagePassContext:
             ).strip("; ")
             idx = self._sub_to_row_index.get(sid)
             if idx:
-                _update_garbage_log_row(self._tools_id, idx, existing)
+                self._pending_updates[idx] = existing
             self.summary["yellow_repeat"] += 1
             return
 
@@ -362,7 +363,7 @@ class GarbagePassContext:
             ).strip("; ")
             idx = self._sub_to_row_index.get(sid)
             if idx:
-                _update_garbage_log_row(self._tools_id, idx, existing)
+                self._pending_updates[idx] = existing
             self.summary["red_new"] += 1
         else:
             existing["lastSeenAt"] = now
@@ -372,11 +373,41 @@ class GarbagePassContext:
             ).strip("; ")
             idx = self._sub_to_row_index.get(sid)
             if idx:
-                _update_garbage_log_row(self._tools_id, idx, existing)
+                self._pending_updates[idx] = existing
             self.summary["yellow_repeat"] += 1
+
+    def _flush_sheet_writes(self) -> None:
+        if not self.enabled or not self._tools_id:
+            return
+        if not self._pending_appends and not self._pending_updates:
+            return
+        ws = gd.client.open_by_key(self._tools_id).worksheet(TAB_GARBAGE_LOG)
+        if self._pending_updates:
+            payload = []
+            for idx, row in self._pending_updates.items():
+                values = [str(row.get(h) or "") for h in HEADERS_GARBAGE_LOG]
+                end = rowcol_to_a1(idx, len(HEADERS_GARBAGE_LOG))
+                payload.append({"range": f"A{idx}:{end}", "values": [values]})
+            if payload:
+                ws.batch_update(payload, value_input_option="USER_ENTERED")
+        if self._pending_appends:
+            rows = [
+                [str(row.get(h) or "") for h in HEADERS_GARBAGE_LOG]
+                for row in self._pending_appends
+            ]
+            if len(rows) == 1:
+                ws.append_row(rows[0], value_input_option="USER_ENTERED")
+            else:
+                ws.append_rows(rows, value_input_option="USER_ENTERED")
+        self._pending_appends = []
+        self._pending_updates = {}
 
     def finish(self) -> Dict[str, int]:
         if self.enabled:
+            try:
+                self._flush_sheet_writes()
+            except Exception:
+                logger.exception("garbage sheet flush failed")
             state = _load_click_snapshot()
             state["run_utc"] = _utc_now()
             state["campaigns"] = self._new_snapshots

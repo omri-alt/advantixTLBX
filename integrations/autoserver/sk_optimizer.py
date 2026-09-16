@@ -52,7 +52,10 @@ from integrations.adexa import AdexaClientError, merchant_monetization_check
 from integrations.autoserver import gdocs_as as gd
 from integrations.autoserver import kl_as as kl
 from integrations.autoserver import sk as sk
-from integrations.autoserver.exploration_sheet_logs import append_exploration_log_row
+from integrations.autoserver.exploration_sheet_logs import (
+    ExplorationLogBuffer,
+    append_exploration_log_row,
+)
 from integrations.kelkoo_search import format_kelkoo_monetization_status, kelkoo_merchant_link_check
 from integrations.yadore import YadoreClientError, deeplink
 
@@ -95,6 +98,7 @@ HEADERS_WL = [
 _BID_DECAY_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_bidfactor_decay_state.json"
 _STATUS_SYNC_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "sk_daily_status_sync_state.json"
 _SK_TOOLS_LOG_DISABLED_UNTIL: Optional[datetime] = None
+_SK_LOG_BUFFER: Optional[ExplorationLogBuffer] = None
 _SK_UNMON_SKIP_CAMPAIGN_ID_SET = {int(x) for x in (SK_UNMON_SKIP_CAMPAIGN_IDS or ())}
 # monNetwork values that skip unmon pause (no API probe; campaign stays active).
 _MON_NETWORK_SKIP_UNMON = frozenset({"new", "skip"})
@@ -887,6 +891,44 @@ def _resolve_mon_url(row: Dict[str, Any], camp_json: Optional[dict]) -> str:
     return ""
 
 
+def _snapshot_sheet_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [{str(k): r.get(k) for k in r} for r in rows]
+
+
+def _rows_operationally_changed(
+    before: List[Dict[str, Any]],
+    after: List[Dict[str, Any]],
+) -> bool:
+    """True when any non-heartbeat field changed (lastMonCheck is ignored)."""
+    if len(before) != len(after):
+        return True
+    heartbeat = {"lastMonCheck"}
+    for old, new in zip(before, after):
+        keys = set(old) | set(new)
+        for k in keys:
+            if k in heartbeat:
+                continue
+            if str(old.get(k) or "") != str(new.get(k) or ""):
+                return True
+    return False
+
+
+def _begin_sk_log_buffer() -> None:
+    global _SK_LOG_BUFFER
+    if _SK_LOG_BUFFER is not None:
+        _SK_LOG_BUFFER.flush()
+    sid = (SK_TOOLS_SPREADSHEET_ID or "").strip()
+    _SK_LOG_BUFFER = ExplorationLogBuffer(sid) if sid else None
+
+
+def _flush_sk_log_buffer() -> None:
+    global _SK_LOG_BUFFER
+    buf = _SK_LOG_BUFFER
+    _SK_LOG_BUFFER = None
+    if buf is not None:
+        buf.flush()
+
+
 def _sk_tools_workbook_log(
     camp_id: Any,
     camp_name: str,
@@ -902,6 +944,14 @@ def _sk_tools_workbook_log(
     if _SK_TOOLS_LOG_DISABLED_UNTIL and now < _SK_TOOLS_LOG_DISABLED_UNTIL:
         return
     try:
+        if _SK_LOG_BUFFER is not None:
+            _SK_LOG_BUFFER.add(
+                camp_id=str(camp_id or ""),
+                camp_name=str(camp_name or ""),
+                verify=str(verify or "")[:4000],
+                response=response,
+            )
+            return
         append_exploration_log_row(
             sid,
             camp_id=str(camp_id or ""),
@@ -1174,7 +1224,7 @@ def checkUnmonExploration_SK() -> None:
 
     today = _utc_today()
     status_sync_due = _status_sync_due("exploration", today)
-    changed = False
+    original_rows = _snapshot_sheet_rows(rows)
     processed_rows = 0
     status_sync_changed = 0
     blacklisted_ok_total = 0
@@ -1183,6 +1233,7 @@ def checkUnmonExploration_SK() -> None:
     bid_decay_fail_total = 0
 
     garbage_summary: Dict[str, int] = {}
+    _begin_sk_log_buffer()
     try:
         from integrations.autoserver.sk_garbage_sources import GarbagePassContext
 
@@ -1224,13 +1275,12 @@ def checkUnmonExploration_SK() -> None:
         processed_rows += 1
 
         skip_unmon_pause = (cid in _SK_UNMON_SKIP_CAMPAIGN_ID_SET) or _row_skip_unmon(row)
-        if skip_unmon_pause:
+        if skip_unmon_pause and str(row.get("lastAction") or "") != "unmon-skip-config":
             row["logs"] = _append_logs_cell(
                 row.get("logs", ""),
                 f"unmon pause skipped (skipUnmon/config) for campaign {cid}",
             )
             row["lastAction"] = "unmon-skip-config"
-            changed = True
 
         wl = _parse_wl(row.get("wl"))
 
@@ -1335,11 +1385,12 @@ def checkUnmonExploration_SK() -> None:
                 row["lastMonCheck"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 changed = True
                 if err_t == "skip_unmon":
-                    row["logs"] = _append_logs_cell(
-                        row.get("logs", ""),
-                        f"unmon check skipped (monNetwork={net})",
-                    )
-                    row["lastAction"] = "mon-skip-network"
+                    if str(row.get("lastAction") or "") != "mon-skip-network":
+                        row["logs"] = _append_logs_cell(
+                            row.get("logs", ""),
+                            f"unmon check skipped (monNetwork={net})",
+                        )
+                        row["lastAction"] = "mon-skip-network"
                     _sk_tools_workbook_log(
                         cid, cname_expl, "SK exploration: unmon check skipped", f"net={net}"
                     )
@@ -1364,7 +1415,8 @@ def checkUnmonExploration_SK() -> None:
                         row["logs"] = _append_logs_cell(row.get("logs", ""), f"pause error: {e}")
                         _sk_tools_workbook_log(cid, cname_expl, "SK exploration: pause error", str(e))
                 elif not did_blacklist:
-                    row["lastAction"] = "ok"
+                    if str(row.get("lastAction") or "") != "ok":
+                        row["lastAction"] = "ok"
 
     if garbage_ctx is not None:
         try:
@@ -1378,7 +1430,7 @@ def checkUnmonExploration_SK() -> None:
     if status_sync_due:
         _mark_status_sync_done("exploration", today)
 
-    if changed and rows:
+    if rows and _rows_operationally_changed(original_rows, rows):
         wl_unioned = _union_exploration_wl_from_fresh_sheet(sheet_id, rows)
         if wl_unioned:
             logger.info(
@@ -1386,6 +1438,8 @@ def checkUnmonExploration_SK() -> None:
                 wl_unioned,
             )
         gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_EXPLORATION, rows)
+    else:
+        logger.info("SK exploration: skip sheet write (no operational changes)")
     _sk_tools_workbook_log(
         "",
         "SKtrackExploration",
@@ -1405,6 +1459,7 @@ def checkUnmonExploration_SK() -> None:
             "date_utc": today,
         },
     )
+    _flush_sk_log_buffer()
 
 
 def checkUnmonWL_SK() -> None:
@@ -1421,8 +1476,9 @@ def checkUnmonWL_SK() -> None:
 
     today = _utc_today()
     status_sync_due = _status_sync_due("wl", today)
-    changed = False
+    original_rows = _snapshot_sheet_rows(rows)
     status_sync_changed = 0
+    _begin_sk_log_buffer()
     for row in rows:
         cid_raw = row.get("campaignId") or row.get("campId")
         if not str(cid_raw or "").strip():
@@ -1457,12 +1513,12 @@ def checkUnmonWL_SK() -> None:
 
         skip_unmon_pause = (cid in _SK_UNMON_SKIP_CAMPAIGN_ID_SET) or _row_skip_unmon(row)
         if skip_unmon_pause:
-            row["logs"] = _append_logs_cell(
-                row.get("logs", ""),
-                f"unmon pause skipped (skipUnmon/config) for campaign {cid}",
-            )
-            row["lastAction"] = "unmon-skip-config"
-            changed = True
+            if str(row.get("lastAction") or "") != "unmon-skip-config":
+                row["logs"] = _append_logs_cell(
+                    row.get("logs", ""),
+                    f"unmon pause skipped (skipUnmon/config) for campaign {cid}",
+                )
+                row["lastAction"] = "unmon-skip-config"
             continue
 
         cname_wl = str(camp_json.get("name") or "") if isinstance(camp_json, dict) else ""
@@ -1473,11 +1529,12 @@ def checkUnmonWL_SK() -> None:
         row["lastMonCheck"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         changed = True
         if err_t == "skip_unmon":
-            row["logs"] = _append_logs_cell(
-                row.get("logs", ""),
-                f"unmon check skipped (monNetwork={net})",
-            )
-            row["lastAction"] = "mon-skip-network"
+            if str(row.get("lastAction") or "") != "mon-skip-network":
+                row["logs"] = _append_logs_cell(
+                    row.get("logs", ""),
+                    f"unmon check skipped (monNetwork={net})",
+                )
+                row["lastAction"] = "mon-skip-network"
             _sk_tools_workbook_log(cid, cname_wl, "SK WL: unmon check skipped", f"net={net}")
         elif err_t == "error":
             logger.warning("SK WL monetization inconclusive; not pausing %s", cid)
@@ -1498,13 +1555,16 @@ def checkUnmonWL_SK() -> None:
                 row["logs"] = _append_logs_cell(row.get("logs", ""), f"pause error: {e}")
                 _sk_tools_workbook_log(cid, cname_wl, "SK WL: pause error", str(e))
         else:
-            row["lastAction"] = "ok"
+            if str(row.get("lastAction") or "") != "ok":
+                row["lastAction"] = "ok"
 
     if status_sync_due:
         _mark_status_sync_done("wl", today)
 
-    if changed and rows:
+    if rows and _rows_operationally_changed(original_rows, rows):
         gd.create_or_update_sheet_from_dicts_withID(sheet_id, TAB_WL, rows)
+    else:
+        logger.info("SK WL: skip sheet write (no operational changes)")
     if status_sync_due or status_sync_changed:
         _sk_tools_workbook_log(
             "",
@@ -1516,6 +1576,7 @@ def checkUnmonWL_SK() -> None:
                 "date_utc": today,
             },
         )
+    _flush_sk_log_buffer()
 
 
 def _normalize_exploration_sheet_row(raw: Dict[str, Any]) -> Dict[str, str]:

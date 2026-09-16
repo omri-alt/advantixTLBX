@@ -7,7 +7,7 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
     {
         "class_name": "EcomniaTrackAuto",
         "label": "Ecomnia track sheets",
-        "schedule": "Every hour",
+        "schedule": "Every hour at :15",
     },
     {
         "class_name": "ECExplorationWlSyncAuto",
@@ -17,22 +17,22 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
     {
         "class_name": "ECQualityWL",
         "label": "ECQualityWL clicks/bid",
-        "schedule": "Every even hour",
+        "schedule": "Every even hour at :25",
     },
     {
         "class_name": "KLFIXoptimize",
         "label": "SK KLFIX new-source optimize",
-        "schedule": "Every hour",
+        "schedule": "Every hour at :00",
     },
     {
         "class_name": "PauseUnmonSK",
         "label": "Pause unmonetized SK (Kelkoo check)",
-        "schedule": "Every hour",
+        "schedule": "Every hour at :05",
     },
     {
         "class_name": "SKExplorationOptimizer",
         "label": "SK exploration + WL optimizer (sheets)",
-        "schedule": "Every hour",
+        "schedule": "Every hour at :10",
     },
     {
         "class_name": "SKExplorationWlSyncAuto",
@@ -42,12 +42,12 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
     {
         "class_name": "KLWL",
         "label": "SK KLWL sources",
-        "schedule": "Every even hour",
+        "schedule": "Every even hour at :30",
     },
     {
         "class_name": "QualityWL",
         "label": "QualityWL winrates",
-        "schedule": "Every even hour",
+        "schedule": "Every even hour at :20",
     },
     {
         "class_name": "CloseNipuhimAuto",
@@ -67,12 +67,12 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
     {
         "class_name": "BlendSync2h",
         "label": "Blend sheet → Keitaro + domain-demand rebuild",
-        "schedule": "Every 2 hours (even hours); quiet 01:00–10:00 Asia/Jerusalem",
+        "schedule": "Every 2 hours at :35 (even hours); quiet 01:00–10:00 Asia/Jerusalem",
     },
     {
         "class_name": "BlendTrCapGuard",
         "label": "Pause Blend Trillion campaigns on cap",
-        "schedule": "Every 20 minutes",
+        "schedule": "Every 20 minutes at :03/:23/:43",
         "actions": [
             {"id": "default", "label": "Pause over cap"},
             {"id": "resume_under_cap", "label": "Activate under-cap"},
@@ -81,17 +81,17 @@ AUTOMATION_SPECS: List[Dict[str, Any]] = [
     {
         "class_name": "NipuhimUnmonRepair",
         "label": "Nipuhim monetization repair (PLA + Keitaro)",
-        "schedule": "Every 2 hours (odd hours)",
+        "schedule": "Every 2 hours at :40 (odd hours)",
     },
     {
         "class_name": "KeitaroFeedBalanceCheckmon",
         "label": "Keitaro feed balance checkmon (notes only)",
-        "schedule": "Every 2 hours (even hours)",
+        "schedule": "Every 2 hours at :45 (even hours)",
     },
     {
         "class_name": "DomainDemandRefresh",
         "label": "Domain-demand rebuild (after morning bill) + Trillion pause",
-        "schedule": "Every 30 minutes (DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES)",
+        "schedule": "Every 30 minutes at :08/:38 (DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES)",
     },
 ]
 

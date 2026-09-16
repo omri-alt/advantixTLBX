@@ -51,7 +51,6 @@ def pause_Unmonetized_KL():
               case False:
                 temp = sk.pause_campaign(id)  #if not active, pause the campaign in SK
                 paused.append({'hp':hp,'geo':geo,'id':id , 'monetization' : t })
-                gdocs.create_or_update_sheet_from_dicts(f'{today}-paused',paused)
                 print(f"hp {hp} added to list and the campaign was paused in sk")
               case 'error occured':
                 print('yabadabadoo ')
@@ -63,6 +62,9 @@ def pause_Unmonetized_KL():
                 #print(f"hp {hp} added to list and the campaign is active")
 
 
+
+  if paused:
+    gdocs.create_or_update_sheet_from_dicts(f'{today}-paused', paused)
 
   return completed
 

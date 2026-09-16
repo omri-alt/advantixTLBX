@@ -9,6 +9,7 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 from integrations.autoserver import kl_as as kl
 from integrations.autoserver import gdocs_as as gd
+from integrations.autoserver.exploration_sheet_logs import ExplorationLogBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -647,6 +648,7 @@ def update_track_sheet():
     # Load the campaigns
     campaigns = get_campaigns()
     # Update the track sheet
+    log_buf = ExplorationLogBuffer(sheetid)
     for row in track_sheet:
         matched = False
         for campaign in campaigns:
@@ -667,25 +669,16 @@ def update_track_sheet():
                 row['verify'] = potential[1]
                 #if there are sources to verify, blacklist them and update the track sheet
                 if len(potential[1]) > 0:
-                    logsSheet = gd.read_sheet_withID(sheetid, 'logs')
                     sources = []
                     for item in potential[1]:
                         sources.append(item['source'])
                     response = blackListSources(campaign['id'], sources)
-                    logsSheet.append({
-                        'campId':
-                        campaign['id'],
-                        'campName':
-                        campaign['name'],
-                        'verify':
-                        potential[1],
-                        'date':
-                        datetime.now().strftime('%Y-%m-%d'),
-                        'response':
-                        response
-                    })
-                    gd.create_or_update_sheet_from_dicts_withId(
-                        sheetid, 'logs', logsSheet)
+                    log_buf.add(
+                        camp_id=campaign['id'],
+                        camp_name=campaign['name'],
+                        verify=potential[1],
+                        response=response,
+                    )
                 campData = get_campaignById(campaign['id'])
                 row['explored30'] = potential[2]
                 try:
@@ -698,6 +691,7 @@ def update_track_sheet():
         if not matched:
             # Keep bulk-registered rows until campName matches an EC campaign.
             updated.append(row)
+    log_buf.flush()
     gd.create_or_update_sheet_from_dicts_withId(sheetid, 'trackExploration',
                                                 updated)
     return updated
@@ -841,27 +835,29 @@ def exploration_increaseCPCBySource(campId, wl):
     print(listCPCbySourceNew)
     campData['cpcbysource'] = listCPCbySourceNew
     response = update_campaign(campId, campData)
-    logsSheet = gd.read_sheet_withID(sheetid, 'logs')
-    logsSheet.append({
-        'campId': campId,
-        'campName': campData['name'],
-        'verify': 'increased cpc for exploration sources',
-        'date': datetime.now().strftime('%Y-%m-%d'),
-        'response': response
-    })
-    gd.create_or_update_sheet_from_dicts_withId(sheetid, 'logs', logsSheet)
+    buf = ExplorationLogBuffer(sheetid)
+    buf.add(
+        camp_id=campId,
+        camp_name=campData['name'],
+        verify='increased cpc for exploration sources',
+        response=response,
+    )
+    buf.flush()
     return
 
 def exploration_IncreaseCPC_fromTrackSheet():
     today = datetime.now().strftime('%Y-%m-%d')
     track_sheet = gd.read_sheet_withID(sheetid, 'trackExploration')
+    changed = False
     for row in track_sheet:
         if row['CpcLvlUp'] in ['v', 'V', 'yes', 'Yes', 'YES', 'y', 'Y']:
             if row['cpcUpdate'] != today:
                 exploration_increaseCPCBySource(row['campId'], row['wl'])
                 row['cpcUpdate'] = today
-                gd.create_or_update_sheet_from_dicts_withId(
-                    sheetid, 'trackExploration', track_sheet)
+                changed = True
+    if changed:
+        gd.create_or_update_sheet_from_dicts_withId(
+            sheetid, 'trackExploration', track_sheet)
 
 
 ################################################################
@@ -918,28 +914,26 @@ def checkDailySpend(campId,startBudget,max):
         print(campData)
         response = update_campaign(campId, campData)
         print(response)
-        logsSheet = gd.read_sheet_withID(sheetid, 'logs')
-        logsSheet.append({
-            'campId': campId,
-            'campName': campData['name'],
-            'verify': f"increased campaign budget from {daily_budget} to {campData['daily_budget']}",
-            'date': datetime.now().strftime('%Y-%m-%d'),
-            'response': response
-        })
-        gd.create_or_update_sheet_from_dicts_withId(sheetid, 'logs', logsSheet)
+        buf = ExplorationLogBuffer(sheetid)
+        buf.add(
+            camp_id=campId,
+            camp_name=campData['name'],
+            verify=f"increased campaign budget from {daily_budget} to {campData['daily_budget']}",
+            response=response,
+        )
+        buf.flush()
     elif daily_budget != int(startBudget) and spend > int(max) :
         campData['daily_budget'] = int(startBudget)
         response = update_campaign(campId, campData)
         print(response)
-        logsSheet = gd.read_sheet_withID(sheetid, 'logs')
-        logsSheet.append({
-            'campId': campId,
-            'campName': campData['name'],
-            'verify': f"reset campaign budget after spending {spend} to starting daily {campData['daily_budget']}",
-            'date': datetime.now().strftime('%Y-%m-%d'),
-            'response': response
-        })
-        gd.create_or_update_sheet_from_dicts_withId(sheetid, 'logs', logsSheet)
+        buf = ExplorationLogBuffer(sheetid)
+        buf.add(
+            camp_id=campId,
+            camp_name=campData['name'],
+            verify=f"reset campaign budget after spending {spend} to starting daily {campData['daily_budget']}",
+            response=response,
+        )
+        buf.flush()
     else :
         pass
     return
@@ -984,6 +978,7 @@ def checkUnmonExploration():
     """
     track_sheet = gd.read_sheet_withID(sheetid, 'trackExploration')
     changed = False
+    log_buf = ExplorationLogBuffer(sheetid)
     for row in track_sheet:
         status = str(row.get('status') or '').strip().lower()
         if status != 'active':
@@ -1011,15 +1006,13 @@ def checkUnmonExploration():
         row['status'] = 'paused-unmon'
         changed = True
         print(f"campaign {camp_id} was paused (unmon / monNetwork={net})")
-        logsSheet = gd.read_sheet_withID(sheetid, 'logs')
-        logsSheet.append({
-            'campId': camp_id,
-            'campName': row.get('campName'),
-            'verify': f"campaign was paused due to unmonetization and monNetwork {net}",
-            'date': datetime.now().strftime('%Y-%m-%d'),
-            'response': mon_ok,
-        })
-        gd.create_or_update_sheet_from_dicts_withId(sheetid, 'logs', logsSheet)
+        log_buf.add(
+            camp_id=camp_id,
+            camp_name=row.get('campName'),
+            verify=f"campaign was paused due to unmonetization and monNetwork {net}",
+            response=mon_ok,
+        )
+    log_buf.flush()
     if changed:
         gd.create_or_update_sheet_from_dicts_withId(sheetid, 'trackExploration', track_sheet)
     return
@@ -1029,6 +1022,7 @@ def checkUnmonWL():
     """Pause active WL campaigns that fail monetization (same probe rules as exploration)."""
     track_sheet = gd.read_sheet_withID(sheetid, 'trackWL')
     changed = False
+    log_buf = ExplorationLogBuffer(sheetid)
     for row in track_sheet:
         status = str(row.get('status') or '').strip().lower()
         if status != 'active':
@@ -1052,15 +1046,13 @@ def checkUnmonWL():
         row['status'] = 'paused-unmon'
         changed = True
         print(f"campaign {camp_id} was paused (unmon / monNetwork={net})")
-        logsSheet = gd.read_sheet_withID(sheetid, 'logs')
-        logsSheet.append({
-            'campId': camp_id,
-            'campName': row.get('campName'),
-            'verify': f"campaign was paused due to unmonetization and monNetwork {net}",
-            'date': datetime.now().strftime('%Y-%m-%d'),
-            'response': mon_ok,
-        })
-        gd.create_or_update_sheet_from_dicts_withId(sheetid, 'logs', logsSheet)
+        log_buf.add(
+            camp_id=camp_id,
+            camp_name=row.get('campName'),
+            verify=f"campaign was paused due to unmonetization and monNetwork {net}",
+            response=mon_ok,
+        )
+    log_buf.flush()
     if changed:
         gd.create_or_update_sheet_from_dicts_withId(sheetid, 'trackWL', track_sheet)
     return

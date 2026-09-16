@@ -40,6 +40,40 @@ def _fmt_response(val: Any) -> str:
     return str(val)[:8000]
 
 
+class ExplorationLogBuffer:
+    """Collect ``logs`` rows in memory and flush with one ``append_rows`` call."""
+
+    def __init__(self, spreadsheet_id: str) -> None:
+        self.spreadsheet_id = (spreadsheet_id or "").strip()
+        self._entries: List[Dict[str, Any]] = []
+
+    def add(
+        self,
+        *,
+        camp_id: Any = "",
+        camp_name: str = "",
+        verify: str = "",
+        response: Any = "",
+    ) -> None:
+        if not self.spreadsheet_id:
+            return
+        self._entries.append(
+            {
+                "camp_id": str(camp_id or ""),
+                "camp_name": str(camp_name or ""),
+                "verify": str(verify or "")[:4000],
+                "response": response,
+            }
+        )
+
+    def flush(self) -> None:
+        if not self._entries:
+            return
+        entries = self._entries
+        self._entries = []
+        append_exploration_log_rows(self.spreadsheet_id, entries)
+
+
 def append_exploration_log_row(
     spreadsheet_id: str,
     *,

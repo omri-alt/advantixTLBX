@@ -28,61 +28,98 @@ sheet_id = (
 workbook = client.open_by_key(sheet_id)
 
 
-def _worksheet_update_with_retry(worksheet, data, *, attempts: int = 4) -> None:
-    """Retry Google Sheets writes on transient connection resets."""
+def _is_transient_sheets_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(
+        x in msg
+        for x in (
+            "connection reset",
+            "connection aborted",
+            "remote end closed",
+            "timed out",
+            "timeout",
+            "503",
+            "502",
+            "429",
+            "quota",
+        )
+    )
+
+
+def _pad_grid(data) -> list[list]:
+    if not data:
+        return []
+    width = max((len(r) for r in data), default=1)
+    out: list[list] = []
+    for row in data:
+        cells = list(row) if row is not None else []
+        if len(cells) < width:
+            cells = cells + [""] * (width - len(cells))
+        elif len(cells) > width:
+            cells = cells[:width]
+        out.append(cells)
+    return out
+
+
+def _replace_worksheet_values(worksheet, data, *, attempts: int = 4) -> None:
+    """Write a grid from A1 without clearing first, then drop leftover cells.
+
+    Avoids the empty-flash race of ``clear()`` + ``update()`` and skips the
+    leftover clear when the sheet is already the same size.
+    """
+    grid = _pad_grid(data)
     last_err: Exception | None = None
     for attempt in range(attempts):
         try:
-            worksheet.update(data)
+            if not grid:
+                worksheet.clear()
+                return
+            rows = len(grid)
+            cols = len(grid[0])
+            rng = f"A1:{rowcol_to_a1(rows, cols)}"
+            worksheet.update(rng, grid, value_input_option="USER_ENTERED")
+            leftover: list[str] = []
+            try:
+                row_count = int(getattr(worksheet, "row_count", 0) or 0)
+                col_count = int(getattr(worksheet, "col_count", 0) or 0)
+            except (TypeError, ValueError):
+                row_count, col_count = 0, 0
+            if row_count > rows:
+                leftover.append(
+                    f"A{rows + 1}:{rowcol_to_a1(row_count, max(col_count, cols))}"
+                )
+            if col_count > cols:
+                leftover.append(
+                    f"{rowcol_to_a1(1, cols + 1)}:{rowcol_to_a1(min(rows, row_count) or rows, col_count)}"
+                )
+            if leftover:
+                worksheet.batch_clear(leftover)
             return
         except Exception as e:
             last_err = e
-            msg = str(e).lower()
-            transient = any(
-                x in msg
-                for x in (
-                    "connection reset",
-                    "connection aborted",
-                    "remote end closed",
-                    "timed out",
-                    "timeout",
-                    "503",
-                    "502",
-                    "429",
-                    "quota",
-                )
-            )
-            if not transient or attempt >= attempts - 1:
+            if not _is_transient_sheets_error(e) or attempt >= attempts - 1:
                 raise
             time.sleep(min(60, 5 * (attempt + 1)))
     if last_err:
         raise last_err
 
+
+def _worksheet_update_with_retry(worksheet, data, *, attempts: int = 4) -> None:
+    """Retry Google Sheets writes on transient connection resets."""
+    _replace_worksheet_values(worksheet, data, attempts=attempts)
+
 def create_or_update_sheet_from_list(sheet_name, data):
     spreadsheet = workbook
-    """
-    Create a new worksheet if it doesn't exist, or clear and update it if it does.
-
-    Args:
-        spreadsheet (gspread.Spreadsheet): A gspread Spreadsheet object.
-        sheet_name (str): The name of the worksheet to create or update.
-        data (List[List[Any]]): A 2D list of values to write into the sheet.
-    """
     try:
-        # Try to get the worksheet
         worksheet = spreadsheet.worksheet(sheet_name)
-        print(f"Worksheet '{sheet_name}' exists. Clearing and updating...")
-        worksheet.clear()
+        print(f"Worksheet '{sheet_name}' exists. Updating...")
     except WorksheetNotFound:
         print(f"Worksheet '{sheet_name}' not found. Creating it...")
         rows = max(len(data), 1)
         cols = max(len(data[0]) if data else 1, 1)
         worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=str(rows), cols=str(cols))
 
-    # Update the sheet with new data
-    if data:
-        cell_range = f"A1"
-        worksheet.update(cell_range, data)
+    _replace_worksheet_values(worksheet, data or [])
     print(f"Worksheet '{sheet_name}' updated successfully.")
 
 def create_or_update_sheet_from_dicts(sheet_name, dict_data):
@@ -102,8 +139,7 @@ def create_or_update_sheet_from_dicts(sheet_name, dict_data):
 
     try:
         worksheet = spreadsheet.worksheet(sheet_name)
-        print(f"Worksheet '{sheet_name}' exists. Clearing and updating...")
-        worksheet.clear()
+        print(f"Worksheet '{sheet_name}' exists. Updating...")
     except gspread.exceptions.WorksheetNotFound:
         print(f"Worksheet '{sheet_name}' not found. Creating it...")
         worksheet = spreadsheet.add_worksheet(
@@ -112,7 +148,7 @@ def create_or_update_sheet_from_dicts(sheet_name, dict_data):
             cols=str(len(headers))
         )
 
-    _worksheet_update_with_retry(worksheet, data)
+    _replace_worksheet_values(worksheet, data)
     print(f"Worksheet '{sheet_name}' updated successfully.")
 
 def read_sheet(sheet_name):
@@ -147,30 +183,17 @@ def read_sheet_withID(sheet_id,sheet_name):
     return data
     
 def create_or_update_sheet_from_list_withId(sheetId, sheet_name, data):
-    spreadsheet =  client.open_by_key(sheetId)
-    """
-    Create a new worksheet if it doesn't exist, or clear and update it if it does.
-
-    Args:
-        spreadsheet (gspread.Spreadsheet): A gspread Spreadsheet object.
-        sheet_name (str): The name of the worksheet to create or update.
-        data (List[List[Any]]): A 2D list of values to write into the sheet.
-    """
+    spreadsheet = client.open_by_key(sheetId)
     try:
-        # Try to get the worksheet
         worksheet = spreadsheet.worksheet(sheet_name)
-        print(f"Worksheet '{sheet_name}' exists. Clearing and updating...")
-        worksheet.clear()
+        print(f"Worksheet '{sheet_name}' exists. Updating...")
     except WorksheetNotFound:
         print(f"Worksheet '{sheet_name}' not found. Creating it...")
         rows = max(len(data), 1)
         cols = max(len(data[0]) if data else 1, 1)
         worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=str(rows), cols=str(cols))
 
-    # Update the sheet with new data
-    if data:
-        cell_range = f"A1"
-        worksheet.update(cell_range, data)
+    _replace_worksheet_values(worksheet, data or [])
     print(f"Worksheet '{sheet_name}' updated successfully.")
 
 def create_or_update_sheet_from_dicts_withId(sheetId,sheet_name, dict_data):
@@ -190,8 +213,7 @@ def create_or_update_sheet_from_dicts_withId(sheetId,sheet_name, dict_data):
 
     try:
         worksheet = spreadsheet.worksheet(sheet_name)
-        print(f"Worksheet '{sheet_name}' exists. Clearing and updating...")
-        worksheet.clear()
+        print(f"Worksheet '{sheet_name}' exists. Updating...")
     except gspread.exceptions.WorksheetNotFound:
         print(f"Worksheet '{sheet_name}' not found. Creating it...")
         worksheet = spreadsheet.add_worksheet(
@@ -200,7 +222,7 @@ def create_or_update_sheet_from_dicts_withId(sheetId,sheet_name, dict_data):
             cols=str(len(headers))
         )
 
-    worksheet.update(data)
+    _replace_worksheet_values(worksheet, data)
     print(f"Worksheet '{sheet_name}' updated successfully.")
 
 def append_missing_headers_row1(
@@ -298,8 +320,7 @@ def create_or_update_sheet_from_dicts_withID(sheet_id, sheet_name, dict_data):
 
     try:
         worksheet = spreadsheet.worksheet(sheet_name)
-        print(f"Worksheet '{sheet_name}' exists. Clearing and updating...")
-        worksheet.clear()
+        print(f"Worksheet '{sheet_name}' exists. Updating...")
     except gspread.exceptions.WorksheetNotFound:
         print(f"Worksheet '{sheet_name}' not found. Creating it...")
         worksheet = spreadsheet.add_worksheet(
@@ -308,5 +329,5 @@ def create_or_update_sheet_from_dicts_withID(sheet_id, sheet_name, dict_data):
             cols=str(len(headers))
         )
 
-    worksheet.update(data)
+    _replace_worksheet_values(worksheet, data)
     print(f"Worksheet '{sheet_name}' updated successfully.")

@@ -1,7 +1,7 @@
 """
 APScheduler jobs for AutoServer-derived automations.
 
-Each automation has its own hourly cron job (minute 0) so a slow Ecomnia track run does not
+Each automation has its own cron job (staggered minutes) so a slow Ecomnia track run does not
 block KLWL / Blend sync on the same worker tick.
 
 Start via ``start_autoserver_scheduler()`` from ``scheduler.background`` (one Gunicorn
@@ -14,13 +14,28 @@ import logging
 import os
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_automation_listeners: List[Any] = []
-_scheduler: Any = None
-_started = False
+# Stagger AutoServer ticks so Sheets-heavy jobs do not all fire at :00.
+# Even-hour jobs still gate inside on_hourly_signal; the minute is when the tick fires.
+AUTOSERVER_CRON_MINUTES: Dict[str, int] = {
+    "KLFIXoptimize": 0,
+    "PauseUnmonSK": 5,
+    "SKExplorationOptimizer": 10,
+    "EcomniaTrackAuto": 15,
+    "QualityWL": 20,
+    "ECQualityWL": 25,
+    "KLWL": 30,
+    "BlendSync2h": 35,
+    "NipuhimUnmonRepair": 40,
+    "KeitaroFeedBalanceCheckmon": 45,
+}
+_INTERVAL_JOB_OFFSET = {
+    "BlendTrCapGuard": 3,
+    "DomainDemandRefresh": 8,
+}
 
 
 def register_automation(automation_instance: Any) -> None:
@@ -444,23 +459,25 @@ def start_autoserver_scheduler() -> None:
             continue
         if name == "ECExplorationWlSyncAuto":
             continue
-        trigger_kwargs: dict[str, Any] = {"minute": 0}
+        trigger_kwargs: dict[str, Any] = {"minute": AUTOSERVER_CRON_MINUTES.get(name, 50)}
         job_id = f"autoserver_hourly_{name}"
         if name == "BlendTrCapGuard":
             interval_m = int(TRILLION_BLEND_CAP_GUARD_INTERVAL_MINUTES)
-            trigger_kwargs = (
-                {"minute": 0}
-                if interval_m >= 60
-                else {"minute": f"*/{interval_m}"}
-            )
+            offset = int(_INTERVAL_JOB_OFFSET.get(name, 3))
+            if interval_m >= 60:
+                trigger_kwargs = {"minute": offset % 60}
+            else:
+                mins = list(range(offset % interval_m, 60, interval_m))
+                trigger_kwargs = {"minute": ",".join(str(m) for m in mins) or str(offset)}
             job_id = f"autoserver_interval_{name}"
         if name == "DomainDemandRefresh":
             interval_m = int(DOMAIN_DEMAND_REFRESH_INTERVAL_MINUTES)
-            trigger_kwargs = (
-                {"minute": 0}
-                if interval_m >= 60
-                else {"minute": f"*/{interval_m}"}
-            )
+            offset = int(_INTERVAL_JOB_OFFSET.get(name, 8))
+            if interval_m >= 60:
+                trigger_kwargs = {"minute": offset % 60}
+            else:
+                mins = list(range(offset % interval_m, 60, interval_m))
+                trigger_kwargs = {"minute": ",".join(str(m) for m in mins) or str(offset)}
             job_id = f"autoserver_interval_{name}"
         _scheduler.add_job(
             _run_automation_hourly,

@@ -59,6 +59,7 @@ class SKExplorationOptimizer(BaseAutomation):
 
         _run_with_retry("exploration", sk_optimizer.checkUnmonExploration_SK)
         _run_with_retry("wl", sk_optimizer.checkUnmonWL_SK)
+        sk_optimizer._flush_sk_log_buffer()
 
         if errors:
             # Keep scheduler run green for partial progress; details stay in app logs.
