@@ -333,6 +333,16 @@ def read_snapshot_for_api() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         data = wrapped.get("data")
         if not isinstance(data, dict):
             return None, None
+        # Older snapshots omit affiliation_revenue — keep homepage JS from treating
+        # that as a hard miss that queues a 15-minute rebuild on every load.
+        if not isinstance(data.get("affiliation_revenue"), dict):
+            data = dict(data)
+            data["affiliation_revenue"] = {
+                "yesterday": (data.get("revenue") or {}).get("yesterday"),
+                "mtd": (data.get("revenue") or {}).get("mtd"),
+                "error": None,
+                "rows": [],
+            }
         saved = wrapped.get("saved_utc")
         return data, str(saved) if saved else None
     except Exception as e:

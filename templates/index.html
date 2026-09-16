@@ -273,7 +273,7 @@
 
     <section class="overview" id="overview-widget" aria-live="polite">
       <h2 class="section-title">Performance overview</h2>
-      <p class="muted" style="margin:0 0 10px;font-size:13px;max-height:2.6em;overflow:hidden;">Snapshot tiles (fast). Feed 2 API revenue loads on its own. <strong>Refresh</strong> rebuilds Keitaro/DSP snapshot (often 5–15+ min). <a href="{{ url_for('ui_help') }}#overview" style="color:#6b7280;font-size:12px;">?</a></p>
+      <p class="muted" style="margin:0 0 10px;font-size:13px;max-height:2.6em;overflow:hidden;">Snapshot tiles load instantly. Feed 2 API revenue loads on its own. Use <strong>Refresh</strong> only when you want a full Keitaro/DSP rebuild. <a href="{{ url_for('ui_help') }}#overview" style="color:#6b7280;font-size:12px;">?</a></p>
       <div class="ov-actions">
         <button type="button" class="btn btn-sm" id="overview-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh from APIs</button>
         <span class="muted" id="overview-snap-hint"></span>
@@ -429,6 +429,9 @@
         "</div>"
       );
     }
+
+    var AFFIL_SELECT_KEY = "klblend-overview-affiliation";
+    var AFFIL_AUTO_REFRESH_KEY = "klblend-overview-affil-auto-refresh";
 
     function selectedAffiliationId() {
       try {
@@ -698,13 +701,11 @@
       ecomnia: "Cost · Ecomnia",
       trillion: "Cost · Trillion (TR)",
     };
-    var AFFIL_SELECT_KEY = "klblend-overview-affiliation";
 
     if (!rangesEl || !failEl) return;
 
-    // Feed 2 API tile loads independently of the overview snapshot.
-    bootstrapFeed2ApiTile();
-
+    // Paint loading state immediately — never leave the page stuck on "Preparing…".
+    rangesEl.textContent = "Loading snapshot…";
 
     if (snapHintEl) {
       var hrs = Array.isArray(ovHrs) && ovHrs.length ? ovHrs : [11, 16];
@@ -797,8 +798,8 @@
         var netErr = [rev.error, terr].filter(Boolean).join(" · ") || null;
         netEl.innerHTML = cardHtml("Net (revenue − cost)", net.yesterday, net.mtd, netErr, false, netErr ? "err" : "ok");
       }
-      renderAffiliation(data.affiliation_revenue || {}, rg);
-      bootstrapFeed2ApiTile();
+      renderAffiliation(data.affiliation_revenue || { yesterday: null, mtd: null, rows: [], error: null }, rg);
+      try { bootstrapFeed2ApiTile(); } catch (e) {}
     }
 
     function loadSnapshotFromDisk() {
@@ -886,6 +887,8 @@
     }
 
     function maybeResumeRefreshPoll() {
+      // After snapshot paint: only annotate if a refresh is running — do not wipe tiles
+      // or block the homepage on a long/stuck background job.
       return fetch(refreshStatusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
         .then(function(r) {
           if (!r.ok) return null;
@@ -893,21 +896,19 @@
         })
         .then(function(st) {
           if (!st || st.status !== "running" || !st.started_utc) return null;
-          // Do not hang the page on an orphaned "running" status (crashed refresh).
           var startedMs = Date.parse(String(st.started_utc).replace("Z", "+00:00"));
           if (!isNaN(startedMs) && Date.now() - startedMs > 45 * 60 * 1000) {
             return null;
           }
-          rangesEl.textContent = "Resuming in-progress refresh (started " + st.started_utc + ")…";
-          setTilesLoading();
-          return pollRefreshUntilDone(st.started_utc);
+          rangesEl.textContent =
+            (rangesEl.textContent || "") +
+            " · API refresh in progress (started " + st.started_utc + ")";
+          return null;
         })
         .catch(function() {
           return null;
         });
     }
-
-    var AFFIL_AUTO_REFRESH_KEY = "klblend-overview-affil-auto-refresh";
 
     function affiliationSnapshotMissing(data) {
       if (!data || data.snapshot_status === "missing") return true;
@@ -973,22 +974,41 @@
         });
     }
 
-    maybeResumeRefreshPoll()
-      .then(function(resumed) {
-        if (resumed) return resumed;
-        return loadSnapshotFromDisk().then(function(data) {
-          if (!affiliationSnapshotMissing(data)) return data;
-          var already = "";
-          try { already = sessionStorage.getItem(AFFIL_AUTO_REFRESH_KEY) || ""; } catch (e) {}
-          if (already === "1") return data;
-          try { sessionStorage.setItem(AFFIL_AUTO_REFRESH_KEY, "1"); } catch (e) {}
-          rangesEl.textContent = "Affiliation split missing from snapshot — queuing a rebuild…";
-          return queueOverviewRefresh({ allowJoinRunning: true });
+    // Snapshot first (instant paint). Never wait on refresh-status before showing tiles.
+    // Feed 2 loads on its own after the snapshot path starts.
+    try {
+      setTilesSnapshotLoading();
+    } catch (e) {}
+    try {
+      bootstrapFeed2ApiTile();
+    } catch (e) {}
+
+    loadSnapshotFromDisk()
+      .then(function(data) {
+        // Optional: if a refresh is already running, show a note but keep tiles visible.
+        return maybeResumeRefreshPoll().then(function(resumed) {
+          if (resumed) return resumed;
+          return data;
         });
+      })
+      .then(function(data) {
+        if (!data || !affiliationSnapshotMissing(data)) return data;
+        // Missing affiliation block: do NOT auto-queue a 15-min rebuild (that leaves
+        // the homepage looking broken). Show snapshot tiles; operator can Refresh.
+        var affEl = document.getElementById("tile-affiliation");
+        if (affEl && (!data.affiliation_revenue || typeof data.affiliation_revenue !== "object")) {
+          affEl.innerHTML =
+            '<div class="ov-affil">' +
+              "<h4>Affiliation revenue</h4>" +
+              '<div class="muted" style="margin-top:8px;">Not in this snapshot yet — click Refresh from APIs to rebuild.</div>' +
+            "</div>";
+        }
+        return data;
       })
       .catch(function(e) {
         failEl.style.display = "block";
         failEl.textContent = "Overview snapshot could not load: " + (e && e.message ? e.message : String(e));
+        rangesEl.textContent = "Snapshot unavailable";
       });
 
     if (refreshBtn) {
@@ -1010,7 +1030,7 @@
       feed2Host.addEventListener("click", function(ev) {
         var t = ev.target;
         if (t && t.id === "overview-feed2-api-refresh-btn") {
-          queueKelkoo2ApiRefresh();
+          try { queueKelkoo2ApiRefresh(); } catch (e) {}
         }
       });
     }
