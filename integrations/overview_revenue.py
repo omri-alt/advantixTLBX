@@ -7,8 +7,9 @@ response shapes and metric keys (``revenue``, ``payout``, etc.).
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from integrations.keitaro import KeitaroClient, KeitaroClientError
 
@@ -364,7 +365,12 @@ def _affil_revenue_share(aid: str) -> float:
         return 1.0
 
 
-def _sum_affiliation_from_report(report: Any) -> Dict[str, float]:
+def _sum_affiliation_from_report(
+    report: Any,
+    *,
+    skip_aids: Optional[set[str]] = None,
+) -> Dict[str, float]:
+    skip = skip_aids or set()
     totals = {aid: 0.0 for aid, _ in AFFILIATION_ORDER}
     for row in _rows_from_report(report):
         offer = _scalar_name(row, ("offer", "offer_name", "offer_id"))
@@ -372,22 +378,58 @@ def _sum_affiliation_from_report(report: Any) -> Dict[str, float]:
         aid = classify_affiliation(campaign_name=campaign, offer_name=offer)
         if aid not in totals:
             aid = "other"
+        if aid in skip:
+            continue
         rev = _row_revenue(row)
         share = _affil_revenue_share(aid)
         totals[aid] += rev * share
     return totals
 
 
+# Kelkoo feeds: one publisher aggregated GET each (not Keitaro row rollups).
+_KELKOO_AFFIL_API_TAGS: tuple[str, ...] = ("kelkoo1", "kelkoo2", "kelkoo4", "kelkoo5")
+
+
+def _fetch_kelkoo_affil_from_publisher_api(
+    tag: str,
+    *,
+    yesterday: date,
+    mtd_start: date,
+    mtd_end: date,
+) -> Tuple[Optional[Dict[str, float]], Optional[str]]:
+    """Single Kelkoo aggregated MTD call × postback share for one feed."""
+    from integrations.kelkoo_api_revenue import fetch_kelkoo_feed_api_revenue
+
+    try:
+        data = fetch_kelkoo_feed_api_revenue(
+            feed_tag=tag,
+            yesterday=yesterday,
+            mtd_start=mtd_start,
+            mtd_end=mtd_end,
+        )
+    except Exception as e:
+        return None, str(e)
+    err = data.get("error")
+    if err and data.get("mtd") is None:
+        return None, str(err)
+    return {
+        "yesterday": float(data.get("yesterday") or 0.0),
+        "mtd": float(data.get("mtd") or 0.0),
+    }, None
+
+
 def _fetch_affiliation_totals(
     client: KeitaroClient,
     d_from: date,
     d_to: date,
+    *,
+    skip_aids: Optional[set[str]] = None,
 ) -> tuple[Optional[Dict[str, float]], Optional[str]]:
     last_err: Optional[str] = None
     for payload in _affiliation_payloads(d_from, d_to):
         try:
             report = client.build_report(payload)
-            return _sum_affiliation_from_report(report), None
+            return _sum_affiliation_from_report(report, skip_aids=skip_aids), None
         except KeitaroClientError as e:
             last_err = str(e)
             logger.info("Keitaro affiliation report attempt failed: %s", last_err[:200])
@@ -426,43 +468,76 @@ def fetch_keitaro_affiliation_revenue(
     if mtd_start > mtd_end:
         return {"yesterday": 0.0, "mtd": 0.0, "error": None, "rows": empty_rows}
 
-    if not (api_key or "").strip():
-        return {
-            "yesterday": None,
-            "mtd": None,
-            "error": "KEITARO_API_KEY not set",
-            "rows": empty_rows,
-        }
-
-    client = KeitaroClient(base_url=base_url, api_key=api_key)
-    mtd_map, mtd_err = _fetch_affiliation_totals(client, mtd_start, mtd_end)
-    if mtd_map is None:
-        return {
-            "yesterday": None,
-            "mtd": None,
-            "error": mtd_err,
-            "rows": empty_rows,
-        }
-
-    y_map: Dict[str, float] = {aid: 0.0 for aid, _ in AFFILIATION_ORDER}
-    if mtd_start <= yesterday <= mtd_end:
-        y_only, y_err = _fetch_affiliation_totals(client, yesterday, yesterday)
-        if y_only is None:
-            logger.info("Keitaro affiliation yesterday split failed: %s", (y_err or "")[:200])
-        else:
-            y_map = y_only
-
     buckets = _empty_affiliation_buckets()
+    kelkoo_skip = set(_KELKOO_AFFIL_API_TAGS)
+    api_errors: List[str] = []
+
+    # One Kelkoo aggregated GET per feed (parallel, ~5s each).
+    with ThreadPoolExecutor(max_workers=len(_KELKOO_AFFIL_API_TAGS)) as pool:
+        futs = {
+            pool.submit(
+                _fetch_kelkoo_affil_from_publisher_api,
+                tag,
+                yesterday=yesterday,
+                mtd_start=mtd_start,
+                mtd_end=mtd_end,
+            ): tag
+            for tag in _KELKOO_AFFIL_API_TAGS
+        }
+        for fut in as_completed(futs):
+            tag = futs[fut]
+            try:
+                amounts, err = fut.result()
+            except Exception as e:
+                api_errors.append(f"{tag}: {e}")
+                continue
+            if err:
+                api_errors.append(f"{tag}: {err}")
+                continue
+            if amounts:
+                buckets[tag]["mtd"] = float(amounts.get("mtd") or 0.0)
+                buckets[tag]["yesterday"] = float(amounts.get("yesterday") or 0.0)
+
+    # Non-Kelkoo affiliations from Keitaro when configured (one report; kelkoo rows skipped).
+    mtd_map: Dict[str, float] = {aid: 0.0 for aid, _ in AFFILIATION_ORDER}
+    y_map: Dict[str, float] = {aid: 0.0 for aid, _ in AFFILIATION_ORDER}
+    keitaro_err: Optional[str] = None
+    if (api_key or "").strip():
+        client = KeitaroClient(base_url=base_url, api_key=api_key)
+        fetched, mtd_err = _fetch_affiliation_totals(client, mtd_start, mtd_end, skip_aids=kelkoo_skip)
+        if fetched is None:
+            keitaro_err = mtd_err
+            logger.info("Keitaro affiliation MTD failed: %s", (mtd_err or "")[:200])
+        else:
+            mtd_map = fetched
+        if mtd_start <= yesterday <= mtd_end:
+            y_only, y_err = _fetch_affiliation_totals(
+                client, yesterday, yesterday, skip_aids=kelkoo_skip
+            )
+            if y_only is None:
+                logger.info("Keitaro affiliation yesterday split failed: %s", (y_err or "")[:200])
+            else:
+                y_map = y_only
+    else:
+        keitaro_err = "KEITARO_API_KEY not set"
+
     for aid, _ in AFFILIATION_ORDER:
+        if aid in kelkoo_skip:
+            continue
         buckets[aid]["mtd"] = float(mtd_map.get(aid) or 0.0)
         buckets[aid]["yesterday"] = float(y_map.get(aid) or 0.0)
 
     rows = _affiliation_rows(buckets)
     y_total = sum(float(r["yesterday"]) for r in rows)
     m_total = sum(float(r["mtd"]) for r in rows)
+    err = None
+    if api_errors:
+        err = "; ".join(api_errors[:3])
+    elif not rows and keitaro_err:
+        err = keitaro_err
     return {
         "yesterday": round(y_total, 4),
         "mtd": round(m_total, 4),
-        "error": None,
+        "error": err,
         "rows": rows,
     }

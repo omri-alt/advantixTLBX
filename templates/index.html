@@ -633,7 +633,7 @@
           return r.json();
         })
         .then(function(payload) {
-          applyKijiji2ApiPayload(payload);
+          applyKelkoo2ApiPayload(payload);
         })
         .catch(function(e) {
           keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, {
@@ -645,7 +645,7 @@
         });
     }
 
-    function ensureKijiji2ApiLoaded() {
+    function ensureKelkoo2ApiLoaded() {
       if (kelkoo2ApiEnsureInFlight) return Promise.resolve();
       keitaro2ApiEnsureInFlight = true;
       renderFeed2ApiTile();
