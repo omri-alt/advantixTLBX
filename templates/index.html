@@ -57,56 +57,28 @@
     .overview { margin: 0 0 32px; }
     .overview h2 { margin: 0 0 10px; font-size: 1.15rem; font-weight: 700; }
     .overview .ov-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 12px; }
-    .overview .ov-actions .btn,
-    .ov-affil-head .btn { cursor: pointer; border: 0; font: inherit; }
-    .overview .ov-actions .btn:disabled,
-    .ov-affil-head .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-    .overview .ov-actions .btn-sm,
-    .ov-affil-head .btn-sm { font-size: 12px; padding: 6px 12px; border-radius: 8px; }
-    .ov-affil-head .btn { margin-left: auto; }
-    .ov-affil-note { font-size: 12px; color: var(--muted); margin: 0 0 10px; line-height: 1.4; }
-    .ov-affil-note strong { color: #cbd5e1; font-weight: 600; }
-    .ov-meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
-    .ov-row-top { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-    @media (max-width: 900px) { .ov-row-top { grid-template-columns: 1fr; } }
-    .ov-feed2 {
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #151f33;
+    .overview .ov-actions .btn { cursor: pointer; border: 0; font: inherit; }
+    .overview .ov-actions .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .overview .ov-actions .btn-sm { font-size: 12px; padding: 6px 12px; border-radius: 8px; }
+    .ov-live-h { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+    .ov-live-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 800px) { .ov-live-grid { grid-template-columns: 1fr; } }
+    .ov-live-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+    @media (max-width: 800px) { .ov-live-totals { grid-template-columns: 1fr; } }
+    .ov-live-card {
+      border: 1px solid var(--line); border-radius: 12px; background: #151f33;
       padding: 12px 14px;
-      position: relative;
     }
-    .ov-feed2.has-err { border-color: #92400e; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.15); }
-    .ov-feed2-head {
-      display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
-      margin-bottom: 8px;
-    }
-    .ov-feed2-head h4 { margin: 0; font-size: 14px; font-weight: 600; color: #cbd5e1; padding-right: 0; }
-    .ov-feed2-head .btn { margin-left: auto; }
-    .ov-feed2 .amt { font-size: 20px; font-weight: 700; }
-    .ov-feed2 .lbl { font-size: 11px; color: var(--muted); }
-    .ov-feed2 .sub { font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 2px; }
-    .ov-feed2-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-top: 8px; }
-    .ov-feed2-note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.35; }
-    .ov-feed2 .err { font-size: 11px; color: #fdba74; margin-top: 8px; }
-    .ov-affil-carousel { display: flex; align-items: stretch; gap: 10px; margin-top: 10px; }
-    .ov-affil-carousel .nav {
-      border: 1px solid var(--line); background: #17223a; color: var(--text);
-      border-radius: 10px; width: 36px; cursor: pointer; font: inherit; font-size: 18px;
-    }
-    .ov-affil-carousel .nav:disabled { opacity: 0.4; cursor: not-allowed; }
-    .ov-affil-slide {
-      flex: 1; border: 1px solid var(--line); border-radius: 12px; background: #0f172a;
-      padding: 12px 14px; min-height: 88px;
-    }
-    .ov-affil-slide .feed-name { font-size: 14px; font-weight: 600; color: #cbd5e1; margin: 0 0 8px; }
-    .ov-affil-slide .feed-metrics { display: flex; gap: 20px; flex-wrap: wrap; }
-    .ov-affil-dots { display: flex; gap: 6px; justify-content: center; margin-top: 10px; }
-    .ov-affil-dots button {
-      width: 8px; height: 8px; border-radius: 50%; border: 0; padding: 0;
-      background: #334155; cursor: pointer;
-    }
-    .ov-affil-dots button.on { background: var(--accent); }
+    .ov-live-card.has-err { border-color: #92400e; }
+    .ov-live-card .lbl { font-size: 11px; color: var(--muted); }
+    .ov-live-card .amt { font-size: 20px; font-weight: 700; margin-top: 2px; }
+    .ov-live-card .sub { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+    .ov-live-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .ov-live-table th, .ov-live-table td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+    .ov-live-table th { color: var(--muted); font-weight: 600; font-size: 11px; }
+    .ov-live-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ov-live-table .err { color: #fdba74; font-size: 11px; }
+
     .dd-summary {
       border: 1px solid var(--line); border-radius: 12px; background: #151f33;
       padding: 12px 14px; margin: 0 0 12px;
@@ -273,27 +245,21 @@
 
     <section class="overview" id="overview-widget" aria-live="polite">
       <h2 class="section-title">Performance overview</h2>
-      <p class="muted" style="margin:0 0 10px;font-size:13px;max-height:2.6em;overflow:hidden;">Snapshot tiles load instantly. Feed 2 API revenue loads on its own. Use <strong>Refresh</strong> only when you want a full Keitaro/DSP rebuild. <a href="{{ url_for('ui_help') }}#overview" style="color:#6b7280;font-size:12px;">?</a></p>
+      <p class="muted" style="margin:0 0 10px;font-size:13px;">Partner totals direct from APIs (no Keitaro). Cached ~15 min. <a href="{{ url_for('ui_help') }}#overview" style="color:#6b7280;font-size:12px;">?</a></p>
       <div class="ov-actions">
-        <button type="button" class="btn btn-sm" id="overview-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh from APIs</button>
-        <span class="muted" id="overview-snap-hint"></span>
+        <button type="button" class="btn btn-sm" id="ov-live-refresh" title="Force refresh from partner APIs (~15–30s)">Refresh</button>
+        <span class="muted" id="ov-live-meta">Loading…</span>
       </div>
-      <div id="overview-fail" class="muted" style="display:none;"></div>
-      <div id="overview-body">
-        <div class="ov-meta" id="overview-ranges">Preparing…</div>
-        <div class="ov-row-top">
-          <div id="tile-revenue"></div>
-          <div id="tile-net"></div>
-          <div id="tile-feed2-api"></div>
+      <div id="ov-live-fail" class="muted" style="display:none;margin-bottom:10px;"></div>
+      <div class="ov-live-totals" id="ov-live-totals"></div>
+      <div class="ov-live-grid">
+        <div>
+          <h3 class="ov-live-h">Revenue (partners)</h3>
+          <div id="ov-live-rev"></div>
         </div>
-        <div id="tile-affiliation"></div>
-        <div class="ov-row-costs" id="overview-costs">
-          <div id="tile-zeropark"></div>
-          <div id="tile-sourceknowledge"></div>
-          <div id="tile-ecomnia"></div>
-          <div id="tile-trillion"></div>
-          <div class="ov-card placeholder"><h4>Cost · Yesshh</h4><span class="ov-badge wait">—</span><div class="lbl">Yesterday</div><div class="amt">—</div><div class="lbl">MTD</div><div class="amt">—</div><div class="err">Not yet integrated</div></div>
-          <div id="tile-total"></div>
+        <div>
+          <h3 class="ov-live-h">Cost (DSPs)</h3>
+          <div id="ov-live-cost"></div>
         </div>
       </div>
     </section>
@@ -388,652 +354,86 @@
   </div>
   <script>
   (function() {
+    var metaEl = document.getElementById("ov-live-meta");
+    var failEl = document.getElementById("ov-live-fail");
+    var totalsEl = document.getElementById("ov-live-totals");
+    var revEl = document.getElementById("ov-live-rev");
+    var costEl = document.getElementById("ov-live-cost");
+    var btn = document.getElementById("ov-live-refresh");
+    var url = {{ url_for("api_overview_live") | tojson }};
+    if (!metaEl || !totalsEl || !revEl || !costEl) return;
+
     function money(v) {
       if (v === null || v === undefined || v === "") return "—";
       var n = Number(v);
       if (isNaN(n)) return "—";
       return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
-    function cardHtml(title, y, m, err, placeholder, badgeKind) {
-      var cls = "ov-card" + (err ? " has-err" : "") + (placeholder ? " placeholder" : "");
-      var errHtml = err ? '<div class="err">Error: ' + String(err).slice(0, 200) + (String(err).length > 200 ? "…" : "") + "</div>" : "";
-      var bk = badgeKind || (err ? "err" : "ok");
-      var bl = bk === "ok" ? "OK" : bk === "err" ? "Issue" : bk === "wait" ? "…" : "—";
-      var badge = '<span class="ov-badge ' + bk + '">' + bl + "</span>";
-      return (
-        '<div class="' + cls + '">' +
-          badge +
-          "<h4>" + title + "</h4>" +
-          '<div class="lbl">Yesterday (UTC)</div>' +
-          '<div class="amt">' + money(y) + "</div>" +
-          '<div class="lbl">Month-to-date</div>' +
-          '<div class="amt">' + money(m) + "</div>" +
-          errHtml +
-        "</div>"
-      );
-    }
-    function affiliationLoadingHtml() {
-      return (
-        '<div class="ov-affil">' +
-          "<h4>Affiliation revenue</h4>" +
-          '<div class="muted" style="margin-top:8px;"><span class="ov-spin" aria-hidden="true"></span> Loading…</div>' +
-        "</div>"
-      );
-    }
-    function tileLoading(title) {
-      return (
-        '<div class="ov-card ov-tile-loading">' +
-          '<span class="ov-badge wait">…</span>' +
-          "<h4>" + title + "</h4>" +
-          '<div class="muted"><span class="ov-spin" aria-hidden="true"></span> Loading…</div>' +
-        "</div>"
-      );
-    }
 
-    var AFFIL_SELECT_KEY = "klblend-overview-affiliation";
-    var AFFIL_AUTO_REFRESH_KEY = "klblend-overview-affil-auto-refresh";
-
-    function selectedAffiliationId() {
-      try {
-        var v = localStorage.getItem(AFFIL_SELECT_KEY) || "all";
-        // Legacy dropdown option removed — dedicated Feed 2 tile is always visible.
-        if (v === "kelkoo2_api") return "all";
-        return v;
-      } catch (e) {
-        return "all";
-      }
-    }
-
-    var keitaroAffState = null;
-    var keitaroAffRanges = null;
-    var keitaro2ApiState = null;
-    var keitaro2ApiPollTimer = null;
-    var keitaro2ApiBootstrapped = false;
-    var keitaro2ApiEnsureInFlight = false;
-    var keitaro2ApiPollStartedMs = 0;
-    var keitaro2ApiAutoRetries = 0;
-    // Declare URLs before any Feed 2 fetch helpers (avoid TDZ / undefined URL races).
-    var keitaro2ApiUrl = {{ url_for("api_overview_slice_kelkoo2_api") | tojson }};
-    var keitaro2ApiRefreshUrl = {{ url_for("api_overview_slice_kelkoo2_api_refresh") | tojson }};
-    var KEITARO2_API_POLL_MAX_MS = 12 * 60 * 1000;
-    var KEITARO2_API_AUTO_RETRY_MAX = 2;
-
-    var affCarouselIndex = 0;
-
-    function renderAffiliation(aff, ranges) {
-      var el = document.getElementById("tile-affiliation");
-      if (!el) return;
-      aff = aff || {};
-      keitaroAffState = aff;
-      keitaroAffRanges = ranges || keitaroAffRanges;
-      ranges = keitaroAffRanges || ranges || {};
-      var rows = Array.isArray(aff.rows) ? aff.rows.slice() : [];
-      var err = aff.error || null;
-      var sel = selectedAffiliationId();
-      if (sel !== "all" && !rows.some(function(r) { return r.id === sel; })) sel = "all";
-      if (sel !== "all") {
-        for (var i = 0; i < rows.length; i++) {
-          if (rows[i].id === sel) { affCarouselIndex = i; break; }
-        }
-      }
-      if (affCarouselIndex >= rows.length) affCarouselIndex = 0;
-      if (affCarouselIndex < 0) affCarouselIndex = 0;
-      var y = aff.yesterday;
-      var m = aff.mtd;
-      var from = (ranges && ranges.mtd_from) || "";
-      var to = (ranges && ranges.mtd_to) || "";
-      var windowLbl = from && to ? from + " → " + to : "1st of month through yesterday";
-      var slide = rows.length ? rows[affCarouselIndex] : null;
-      var slideHtml = "";
-      if (slide) {
-        slideHtml =
-          '<div class="ov-affil-slide">' +
-            '<div class="feed-name">' + slide.label + "</div>" +
-            '<div class="feed-metrics">' +
-              "<div><div class=\"lbl\">Yesterday</div><div class=\"sub\">" + money(slide.yesterday) + "</div></div>" +
-              "<div><div class=\"lbl\">MTD</div><div class=\"sub\">" + money(slide.mtd) + "</div></div>" +
-            "</div>" +
-          "</div>";
-      } else {
-        slideHtml = '<div class="ov-affil-slide"><div class="muted">No affiliation rows yet.</div></div>';
-      }
-      var dots = rows.map(function(r, idx) {
-        return '<button type="button" data-aff-dot="' + idx + '" class="' + (idx === affCarouselIndex ? "on" : "") + '" title="' + r.label + '"></button>';
-      }).join("");
-      var errHtml = err ? '<div class="err">Error: ' + String(err).slice(0, 200) + "</div>" : "";
-      el.innerHTML =
-        '<div class="ov-affil' + (err ? " has-err" : "") + '">' +
-          '<div class="ov-affil-head">' +
-            "<h4>Affiliation revenue (Keitaro)</h4>" +
-            '<button type="button" class="btn btn-sm" id="overview-affil-refresh-btn" title="Rebuild snapshot from all traffic APIs (slow)">Refresh</button>' +
-          "</div>" +
-          '<div class="ov-affil-total">' +
-            "<div>" +
-              '<div class="lbl">Cumulative MTD · All</div>' +
-              '<div class="amt">' + money(m) + "</div>" +
-            "</div>" +
-            "<div>" +
-              '<div class="lbl">Yesterday (UTC)</div>' +
-              '<div class="sub">' + money(y) + "</div>" +
-            "</div>" +
-            "<div>" +
-              '<div class="lbl">Window (UTC)</div>' +
-              '<div class="sub">' + windowLbl + "</div>" +
-            "</div>" +
-          "</div>" +
-          '<div class="ov-affil-carousel">' +
-            '<button type="button" class="nav" id="aff-prev" ' + (rows.length < 2 ? "disabled" : "") + ">‹</button>" +
-            slideHtml +
-            '<button type="button" class="nav" id="aff-next" ' + (rows.length < 2 ? "disabled" : "") + ">›</button>" +
-          "</div>" +
-          (dots ? '<div class="ov-affil-dots">' + dots + "</div>" : "") +
-          errHtml +
-        "</div>";
-      function go(idx) {
-        if (!rows.length) return;
-        affCarouselIndex = (idx + rows.length) % rows.length;
-        try { localStorage.setItem(AFFIL_SELECT_KEY, rows[affCarouselIndex].id); } catch (e) {}
-        renderAffiliation(keitaroAffState || aff, keitaroAffRanges || ranges);
-      }
-      var prev = document.getElementById("aff-prev");
-      var next = document.getElementById("aff-next");
-      if (prev) prev.addEventListener("click", function() { go(affCarouselIndex - 1); });
-      if (next) next.addEventListener("click", function() { go(affCarouselIndex + 1); });
-      el.querySelectorAll("[data-aff-dot]").forEach(function(btn) {
-        btn.addEventListener("click", function() {
-          go(parseInt(btn.getAttribute("data-aff-dot"), 10) || 0);
-        });
+    function rowsTable(rows) {
+      rows = Array.isArray(rows) ? rows : [];
+      if (!rows.length) return '<div class="muted">No rows</div>';
+      var html = '<table class="ov-live-table"><thead><tr><th>Partner</th><th class="num">Yesterday</th><th class="num">MTD</th></tr></thead><tbody>';
+      rows.forEach(function(r) {
+        html += "<tr>" +
+          "<td>" + (r.label || r.id || "") +
+            (r.error ? '<div class="err">' + String(r.error).slice(0, 120) + "</div>" : "") +
+          "</td>" +
+          '<td class="num">' + money(r.yesterday) + "</td>" +
+          '<td class="num">' + money(r.mtd) + "</td>" +
+          "</tr>";
       });
+      html += "</tbody></table>";
+      return html;
     }
 
-    function renderFeed2ApiTile() {
-      var el = document.getElementById("tile-feed2-api");
-      if (!el) return;
-      var api = keitaro2ApiState || {};
-      var st = String(api.refresh_status || "");
-      var err = api.error || null;
-      var sharePct = api.share != null ? Math.round(Number(api.share) * 100) : 70;
-      var loading = st === "running";
-      var needsLoad = api.mtd == null && !loading;
-      var badgeKind = err ? "err" : (loading || needsLoad ? "wait" : "ok");
-      var badgeLabel = badgeKind === "ok" ? "OK" : badgeKind === "err" ? "Issue" : "…";
-      var btnLabel = loading ? "Loading…" : (needsLoad ? "Load" : "Refresh");
-      var note = "Collectible MTD · Kelkoo aggregated lead revenue × " + sharePct + "% (not Keitaro)";
-      if (loading) {
-        note = "Fetching Feed 2 MTD from Kelkoo aggregated report…";
-      } else if (api.cached_utc || api.as_of_utc) {
-        note += " · as of " + (api.cached_utc || api.as_of_utc);
-      }
-      el.innerHTML =
-        '<div class="ov-feed2' + (err ? " has-err" : "") + '">' +
-          '<div class="ov-feed2-head">' +
-            "<h4>Feed 2 revenue (API)</h4>" +
-            '<span class="ov-badge ' + badgeKind + '" style="position:static;">' + badgeLabel + "</span>" +
-            '<button type="button" class="btn btn-sm" id="overview-feed2-api-refresh-btn" title="Rebuild from Kelkoo aggregated MTD"' +
-              (loading ? " disabled" : "") + ">" + btnLabel + "</button>" +
-          "</div>" +
-          '<div class="lbl">MTD collectible (net)</div>' +
-          '<div class="amt">' + money(api.mtd) + "</div>" +
-          '<div class="ov-feed2-grid">' +
-            "<div><div class=\"lbl\">Yesterday</div><div class=\"sub\">" + money(api.yesterday) + "</div></div>" +
-            "<div><div class=\"lbl\">Gross MTD</div><div class=\"sub\">" + money(api.mtd_gross) + "</div></div>" +
-            "<div><div class=\"lbl\">Share</div><div class=\"sub\">" + sharePct + "%</div></div>" +
-            "<div><div class=\"lbl\">Source</div><div class=\"sub\">Aggregated</div></div>" +
-          "</div>" +
-          '<div class="ov-feed2-note">' + note + "</div>" +
-          (err ? '<div class="err">Error: ' + String(err).slice(0, 180) + "</div>" : "") +
-        "</div>";
+    function render(data) {
+      var t = (data && data.totals) || {};
+      var rg = (data && data.ranges) || {};
+      totalsEl.innerHTML =
+        '<div class="ov-live-card"><div class="lbl">Revenue MTD</div><div class="amt">' + money(t.revenue_mtd) +
+          '</div><div class="sub">Yesterday ' + money(t.revenue_yesterday) + "</div></div>" +
+        '<div class="ov-live-card"><div class="lbl">Cost MTD</div><div class="amt">' + money(t.cost_mtd) +
+          '</div><div class="sub">Yesterday ' + money(t.cost_yesterday) + "</div></div>" +
+        '<div class="ov-live-card"><div class="lbl">Net MTD</div><div class="amt">' + money(t.net_mtd) +
+          '</div><div class="sub">Yesterday ' + money(t.net_yesterday) + "</div></div>";
+      revEl.innerHTML = rowsTable(data.revenue_rows);
+      costEl.innerHTML = rowsTable(data.cost_rows);
+      var bits = [];
+      if (rg.mtd_from && rg.mtd_to) bits.push(rg.mtd_from + " → " + rg.mtd_to + " UTC");
+      if (data.as_of_utc) bits.push("as of " + data.as_of_utc);
+      if (data.elapsed_sec != null) bits.push(data.elapsed_sec + "s");
+      if (data.cached) bits.push("cached");
+      metaEl.textContent = bits.join(" · ") || "Ready";
     }
 
-    function stopKelkoo2ApiPoll() {
-      if (kelkoo2ApiPollTimer) {
-        clearInterval(kelkoo2ApiPollTimer);
-        keitaro2ApiPollTimer = null;
-      }
-    }
-
-    function applyKelkoo2ApiPayload(payload) {
-      var data = payload && payload.data ? payload.data : payload;
-      if (!data || typeof data !== "object") return;
-      keitaro2ApiState = data;
-      if (payload && payload.ranges) keitaroAffRanges = Object.assign({}, keitaroAffRanges || {}, payload.ranges);
-      renderFeed2ApiTile();
-    }
-
-    function fetchKelkoo2ApiState() {
-      return fetch(kelkoo2ApiUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
-        .then(function(r) {
-          if (r.status === 401) throw new Error("HTTP 401 — sign in again");
-          if (!r.ok) {
-            return r.text().then(function(t) {
-              throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200));
-            });
-          }
-          return r.json();
-        })
-        .then(function(payload) {
-          applyKelkoo2ApiPayload(payload);
-          return payload;
-        });
-    }
-
-    function queueKelkoo2ApiRefresh() {
-      stopKelkoo2ApiPoll();
-      keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, { refresh_status: "running", error: null });
-      renderFeed2ApiTile();
-      return fetch(kelkoo2ApiRefreshUrl, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { Accept: "application/json" },
-      })
-        .then(function(r) {
-          if (r.status === 401) throw new Error("HTTP 401 — sign in again");
-          if (!r.ok && r.status !== 202) {
-            return r.text().then(function(t) {
-              throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200));
-            });
-          }
-          return r.json();
-        })
-        .then(function(payload) {
-          applyKelkoo2ApiPayload(payload);
-        })
-        .catch(function(e) {
-          keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, {
-            refresh_status: "error",
-            error: e && e.message ? e.message : String(e),
-          });
-          renderFeed2ApiTile();
-          keitaro2ApiBootstrapped = false;
-        });
-    }
-
-    function ensureKelkoo2ApiLoaded() {
-      if (kelkoo2ApiEnsureInFlight) return Promise.resolve();
-      keitaro2ApiEnsureInFlight = true;
-      renderFeed2ApiTile();
-      // GET rebuilds synchronously on cache miss (aggregated MTD is ~5–15s).
-      return fetchKelkoo2ApiState()
-        .then(function(payload) {
-          var data = payload && payload.data ? payload.data : payload;
-          if (data && data.mtd == null && data.refresh_status !== "running") {
-            return queueKelkoo2ApiRefresh();
-          }
-          renderFeed2ApiTile();
-        })
-        .catch(function(e) {
-          keitaro2ApiState = Object.assign({}, keitaro2ApiState || {}, {
-            label: "Feed 2 revenue (API)",
-            refresh_status: "error",
-            error: e && e.message ? e.message : String(e),
-          });
-          renderFeed2ApiTile();
-          keitaro2ApiBootstrapped = false;
-        })
-        .finally(function() {
-          keitaro2ApiEnsureInFlight = false;
-        });
-    }
-
-    function bootstrapFeed2ApiTile() {
-      if (kelkoo2ApiEnsureInFlight) return;
-      if (kelkoo2ApiBootstrapped && keitaro2ApiState && keitaro2ApiState.mtd != null) return;
-      if (kelkoo2ApiBootstrapped && keitaro2ApiState && keitaro2ApiState.refresh_status === "running") return;
-      keitaro2ApiBootstrapped = true;
-      ensureKelkoo2ApiLoaded();
-    }
-
-    var failEl = document.getElementById("overview-fail");
-    var rangesEl = document.getElementById("overview-ranges");
-    var refreshBtn = document.getElementById("overview-refresh-btn");
-    var snapHintEl = document.getElementById("overview-snap-hint");
-    var ovTz = {{ overview_snapshot_tz | tojson }};
-    var ovHrs = {{ overview_snapshot_hours | tojson }};
-    var overviewUrl = {{ url_for("api_overview") | tojson }};
-    var refreshUrl = {{ url_for("api_overview_refresh") | tojson }};
-    var refreshStatusUrl = {{ url_for("api_overview_refresh_status") | tojson }};
-
-    var TILE_KEYS = ["revenue", "zeropark", "sourceknowledge", "ecomnia", "trillion"];
-    var TITLES = {
-      revenue: "Revenue (affiliations)",
-      zeropark: "Cost · Zeropark",
-      sourceknowledge: "Cost · SourceKnowledge",
-      ecomnia: "Cost · Ecomnia",
-      trillion: "Cost · Trillion (TR)",
-    };
-
-    if (!rangesEl || !failEl) return;
-
-    // Paint loading state immediately — never leave the page stuck on "Preparing…".
-    rangesEl.textContent = "Loading snapshot…";
-
-    if (snapHintEl) {
-      var hrs = Array.isArray(ovHrs) && ovHrs.length ? ovHrs : [11, 16];
-      var times = hrs.map(function(h) {
-        return String(h).padStart(2, "0") + ":00";
-      }).join(" and ");
-      snapHintEl.textContent =
-        "Page reads the saved snapshot (instant). Auto rebuild at " +
-        times +
-        " " +
-        ovTz +
-        ". Use the button only when you want fresh API numbers.";
-    }
-
-    function setTilesSnapshotLoading() {
-      TILE_KEYS.forEach(function(k) {
-        var el = document.getElementById("tile-" + k);
-        if (el) el.innerHTML = tileLoading(TITLES[k]);
-      });
-      var netEl = document.getElementById("tile-net");
-      var totEl = document.getElementById("tile-total");
-      if (netEl) netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Loading snapshot…", false, "wait");
-      if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC + TR)", null, null, "Loading snapshot…", false, "wait");
-      var affEl = document.getElementById("tile-affiliation");
-      if (affEl) affEl.innerHTML = affiliationLoadingHtml();
-      // Do not reset Feed 2 API tile here — it loads independently and snapshot
-      // loading used to stomp running/ok state back to "missing".
-      if (!keitaro2ApiState) {
-        renderFeed2ApiTile();
-      }
-      bootstrapFeed2ApiTile();
-    }
-
-    function setTilesLoading() {
-      TILE_KEYS.forEach(function(k) {
-        var el = document.getElementById("tile-" + k);
-        if (el) el.innerHTML = tileLoading(TITLES[k]);
-      });
-      var netEl = document.getElementById("tile-net");
-      var totEl = document.getElementById("tile-total");
-      if (netEl) netEl.innerHTML = cardHtml("Net (revenue − cost)", null, null, "Refreshing…", false, "wait");
-      if (totEl) totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC + TR)", null, null, "Refreshing…", false, "wait");
-      var affEl = document.getElementById("tile-affiliation");
-      if (affEl) affEl.innerHTML = affiliationLoadingHtml();
-    }
-
-    function renderFromSnapshot(data) {
+    function load(force) {
+      if (btn) btn.disabled = true;
       failEl.style.display = "none";
-      var rg = data.ranges || {};
-      var snap = data.snapshot_saved_utc || "";
-      var st = data.snapshot_status || "";
-      rangesEl.textContent =
-        (snap ? "Saved " + snap + " · " : "") +
-        (st ? "status " + st + " · " : "") +
-        "Yesterday " +
-        (rg.yesterday || "") +
-        " · MTD " +
-        (rg.mtd_from || "") +
-        " → " +
-        (rg.mtd_to || "") +
-        (data.as_of_utc ? " · data as of " + data.as_of_utc : "");
-
-      var rev = data.revenue || {};
-      var revEl = document.getElementById("tile-revenue");
-      if (revEl) {
-        revEl.innerHTML = cardHtml("Revenue (affiliations)", rev.yesterday, rev.mtd, rev.error, false, rev.error ? "err" : "ok");
-      }
-      var c = data.costs || {};
-      function costTile(key, title) {
-        var x = (c[key] || {});
-        var el = document.getElementById("tile-" + key);
-        if (el) el.innerHTML = cardHtml(title, x.yesterday, x.mtd, x.error, false, x.error ? "err" : "ok");
-      }
-      costTile("zeropark", TITLES.zeropark);
-      costTile("sourceknowledge", TITLES.sourceknowledge);
-      costTile("ecomnia", TITLES.ecomnia);
-      costTile("trillion", TITLES.trillion);
-
-      var tc = data.total_cost || {};
-      var net = data.net || {};
-      var terr = [rev.error, (c.zeropark || {}).error, (c.sourceknowledge || {}).error, (c.ecomnia || {}).error, (c.trillion || {}).error]
-        .filter(Boolean)
-        .join(" · ") || null;
-      var totEl = document.getElementById("tile-total");
-      if (totEl) {
-        totEl.innerHTML = cardHtml("Total cost (ZP + SK + EC + TR)", tc.yesterday, tc.mtd, terr, false, terr ? "err" : "ok");
-      }
-      var netEl = document.getElementById("tile-net");
-      if (netEl) {
-        var netErr = [rev.error, terr].filter(Boolean).join(" · ") || null;
-        netEl.innerHTML = cardHtml("Net (revenue − cost)", net.yesterday, net.mtd, netErr, false, netErr ? "err" : "ok");
-      }
-      renderAffiliation(data.affiliation_revenue || { yesterday: null, mtd: null, rows: [], error: null }, rg);
-      try { bootstrapFeed2ApiTile(); } catch (e) {}
-    }
-
-    function loadSnapshotFromDisk() {
-      failEl.style.display = "none";
-      rangesEl.textContent = "Loading snapshot…";
-      setTilesSnapshotLoading();
-      return fetch(overviewUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      metaEl.textContent = force ? "Refreshing partners…" : "Loading…";
+      var u = url + (force ? "?refresh=1" : "");
+      return fetch(u, { credentials: "same-origin", headers: { Accept: "application/json" } })
         .then(function(r) {
-          if (r.status === 401) throw new Error("HTTP 401 — sign in again");
+          if (r.status === 401) throw new Error("Sign in again");
           if (!r.ok) throw new Error("HTTP " + r.status);
           return r.json();
         })
         .then(function(data) {
-          renderFromSnapshot(data);
-          return data;
-        });
-    }
-
-    function pollRefreshUntilDone(sessionStartedUtc) {
-      var pollStarted = Date.now();
-      var maxMs = 900000;
-      function tick() {
-        return fetch(refreshStatusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
-          .then(function(r) {
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            return r.json();
-          })
-          .then(function(st) {
-            var status = (st && st.status) || "";
-            var stStarted = (st && st.started_utc) || "";
-            if (sessionStartedUtc && stStarted && stStarted !== sessionStartedUtc) {
-              if (status === "running") {
-                throw new Error(
-                  "Another overview refresh is already running (started " + stStarted + "). Wait for it to finish."
-                );
-              }
-              if (status === "done") {
-                if (Date.now() - pollStarted > maxMs) {
-                  throw new Error("Refresh timed out waiting for this session to complete");
-                }
-                return new Promise(function(resolve) {
-                  setTimeout(function() { resolve(tick()); }, 2500);
-                });
-              }
-            }
-            if (status === "running") {
-              var hint = stStarted ? "Started " + stStarted + " · " : "";
-              rangesEl.textContent = hint + "Refreshing snapshot from APIs (background, may take 5–15+ min)…";
-              if (Date.now() - pollStarted > maxMs) {
-                throw new Error(
-                  "Refresh still running after 15 minutes — check runtime/overview_refresh_last.log on the server"
-                );
-              }
-              return new Promise(function(resolve) {
-                setTimeout(function() { resolve(tick()); }, 2500);
-              });
-            }
-            if (status === "error") {
-              throw new Error(st.error || "Overview refresh failed");
-            }
-            if (status === "done") {
-              if (sessionStartedUtc && stStarted && stStarted !== sessionStartedUtc) {
-                if (Date.now() - pollStarted > maxMs) {
-                  throw new Error("Refresh timed out waiting for matching completion");
-                }
-                return new Promise(function(resolve) {
-                  setTimeout(function() { resolve(tick()); }, 2500);
-                });
-              }
-              return loadSnapshotFromDisk();
-            }
-            if (status === "idle" || !status) {
-              if (Date.now() - pollStarted > maxMs) {
-                throw new Error("Refresh did not start (status idle). Check server logs.");
-              }
-              rangesEl.textContent = "Waiting for refresh worker to start…";
-              return new Promise(function(resolve) {
-                setTimeout(function() { resolve(tick()); }, 1500);
-              });
-            }
-            throw new Error("Unknown refresh status: " + status);
-          });
-      }
-      return tick();
-    }
-
-    function maybeResumeRefreshPoll() {
-      // After snapshot paint: only annotate if a refresh is running — do not wipe tiles
-      // or block the homepage on a long/stuck background job.
-      return fetch(refreshStatusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } })
-        .then(function(r) {
-          if (!r.ok) return null;
-          return r.json();
-        })
-        .then(function(st) {
-          if (!st || st.status !== "running" || !st.started_utc) return null;
-          var startedMs = Date.parse(String(st.started_utc).replace("Z", "+00:00"));
-          if (!isNaN(startedMs) && Date.now() - startedMs > 45 * 60 * 1000) {
-            return null;
-          }
-          rangesEl.textContent =
-            (rangesEl.textContent || "") +
-            " · API refresh in progress (started " + st.started_utc + ")";
-          return null;
-        })
-        .catch(function() {
-          return null;
-        });
-    }
-
-    function affiliationSnapshotMissing(data) {
-      if (!data || data.snapshot_status === "missing") return true;
-      var aff = data.affiliation_revenue;
-      return aff == null || typeof aff !== "object";
-    }
-
-    function setRefreshButtonsDisabled(on) {
-      if (refreshBtn) refreshBtn.disabled = !!on;
-      var affBtn = document.getElementById("overview-affil-refresh-btn");
-      if (affBtn) affBtn.disabled = !!on;
-    }
-
-    function queueOverviewRefresh(opts) {
-      opts = opts || {};
-      var allowJoinRunning = !!opts.allowJoinRunning;
-      setRefreshButtonsDisabled(true);
-      failEl.style.display = "none";
-      setTilesLoading();
-      rangesEl.textContent = "Queuing snapshot refresh from APIs…";
-      return fetch(refreshUrl, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { Accept: "application/json" },
-      })
-        .then(function(r) {
-          if (r.status === 401) throw new Error("HTTP 401 — sign in again");
-          if (!r.ok) {
-            return r.text().then(function(t) {
-              throw new Error("HTTP " + r.status + " " + (t || "").slice(0, 200));
-            });
-          }
-          return r.json();
-        })
-        .then(function(st) {
-          if (st && st.status === "error") {
-            throw new Error(st.error || "Could not queue refresh");
-          }
-          if (st && st.queued === false && st.status === "running") {
-            if (allowJoinRunning && st.started_utc) {
-              rangesEl.textContent = "Joining in-progress refresh (started " + st.started_utc + ")…";
-              return pollRefreshUntilDone(st.started_utc);
-            }
-            throw new Error(
-              "A refresh is already running" +
-                (st.started_utc ? " (started " + st.started_utc + ")" : "") +
-                ". Wait for it to finish."
-            );
-          }
-          var sessionStarted = (st && st.started_utc) || "";
-          if (!sessionStarted) {
-            throw new Error("Refresh was not queued (missing started_utc in response)");
-          }
-          return pollRefreshUntilDone(sessionStarted);
+          if (data && data.error && !data.totals) throw new Error(data.error);
+          render(data || {});
         })
         .catch(function(e) {
           failEl.style.display = "block";
-          failEl.textContent = "Refresh failed: " + (e && e.message ? e.message : String(e));
-          return loadSnapshotFromDisk();
+          failEl.textContent = "Overview failed: " + (e && e.message ? e.message : String(e));
+          metaEl.textContent = "Failed";
         })
         .finally(function() {
-          setRefreshButtonsDisabled(false);
+          if (btn) btn.disabled = false;
         });
     }
 
-    // Snapshot first (instant paint). Never wait on refresh-status before showing tiles.
-    // Feed 2 loads on its own after the snapshot path starts.
-    try {
-      setTilesSnapshotLoading();
-    } catch (e) {}
-    try {
-      bootstrapFeed2ApiTile();
-    } catch (e) {}
-
-    loadSnapshotFromDisk()
-      .then(function(data) {
-        // Optional: if a refresh is already running, show a note but keep tiles visible.
-        return maybeResumeRefreshPoll().then(function(resumed) {
-          if (resumed) return resumed;
-          return data;
-        });
-      })
-      .then(function(data) {
-        if (!data || !affiliationSnapshotMissing(data)) return data;
-        // Missing affiliation block: do NOT auto-queue a 15-min rebuild (that leaves
-        // the homepage looking broken). Show snapshot tiles; operator can Refresh.
-        var affEl = document.getElementById("tile-affiliation");
-        if (affEl && (!data.affiliation_revenue || typeof data.affiliation_revenue !== "object")) {
-          affEl.innerHTML =
-            '<div class="ov-affil">' +
-              "<h4>Affiliation revenue</h4>" +
-              '<div class="muted" style="margin-top:8px;">Not in this snapshot yet — click Refresh from APIs to rebuild.</div>' +
-            "</div>";
-        }
-        return data;
-      })
-      .catch(function(e) {
-        failEl.style.display = "block";
-        failEl.textContent = "Overview snapshot could not load: " + (e && e.message ? e.message : String(e));
-        rangesEl.textContent = "Snapshot unavailable";
-      });
-
-    if (refreshBtn) {
-      refreshBtn.addEventListener("click", function() {
-        queueOverviewRefresh();
-      });
-    }
-    var affHost = document.getElementById("tile-affiliation");
-    if (affHost) {
-      affHost.addEventListener("click", function(ev) {
-        var t = ev.target;
-        if (t && t.id === "overview-affil-refresh-btn") {
-          queueOverviewRefresh();
-        }
-      });
-    }
-    var feed2Host = document.getElementById("tile-feed2-api");
-    if (feed2Host) {
-      feed2Host.addEventListener("click", function(ev) {
-        var t = ev.target;
-        if (t && t.id === "overview-feed2-api-refresh-btn") {
-          try { queueKelkoo2ApiRefresh(); } catch (e) {}
-        }
-      });
-    }
+    if (btn) btn.addEventListener("click", function() { load(true); });
+    load(false);
   })();
   </script>
   <script>

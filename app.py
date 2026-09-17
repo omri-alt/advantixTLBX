@@ -2426,6 +2426,23 @@ def api_overview_refresh():
     return jsonify(state), code
 
 
+@app.route("/api/overview/live", methods=["GET"])
+def api_overview_live():
+    """
+    Lean Performance overview: partner revenue/cost totals (no Keitaro).
+
+    Cached ~15 min on disk. ``?refresh=1`` forces a rebuild (~10–30s).
+    """
+    from integrations.overview_partners import build_overview_live
+
+    try:
+        force = (request.args.get("refresh") or "").strip().lower() in ("1", "true", "yes")
+        return jsonify(build_overview_live(force=force))
+    except Exception as e:
+        logger.exception("GET /api/overview/live failed")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/overview", methods=["GET"])
 def api_overview():
     """Dashboard metrics from the last snapshot (fast). Rebuild via ``POST /api/overview/refresh`` or daily scheduler."""

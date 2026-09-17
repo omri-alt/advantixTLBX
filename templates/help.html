@@ -56,23 +56,22 @@
 
     <main class="help-main" id="help-main">
 
-      <section class="help-group help-section" id="overview" data-help-search="overview snapshot dashboard performance refresh apis">
+      <section class="help-group help-section" id="overview" data-help-search="overview snapshot dashboard performance refresh apis partners live">
         <h2>Performance overview</h2>
-        <details class="help-acc" open data-help-search="overview snapshot">
-          <summary>Homepage overview tiles</summary>
+        <details class="help-acc" open data-help-search="overview live partners">
+          <summary>Homepage lean overview</summary>
           <div class="help-acc-body">
-            <p>Tiles read the on-disk snapshot (fast). <strong>Refresh from APIs</strong> (top of the widget, or the affiliation card’s own Refresh) rebuilds revenue, affiliation split, and DSP cost tiles and can take several minutes.</p>
+            <p>The homepage <strong>Performance overview</strong> loads partner totals directly (no Keitaro): Kelkoo aggregated CPC×share per feed, Yadore day reports (EUR, shown separately), and DSP cost APIs. Results cache on disk ~15 minutes.</p>
             <table>
               <thead><tr><th>Action</th><th>Description</th></tr></thead>
               <tbody>
-                <tr><td><code>GET /api/overview</code></td><td>Return last saved snapshot JSON.</td></tr>
-                <tr><td><code>POST /api/overview/refresh</code></td><td>Rebuild snapshot from live APIs.</td></tr>
+                <tr><td><code>GET /api/overview/live</code></td><td>Cached partner totals (fast after first build).</td></tr>
+                <tr><td><code>GET /api/overview/live?refresh=1</code></td><td>Force rebuild from partner APIs (~10–30s).</td></tr>
               </tbody>
             </table>
-            <p><strong>Affiliation revenue</strong> is Keitaro conversion revenue from the <strong>1st of the current UTC month through yesterday</strong>, split by monetization network (Kelkoo 1/2/4/5, Yadore, Adexa, Shopnomix, Effinity, FlexOffers). The top <strong>Revenue</strong> and <strong>Net</strong> tiles use this same total. The affiliation card shows MTD/yesterday totals plus a <strong>carousel</strong> of per-feed numbers. Unmapped offers land in <strong>Other</strong>.</p>
-            <p>The homepage also shows a dedicated <strong>Feed 2 revenue (API)</strong> tile next to Revenue/Net: Kelkoo publisher raw-report CPC + sales at our net share (default 70%). It auto-loads on page open (and refreshes with the scheduled overview rebuild); it does not change the top Revenue/Net totals.</p>
-            <p>Failed AutoServer jobs surface as a red banner (with consecutive failure count). Each failed run is retried once automatically before the failure is logged.</p>
-            <p><strong>Caveat:</strong> Auto rebuild runs twice daily by default at <strong>11:00</strong> and <strong>16:00</strong> <code>Asia/Jerusalem</code> (<code>OVERVIEW_SCHEDULER_ENABLED</code>, <code>OVERVIEW_SNAPSHOT_HOURS</code>, <code>OVERVIEW_SNAPSHOT_TZ</code>). Legacy single-hour: <code>OVERVIEW_SNAPSHOT_HOUR</code>. After deploy, <code>OVERVIEW_SNAPSHOT_BOOTSTRAP</code> (default <code>missing</code>) rebuilds the overview if the file is absent or schema-stale (no affiliation block), and fills missing domain-demand / Blend-cap caches. Force all: <code>always</code>. Cron: <code>python cli/refresh_dashboard_snapshots.py</code>.</p>
+            <p><strong>Revenue (USD totals):</strong> Kelkoo 1 / 2 / 5 / 4 via one aggregated report GET each (net share applied). Yadore uses <code>/v2/report/general</code> per day in EUR and is listed but not mixed into USD Revenue/Net.</p>
+            <p><strong>Cost:</strong> Zeropark, Ecomnia, Trillion, and SourceKnowledge. SK needs <code>SK_ACCOUNT_STATS_URL</code> (account aggregate only — no per-campaign crawl).</p>
+            <p>Legacy snapshot endpoints (<code>GET /api/overview</code>, <code>POST /api/overview/refresh</code>) remain for other tools; the homepage no longer waits on them.</p>
             <p><a href="{{ url_for('ui_home') }}">Open Control Center →</a></p>
           </div>
         </details>
