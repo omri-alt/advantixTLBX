@@ -18,6 +18,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+_automation_listeners: List[Any] = []
+_scheduler: Any = None
+_started = False
+
 # Stagger AutoServer ticks so Sheets-heavy jobs do not all fire at :00.
 # Even-hour jobs still gate inside on_hourly_signal; the minute is when the tick fires.
 AUTOSERVER_CRON_MINUTES: Dict[str, int] = {
