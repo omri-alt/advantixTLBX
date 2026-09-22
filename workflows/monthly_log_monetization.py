@@ -555,7 +555,7 @@ def load_adexa_month_used_merchants(
     """
     ``(geo_lower, merchant_id)`` already used this calendar month on the Adexa log.
 
-    Used to enforce once-per-month (one 300-click day) for Adexa Nipuhim picks.
+    Used to enforce once-per-month (one 500-click day) for Adexa Nipuhim picks.
     """
     if not run_date_str or len(run_date_str) < 7:
         return set()

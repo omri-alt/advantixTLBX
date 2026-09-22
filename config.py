@@ -574,13 +574,13 @@ try:
 except ValueError:
     DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO = 500
 DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO = max(0, DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO)
-# Soft launch: Adexa Nipuhim demand per merchant×geo (lower than Kelkoo default 500).
+# Soft launch raised: Adexa Nipuhim demand per merchant×geo (same default as Kelkoo).
 try:
     DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO = int(
-        (os.getenv("DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO") or "300").strip()
+        (os.getenv("DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO") or "500").strip()
     )
 except ValueError:
-    DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO = 300
+    DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO = 500
 DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO = max(0, DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO)
 try:
     DOMAIN_DEMAND_TRILLION_PAUSE_FILL_PCT = float(

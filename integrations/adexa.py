@@ -1380,6 +1380,101 @@ def fetch_stats_raw(
     return stats
 
 
+def sum_stats_raw_commission(
+    start: str,
+    end: str,
+    *,
+    site_id: Optional[str] = None,
+    api_key: Optional[str] = None,
+    nb_page: int = 1000,
+    timeout: int = 90,
+    max_workers: int = 12,
+) -> Dict[str, Any]:
+    """
+    Sum publisher ``commission`` (CPC) from StatsRaw over ``start``–``end``.
+
+    Pages in parallel (API caps ``nb_page`` at 1000). Also returns per-``day`` totals
+    when the row includes a ``day`` field (YYYY-MM-DD).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    sid = (site_id or ADEXA_SITE_ID or "").strip()
+    key = (api_key or ADEXA_API_KEY or "").strip()
+    if not sid:
+        raise AdexaClientError("ADEXA_SITE_ID / AdexSiteID is not set")
+    if not key:
+        raise AdexaClientError("ADEXA_API_KEY / KeyAdex is not set")
+
+    nb = max(1, min(1000, int(nb_page or 1000)))
+
+    def _money(v: Any) -> float:
+        try:
+            return float(str(v).replace(",", "."))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _accumulate(rows: List[Any]) -> tuple[float, int, Dict[str, float]]:
+        total = 0.0
+        n = 0
+        by_day: Dict[str, float] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            c = _money(row.get("commission"))
+            total += c
+            n += 1
+            day = str(row.get("day") or "")[:10]
+            if len(day) == 10 and day[4] == "-" and day[7] == "-":
+                by_day[day] = float(by_day.get(day) or 0.0) + c
+        return total, n, by_day
+
+    def fetch_page(page_idx: int) -> tuple[int, List[Dict[str, Any]]]:
+        endpoint = (
+            f"{ADEXA_STATS_RAW_BASE}/siteID={sid}&apiKey={key}&start={start}&end={end}"
+            f"&nb_page={nb}&page={page_idx}&format=json"
+        )
+        r = _adexa_get_with_retry(endpoint, timeout=timeout)
+        if r.status_code != 200:
+            raise AdexaClientError(
+                f"StatsRaw HTTP {r.status_code}",
+                status_code=r.status_code,
+                response_body=(r.text[:800] if r.text else None),
+            )
+        try:
+            payload = r.json()
+        except Exception as e:
+            raise AdexaClientError(f"StatsRaw JSON error: {e}", response_body=r.text[:500]) from e
+        if not isinstance(payload, dict):
+            raise AdexaClientError("StatsRaw: expected JSON object", response_body=str(payload)[:300])
+        rows = payload.get("stats")
+        if not isinstance(rows, list):
+            rows = []
+        last_page = int(payload.get("page", 0) or 0)
+        return last_page, [x for x in rows if isinstance(x, dict)]
+
+    last_page, first_rows = fetch_page(0)
+    total, n, by_day = _accumulate(first_rows)
+
+    if last_page > 0:
+        workers = max(1, min(int(max_workers or 12), last_page))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [pool.submit(fetch_page, i) for i in range(1, last_page + 1)]
+            for fut in as_completed(futs):
+                _, rows = fut.result()
+                t, c, bd = _accumulate(rows)
+                total += t
+                n += c
+                for d, v in bd.items():
+                    by_day[d] = float(by_day.get(d) or 0.0) + v
+
+    return {
+        "commission": round(total, 6),
+        "rows": n,
+        "pages": last_page + 1,
+        "by_day": {k: round(v, 6) for k, v in sorted(by_day.items())},
+    }
+
+
 def filter_static_cpc_with_links(merchants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """``cpcmodel == 'Static cpc'`` and ``supportsLinks == 1`` (fixim links)."""
     out: List[Dict[str, Any]] = []

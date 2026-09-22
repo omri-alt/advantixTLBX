@@ -282,8 +282,8 @@ def hub_nipuhim_equal_weights_per_geo(
     Per-geo hub weights across feeds that have offers for that geo.
 
     When ``merchant_counts`` is provided, split by demand capacity
-    (``clicks_per_merchant(feed) × merchant_count``) so Adexa at 300/geo
-    gets a smaller share than Kelkoo at 500×merchants. Otherwise equal split.
+    (``clicks_per_merchant(feed) × merchant_count``) so Adexa at 500/geo
+    matches Kelkoo's per-merchant baseline when merchant_count is 1. Otherwise equal split.
     """
     all_geos: set[str] = set()
     for fk in active_feeds:

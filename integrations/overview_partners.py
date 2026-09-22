@@ -1,9 +1,10 @@
 """
 Lean live Performance overview — partner totals only (no Keitaro rollups).
 
-Revenue: one Kelkoo aggregated GET per feed (1/2/4/5); Yadore ``/v2/report/general``
-per day (EUR, excluded from USD totals). Cost: Zeropark / Ecomnia / Trillion / SK
-(account aggregate via ``SK_ACCOUNT_STATS_URL`` only — no per-campaign crawl).
+Revenue: one Kelkoo aggregated GET per feed (1/2/4/5); Adexa StatsRaw commission
+(sum, paged); Yadore ``/v2/report/general`` per day (EUR, excluded from USD totals).
+Cost: Zeropark / Ecomnia / Trillion / SK (account aggregate via ``SK_ACCOUNT_STATS_URL``
+only — no per-campaign crawl).
 """
 from __future__ import annotations
 
@@ -79,6 +80,24 @@ def _fetch_kelkoo(tag: str, label: str, yesterday: date, m0: date, m1: date) -> 
         error=None,
         source="kelkoo_aggregated",
     )
+
+
+def _fetch_adexa(yesterday: date, m0: date, m1: date) -> Dict[str, Any]:
+    """Sum Adexa StatsRaw publisher ``commission`` (CPC) for MTD; yesterday from day map."""
+    from integrations.adexa import AdexaClientError, sum_stats_raw_commission
+
+    if m0 > m1:
+        return _row("adexa", "Adexa", yesterday=0.0, mtd=0.0, source="adexa_stats_raw")
+    try:
+        data = sum_stats_raw_commission(m0.isoformat(), m1.isoformat())
+    except AdexaClientError as e:
+        return _row("adexa", "Adexa", error=str(e), source="adexa_stats_raw")
+    except Exception as e:
+        return _row("adexa", "Adexa", error=str(e), source="adexa_stats_raw")
+    by_day = data.get("by_day") if isinstance(data.get("by_day"), dict) else {}
+    y = _nz(by_day.get(yesterday.isoformat()))
+    mtd = _nz(data.get("commission"))
+    return _row("adexa", "Adexa", yesterday=y, mtd=mtd, source="adexa_stats_raw")
 
 
 def _fetch_yadore(yesterday: date, m0: date, m1: date) -> Dict[str, Any]:
@@ -258,6 +277,7 @@ def build_overview_live(*, force: bool = False) -> Dict[str, Any]:
         with ThreadPoolExecutor(max_workers=10) as pool:
             for tag, label in KELKOO_ROWS:
                 jobs[pool.submit(_fetch_kelkoo, tag, label, yesterday, m0, m1)] = f"rev:{tag}"
+            jobs[pool.submit(_fetch_adexa, yesterday, m0, m1)] = "rev:adexa"
             jobs[pool.submit(_fetch_yadore, yesterday, m0, m1)] = "rev:yadore"
             jobs[pool.submit(_fetch_cost, "zeropark", "Zeropark", fetch_zeropark_cost, yesterday, m0, m1)] = "cost:zp"
             jobs[pool.submit(_fetch_cost, "ecomnia", "Ecomnia", fetch_ecomnia_cost, yesterday, m0, m1)] = "cost:ec"
@@ -275,6 +295,7 @@ def build_overview_live(*, force: bool = False) -> Dict[str, Any]:
 
         for tag, label in KELKOO_ROWS:
             revenue_rows.append(by_key.get(f"rev:{tag}") or _row(tag, label, error="missing"))
+        revenue_rows.append(by_key.get("rev:adexa") or _row("adexa", "Adexa", error="missing"))
         revenue_rows.append(by_key.get("rev:yadore") or _row("yadore", "Yadore", error="missing"))
 
         for cid, label in (

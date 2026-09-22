@@ -4,7 +4,7 @@ Domain-demand bill for Keitaro hub campaign 94.
 Builds a daily click order from:
 - Nipuhim: each active feed × geo on today's offers tabs, scaled by selected merchant count
   (``DOMAIN_DEMAND_NIPUHIM_CLICKS_PER_GEO`` per merchant; Adexa uses
-  ``DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO``, default 300).
+  ``DOMAIN_DEMAND_NIPUHIM_ADEXA_CLICKS_PER_GEO``, default 500).
 - Blend: each sheet row with device-weighted ``clickCap``.
 
 Refreshes delivered clicks from Keitaro child campaigns (hub state) and hub 94 totals.

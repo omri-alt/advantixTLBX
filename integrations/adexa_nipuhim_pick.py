@@ -6,7 +6,7 @@ Both monetization modes are supported; exactly one is chosen per geo:
 2. Static CPC homepage links / LinksMerchant (fallback)
 
 Sheet Store Link is the golink or homepage; NIPUHIM-adexa sync builds the
-matching Keitaro payload. Domain demand: 300 clicks × 1 merchant × geo.
+matching Keitaro payload. Domain demand: 500 clicks × 1 merchant × geo.
 """
 from __future__ import annotations
 
@@ -218,7 +218,7 @@ def pick_adexa_merchants_one_per_geo(
     Prefers offers-only smartlink; falls back to static CPC links.
 
     ``exclude_used`` is a set of ``(geo_lower, merchant_id)`` already used this month
-    (from ``{month}_log_adexa``) — skipped so each merchant gets at most one 300-click
+    (from ``{month}_log_adexa``) — skipped so each merchant gets at most one 500-click
     day per calendar month.
     """
     logs: List[str] = []

@@ -69,7 +69,7 @@
                 <tr><td><code>GET /api/overview/live?refresh=1</code></td><td>Force rebuild from partner APIs (~10–30s).</td></tr>
               </tbody>
             </table>
-            <p><strong>Revenue (USD totals):</strong> Kelkoo 1 / 2 / 5 / 4 via one aggregated report GET each (net share applied). Yadore uses <code>/v2/report/general</code> per day in EUR and is listed but not mixed into USD Revenue/Net.</p>
+            <p><strong>Revenue (USD totals):</strong> Kelkoo 1 / 2 / 5 / 4 via one aggregated report GET each (net share applied); Adexa via StatsRaw commission sum. Yadore uses <code>/v2/report/general</code> per day in EUR and is listed but not mixed into USD Revenue/Net.</p>
             <p><strong>Cost:</strong> Zeropark, Ecomnia, Trillion, and SourceKnowledge. SK needs <code>SK_ACCOUNT_STATS_URL</code> (account aggregate only — no per-campaign crawl).</p>
             <p>Legacy snapshot endpoints (<code>GET /api/overview</code>, <code>POST /api/overview/refresh</code>) remain for other tools; the homepage no longer waits on them.</p>
             <p><a href="{{ url_for('ui_home') }}">Open Control Center →</a></p>
