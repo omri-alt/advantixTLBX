@@ -93,6 +93,14 @@ def sync_blend_feed_to_hub(
             name = r.offer_name
             before = _get_offer_id_by_name(client, name)
             action_payload = _blend_keitaro_action_payload(r.geo, r.offer_url, r.feed_tag)
+            if not (action_payload or "").strip():
+                if (r.feed_tag or "").strip().lower() == "yadore":
+                    print(
+                        f"  Skip {name}: no Yadore homepage, smartlink clickUrl, or product offer"
+                    )
+                else:
+                    print(f"  Skip {name}: empty Keitaro action payload")
+                continue
             oid = _upsert_offer(client, name, action_payload)
             offer_id_to_row[oid] = r
             if before is None:
@@ -205,7 +213,11 @@ def run_blend_v2_sync(
             )
             print(f"  {fk}: created {c} offer(s), updated {u}, flows+{f}")
         except Exception as e:
-            print(f"  {fk}: sync failed: {e}")
+            detail = str(getattr(e, "response_body", "") or "").strip()
+            if detail:
+                print(f"  {fk}: sync failed: {e} — {detail[:300]}")
+            else:
+                print(f"  {fk}: sync failed: {e}")
             ok = False
         print()
 
