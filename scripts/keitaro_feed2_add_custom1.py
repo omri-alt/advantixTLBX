@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-Add ``&custom2={subid}`` to Keitaro feed2 (sidehustlerbaby) offer URLs.
+Rewrite Keitaro feed2 (sidehustlerbaby) offer URLs:
 
-Keeps ``pub_click_id={subid}`` for the partner log. Sidehustler uses ``custom1`` and
-``publisherClickId`` internally; Kelkoo attribution needs ``custom2``.
-
-Also rewrites legacy ``custom1={subid}`` → ``custom2={subid}`` if present.
+- ``custom2={subid}`` for Kelkoo attribution (legacy ``custom1={subid}`` is rewritten)
+- ``af=50`` partner query param (requested 2026-10-26)
 
   python scripts/keitaro_feed2_add_custom1.py           # dry-run
   python scripts/keitaro_feed2_add_custom1.py --apply
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -29,7 +28,17 @@ MARKER = "sidehustlerbaby.com/klk-merchant"
 NEEDLE = "pub_click_id={subid}"
 CUSTOM2 = "custom2={subid}"
 CUSTOM1 = "custom1={subid}"
+AF = "af=50"
 REPL = f"{NEEDLE}&{CUSTOM2}"
+
+
+def _ensure_af50(payload: str) -> str:
+    p = payload or ""
+    if re.search(r"(?:[?&])af=50(?:&|$)", p):
+        return p
+    if re.search(r"(?:[?&])af=", p):
+        return re.sub(r"([?&])af=[^&]*", r"\1af=50", p, count=1)
+    return p + ("" if p.endswith("&") else "&") + AF
 
 
 def transform(payload: str) -> str | None:
@@ -37,19 +46,19 @@ def transform(payload: str) -> str | None:
     p = payload or ""
     if MARKER not in p:
         return None
-    if CUSTOM2 in p:
-        return None
-    if CUSTOM1 in p:
-        return p.replace(CUSTOM1, CUSTOM2, 1)
-    if NEEDLE not in p:
-        return None
-    return p.replace(NEEDLE, REPL, 1)
+    orig = p
+    if CUSTOM1 in p and CUSTOM2 not in p:
+        p = p.replace(CUSTOM1, CUSTOM2, 1)
+    elif CUSTOM2 not in p and NEEDLE in p:
+        p = p.replace(NEEDLE, REPL, 1)
+    p = _ensure_af50(p)
+    return None if p == orig else p
 
 
 def main() -> int:
     apply = "--apply" in sys.argv
     print(
-        "Feed2 URL rewrite: keep pub_click_id={subid}, set custom2={subid} "
+        "Feed2 URL rewrite: custom2={subid} + af=50 "
         f"on {MARKER} offers"
     )
     print("DRY RUN" if not apply else "APPLY")
@@ -92,8 +101,8 @@ def main() -> int:
 
     v2 = build_nipuhim_v2_action_payload("fr", "https://example.com/", feed=2)
     blend = build_offer_action_payload("fr", "https://example.com/", feed=2)
-    assert CUSTOM2 in v2 and NEEDLE in v2, v2
-    assert CUSTOM2 in blend and NEEDLE in blend, blend
+    assert CUSTOM2 in v2 and NEEDLE in v2 and AF in v2, v2
+    assert CUSTOM2 in blend and NEEDLE in blend and AF in blend, blend
     print("Builder check OK")
     return 1 if errors else 0
 
