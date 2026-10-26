@@ -18,8 +18,10 @@ def _enabled() -> bool:
 class KeitaroFeedBalanceCheckmon(BaseAutomation):
     """Every 2 hours: refresh feed monetization reports in Keitaro campaign notes.
 
-    Soft launch — notes only (no share rebalancing). When Adexa monetizes via golink
-    only, the notes include ``adexa_golink:`` with the Keitaro-ready URL.
+    Also zeros Flow 2 share for unmonetized feeds and renormalizes remaining live
+    feeds (``KEITARO_FEED_BALANCE_APPLY_SHARES``, default on). If every checkable
+    feed is dead, pauses matching SK campaigns (Keitaro stays enabled).
+    When Adexa monetizes via golink only, notes include ``adexa_golink:``.
     """
 
     def on_hourly_signal(self, hour: int) -> None:
@@ -42,10 +44,12 @@ class KeitaroFeedBalanceCheckmon(BaseAutomation):
 
         result = run_checkmon_update_notes(dry_run=False)
         logger.info(
-            "KeitaroFeedBalanceCheckmon: checked=%s updated=%s skipped_unchanged=%s errors=%s",
+            "KeitaroFeedBalanceCheckmon: checked=%s updated=%s skipped_unchanged=%s "
+            "shares_applied=%s errors=%s",
             result.get("checked_campaigns"),
             result.get("notes_updated"),
             result.get("notes_skipped_unchanged"),
+            result.get("shares_applied"),
             result.get("notes_errors"),
         )
         if int(result.get("notes_errors") or 0) > 0:

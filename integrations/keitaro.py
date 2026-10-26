@@ -28,6 +28,13 @@ class KeitaroClientError(Exception):
         self.response_body = response_body
         super().__init__(message)
 
+    def __str__(self) -> str:
+        msg = super().__str__()
+        body = (self.response_body or "").strip()
+        if body and body not in msg:
+            return f"{msg} {body[:400]}"
+        return msg
+
 
 class KeitaroClient:
     """Client for Keitaro Admin API (campaigns, streams, offers)."""

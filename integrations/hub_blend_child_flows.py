@@ -248,6 +248,154 @@ def sync_quality_merchant_domain_flows(
     return logs
 
 
+def prune_quality_domain_unmonetized(
+    client: KeitaroClient,
+    *,
+    potential_rows: Optional[Dict[str, List[Dict[str, str]]]] = None,
+    feeds_sheet_load_failed: Optional[Set[str]] = None,
+    only_geo: Optional[str] = None,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Detach Blend offers that are no longer monetized from Quality ``_domain`` streams.
+
+    If a domain stream has no remaining positive-share Blend offer, disable it so
+    hub traffic falls through to Flow 2 (other live feeds) instead of a dead golink.
+    """
+    from blend_sync_from_sheet import (
+        detect_blend_feed_tag_from_offer_name,
+        load_potential_monetized_offer_rows_by_feed,
+        get_sheets_service,
+    )
+    from assistance import get_campaign_streams, parse_blend_stream_geo_channel
+
+    logs: List[str] = []
+    failed = set(feeds_sheet_load_failed or [])
+    sheets = potential_rows
+    if sheets is None:
+        try:
+            sheets, load_failed = load_potential_monetized_offer_rows_by_feed(get_sheets_service())
+            failed |= set(load_failed or [])
+        except Exception as e:
+            return {
+                "removed": [],
+                "disabled_streams": [],
+                "errors": [f"potential_sheets:{e}"],
+                "logs": [f"Quality domain prune skipped: {e}"],
+            }
+
+    monetized_by_feed: Dict[str, Set[str]] = {}
+    for ft, rows in (sheets or {}).items():
+        monetized_by_feed[ft] = {
+            str(r.get("offer_name") or "").strip() for r in rows if r.get("offer_name")
+        }
+
+    offer_names_by_id: Dict[int, str] = {}
+    try:
+        for o in client.get_offers():
+            oid = o.get("id")
+            if oid is not None:
+                offer_names_by_id[int(oid)] = (o.get("name") or "").strip()
+    except KeitaroClientError as e:
+        return {"removed": [], "disabled_streams": [], "errors": [f"list_offers:{e}"], "logs": logs}
+
+    by_brand_geo, _by_key = build_quality_campaign_index(client)
+    seen_cids: Set[int] = set()
+    removed: List[Tuple[int, str, str, str]] = []
+    disabled_streams: List[str] = []
+    errors: List[str] = []
+    geo_filter = (only_geo or "").strip().lower()[:2] or None
+
+    for camp in by_brand_geo.values():
+        cid = int(camp.get("id") or 0)
+        if not cid or cid in seen_cids:
+            continue
+        seen_cids.add(cid)
+        try:
+            streams = get_campaign_streams(cid)
+        except Exception as e:
+            errors.append(f"campaign {cid} get_streams: {e}")
+            continue
+        for stream in streams:
+            sname = str(stream.get("name") or "").strip()
+            if not sname.lower().endswith("_domain"):
+                continue
+            geo, channel = parse_blend_stream_geo_channel(sname)
+            if not geo or channel not in ("desktop", "mobile"):
+                continue
+            if geo_filter and geo != geo_filter:
+                continue
+            sid = stream.get("id")
+            if sid is None:
+                continue
+            attached = list(stream.get("offers") or [])
+            detach_ids: List[int] = []
+            for slot in attached:
+                oid_raw = slot.get("offer_id")
+                if oid_raw is None:
+                    continue
+                oid = int(oid_raw)
+                name = offer_names_by_id.get(oid, "")
+                if not name.startswith("blend_"):
+                    continue
+                ft = detect_blend_feed_tag_from_offer_name(geo, name)
+                if ft is None or ft in failed:
+                    continue
+                if name in (monetized_by_feed.get(ft) or set()):
+                    continue
+                detach_ids.append(oid)
+                removed.append((oid, geo, ft, sname))
+                msg = (
+                    f"Quality domain prune: campaign {cid} {sname} detach offer "
+                    f"id={oid} feed={ft} name={name!r}"
+                )
+                logs.append(msg)
+                if dry_run:
+                    print(f"[dry-run] {msg}")
+                else:
+                    print(msg)
+
+            keep: List[Dict[str, Any]] = []
+            positive = 0
+            detach_set = set(detach_ids)
+            for slot in attached:
+                oid_raw = slot.get("offer_id")
+                if oid_raw is None:
+                    continue
+                oidi = int(oid_raw)
+                if oidi in detach_set:
+                    continue
+                share = int(slot.get("share") or 0)
+                positive += share
+                keep.append({"offer_id": oidi, "state": "active", "share": share})
+
+            if dry_run:
+                if positive <= 0:
+                    disabled_streams.append(f"{cid}:{sname}")
+                    logs.append(f"[dry-run] would disable campaign {cid} stream {sname}")
+                continue
+
+            try:
+                if detach_ids:
+                    client.update_stream(int(sid), {"offers": keep})
+                if positive <= 0:
+                    client.update_stream(int(sid), {"state": "disabled"})
+                    disabled_streams.append(f"{cid}:{sname}")
+                    logs.append(f"Quality domain prune: disabled campaign {cid} stream {sname}")
+                    print(f"Quality domain prune: disabled campaign {cid} stream {sname}")
+            except Exception as e:
+                err = f"campaign {cid} stream {sname} id={sid}: {e}"
+                errors.append(err)
+                print(f"ERROR: Quality domain prune failed: {err}")
+
+    return {
+        "removed": removed,
+        "disabled_streams": disabled_streams,
+        "errors": errors,
+        "logs": logs,
+    }
+
+
 def ensure_hub_quality_offers(
     client: KeitaroClient,
     merchant_groups: List[QualityMerchantGroup],
@@ -516,6 +664,9 @@ def run_hub_blend_child_flows(
     logs.extend(hub_logs)
 
     logs.extend(refresh_all_hub_child_domain_filters(state, dry_run=dry_run))
+
+    prune = prune_quality_domain_unmonetized(client, dry_run=dry_run)
+    logs.extend(prune.get("logs") or [])
 
     if not dry_run:
         save_hub_state(state, state_path)

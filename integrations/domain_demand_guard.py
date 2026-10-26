@@ -645,6 +645,7 @@ def equalize_child_blend_offer_weights(
     quality_slugs = _quality_brand_slugs(client)
     from integrations.hub_blend_child_flows import group_blend_rows_by_quality_campaign
 
+    blend_rows: List[Any] = []
     try:
         from blend_sync_from_sheet import get_sheets_service, read_blend_rows
 
@@ -653,6 +654,8 @@ def equalize_child_blend_offer_weights(
         quality_cid_by_slug = {g.brand_slug: int(g.campaign_id) for g in q_groups}
     except Exception:
         quality_cid_by_slug = {}
+    live_blend_names = {str(getattr(r, "offer_name", "") or "") for r in blend_rows}
+    name_by_oid = {int(oid): str(name) for name, oid in offers_by_name.items() if oid is not None}
 
     for row in bill_rows:
         geo = str(row.get("geo") or "").lower()
@@ -724,6 +727,30 @@ def equalize_child_blend_offer_weights(
                         if oid == int(oidr) and on.startswith("blend_") and int(oid) not in preferred:
                             preferred.append(int(oid))
                             break
+                if is_quality_camp:
+                    preferred = [
+                        oid
+                        for oid in preferred
+                        if name_by_oid.get(int(oid), "") in live_blend_names
+                    ]
+                    if not preferred:
+                        leftover_oid = None
+                        if dry_run:
+                            logs.append(
+                                f"campaign {cid} {geo}/{channel}: would disable _domain "
+                                "(no live Blend offers)"
+                            )
+                            continue
+                        try:
+                            client.update_stream(int(sid), {"state": "disabled"})
+                            streams_updated += 1
+                            logs.append(
+                                f"campaign {cid} {geo}/{channel}: disabled _domain "
+                                "(no live Blend offers; fall through to Flow 2)"
+                            )
+                        except Exception as e:
+                            logs.append(f"campaign {cid} {geo}/{channel}: disable failed: {e}")
+                        continue
                 weights, _ignored_zeros, leftover_oid = _ensure_at_least_one_live_weight(
                     {}, preferred, preferred_offer_ids=preferred
                 )

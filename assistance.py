@@ -1107,10 +1107,12 @@ def ensure_domain_blend_stream(
                     set_hub_child_domain_flow_filters(
                         int(sid), geo, channel, base_url=base_url, api_key=api_key
                     )
+                    if str(out.get("state") or "").strip().lower() == "disabled":
+                        client.update_stream(int(sid), {"state": "active"})
+                        out["state"] = "active"
                 return out
-    # Position the new _domain stream before the catch-all flow (e.g. Flow 2)
-    catch_pos = _min_catch_all_stream_position(streams)
-    insert_pos: Optional[int] = catch_pos if catch_pos and catch_pos >= 1 else None
+    # Do not send ``position`` on create: Keitaro requires unique positions and
+    # Flow 2 is already at 1. ``reorder_quality_domain_streams`` parks/nudges after.
 
     geo_code = _geo_for_api(geo)
     if not geo_code:
@@ -1130,8 +1132,6 @@ def ensure_domain_blend_stream(
         "filters": filters,
         "offers": [],
     }
-    if insert_pos is not None:
-        payload["position"] = insert_pos
     return client.create_stream(payload)
 
 

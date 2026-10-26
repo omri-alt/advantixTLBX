@@ -1212,6 +1212,32 @@ def run_blend_prune_unmonetized_keitaro(
         dry_run=dry_run,
     )
     summary["feeds_sheet_load_failed"] = sorted(failed)
+    try:
+        from integrations.hub_blend_child_flows import prune_quality_domain_unmonetized
+
+        qprune = prune_quality_domain_unmonetized(
+            client,
+            potential_rows=potential_rows,
+            feeds_sheet_load_failed=failed,
+            only_geo=only_geo,
+            dry_run=dry_run,
+        )
+        summary["quality_domain_removed"] = qprune.get("removed") or []
+        summary["quality_domain_disabled"] = qprune.get("disabled_streams") or []
+        q_errs = qprune.get("errors") or []
+        if q_errs:
+            summary.setdefault("errors", [])
+            summary["errors"] = list(summary.get("errors") or []) + list(q_errs)
+        n_q = len(summary["quality_domain_removed"])
+        n_d = len(summary["quality_domain_disabled"])
+        if n_q or n_d:
+            print(
+                f"Blend prune: Quality _domain streams — detached {n_q} offer(s), "
+                f"disabled {n_d} stream(s)."
+            )
+    except Exception as e:
+        print(f"Blend prune: Quality domain prune skipped: {e}")
+        summary["quality_domain_error"] = str(e)
     return summary
 
 

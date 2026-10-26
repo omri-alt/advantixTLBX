@@ -536,17 +536,32 @@ class CampaignCheckmonRow:
     stream_id: int
     feed_results: List[FeedCheckResult] = field(default_factory=list)
     error: str = ""
+    alias: str = ""
+
+
+def _is_catch_all_regular_stream(stream: Dict[str, Any]) -> bool:
+    """Flow 2-style catch-all: regular, no filters, not a Blend ``_domain`` stream."""
+    if (stream.get("type") or "").lower() != "regular":
+        return False
+    name = (stream.get("name") or "").strip().lower()
+    if name.endswith("_domain"):
+        return False
+    if name in ("bot protection", "bot"):
+        return False
+    if stream.get("filters"):
+        return False
+    return True
 
 
 def list_regular_flow_feed_offers(
     client: KeitaroClient,
     campaign_id: int,
 ) -> Tuple[Optional[int], List[FlowFeedOffer]]:
-    """Regular flow stream id + mapped feed offers (non-fallback)."""
+    """Catch-all regular flow stream id + mapped feed offers (non-fallback)."""
     streams = client.get_streams(int(campaign_id))
     offer_cache: Dict[int, str] = {}
     for stream in streams:
-        if (stream.get("type") or "").lower() != "regular":
+        if not _is_catch_all_regular_stream(stream):
             continue
         sid = int(stream.get("id") or 0)
         out: List[FlowFeedOffer] = []
@@ -575,6 +590,234 @@ def list_regular_flow_feed_offers(
         if out:
             return sid, out
     return None, []
+
+
+def _apply_shares_enabled() -> bool:
+    v = (os.getenv("KEITARO_FEED_BALANCE_APPLY_SHARES") or "yes").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _tracking_points_at_alias(url: str, alias: str) -> bool:
+    a = (alias or "").strip()
+    if not a or not (url or "").strip():
+        return False
+    return bool(re.search(rf"[/=]{re.escape(a)}(?:[/?&]|$)", url))
+
+
+def _sk_name_matches_quality(sk_name: str, keitaro_name: str, geo: str) -> bool:
+    brand, kgeo = parse_brand_geo_from_campaign_name(keitaro_name)
+    g = (geo or kgeo or "").strip().lower()[:2]
+    if g == "gb":
+        g = "uk"
+    if not brand or not g:
+        return False
+    n = (sk_name or "").lower().replace(" ", "")
+    return brand.lower() in n and f"-{g}" in n
+
+
+_SK_ACTIVE_CACHE: Optional[List[Dict[str, Any]]] = None
+
+
+def clear_feed_balance_sk_cache() -> None:
+    global _SK_ACTIVE_CACHE
+    _SK_ACTIVE_CACHE = None
+
+
+def _list_active_sk_campaigns() -> List[Dict[str, Any]]:
+    global _SK_ACTIVE_CACHE
+    if _SK_ACTIVE_CACHE is not None:
+        return _SK_ACTIVE_CACHE
+    import time as _time
+
+    import requests
+
+    from integrations.autoserver import env as as_env
+
+    as_env.ensure_autoserver_env()
+    from integrations.autoserver import sk
+
+    sk.refresh_sk_headers()
+    items: List[Dict[str, Any]] = []
+    listed = 0
+    page = 1
+    while page <= 200:
+        url = f"https://api.sourceknowledge.com/affiliate/v2/campaigns?page={page}"
+        try:
+            r = requests.get(url, headers=sk.headers_sk, timeout=60)
+        except requests.RequestException as e:
+            logger.warning("SK list campaigns page %s: %s", page, e)
+            break
+        if r.status_code == 429:
+            _time.sleep(20)
+            continue
+        if r.status_code != 200:
+            logger.warning("SK list campaigns HTTP %s page %s", r.status_code, page)
+            break
+        data = r.json() if r.text else {}
+        batch = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(batch, list) or not batch:
+            break
+        listed += len(batch)
+        for camp in batch:
+            if isinstance(camp, dict) and camp.get("active"):
+                items.append(camp)
+        total = data.get("total") or data.get("totalCount") if isinstance(data, dict) else None
+        page += 1
+        if total and listed >= int(total):
+            break
+    _SK_ACTIVE_CACHE = items
+    return items
+
+
+def pause_sk_buyers_for_keitaro_campaign(
+    row: CampaignCheckmonRow,
+    *,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Pause active SK campaigns whose tracking URL (or name) points at this Keitaro campaign."""
+    from integrations.autoserver import env as as_env
+
+    as_env.ensure_autoserver_env()
+    from integrations.autoserver import sk
+
+    sk.refresh_sk_headers()
+    alias = (row.alias or "").strip()
+    matched: List[Dict[str, Any]] = []
+    for camp in _list_active_sk_campaigns():
+        cid = camp.get("id")
+        if cid is None:
+            continue
+        tracking = str(camp.get("trackingUrl") or camp.get("tracking_url") or "")
+        name = str(camp.get("name") or "")
+        name_hit = _sk_name_matches_quality(name, row.campaign_name, row.geo)
+        if not tracking and name_hit:
+            try:
+                full_sk = sk.get_campaignById(cid)
+                if isinstance(full_sk, dict):
+                    tracking = str(full_sk.get("trackingUrl") or full_sk.get("tracking_url") or "")
+            except Exception:
+                tracking = ""
+        hit = bool(alias and _tracking_points_at_alias(tracking, alias))
+        if not hit:
+            hit = name_hit
+            if hit and tracking and alias and not _tracking_points_at_alias(tracking, alias):
+                hit = False
+        if not hit:
+            continue
+        matched.append({"id": int(cid), "name": name})
+
+    if not matched:
+        return {"paused": [], "would_pause": [], "error": "no matching SK campaigns"}
+
+    paused: List[int] = []
+    errors: List[str] = []
+    if dry_run:
+        return {"paused": [], "would_pause": [m["id"] for m in matched]}
+
+    for m in matched:
+        try:
+            resp = sk.pause_campaign(m["id"])
+            if isinstance(resp, dict) and resp.get("error"):
+                errors.append(f"{m['id']}: {resp.get('error')}")
+            else:
+                paused.append(int(m["id"]))
+                logger.info(
+                    "feed balance: paused SK %s (%s) — all Keitaro feeds unmon for %s",
+                    m["id"],
+                    m["name"],
+                    row.campaign_name,
+                )
+        except Exception as e:
+            errors.append(f"{m['id']}: {e}")
+    out: Dict[str, Any] = {"paused": paused, "would_pause": []}
+    if errors:
+        out["errors"] = errors
+    return out
+
+
+def apply_unmonetized_feed_shares(
+    client: KeitaroClient,
+    row: CampaignCheckmonRow,
+    *,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Zero Flow 2 share for feeds whose live probe is ``found=False``; renormalize the rest.
+
+    If every checkable feed is unmonetized, pause matching SK campaigns (do not
+    disable the Keitaro campaign). Inconclusive probes (found is None) skip the pause.
+    """
+    if not _apply_shares_enabled():
+        return {"action": "disabled"}
+    if not (row.url or "").strip() or not (row.geo or "").strip():
+        return {"action": "skip_no_url_geo"}
+    dead_keys = {fr.feed_key for fr in row.feed_results if fr.found is False}
+    live_keys = {fr.feed_key for fr in row.feed_results if fr.found is True}
+    unknown_keys = {fr.feed_key for fr in row.feed_results if fr.found is None}
+    if not dead_keys:
+        return {"action": "skip_none_dead"}
+    if not live_keys:
+        if unknown_keys:
+            return {
+                "action": "skip_no_live_feed",
+                "reason": "inconclusive",
+                "unknown": sorted(unknown_keys),
+            }
+        sk_res = pause_sk_buyers_for_keitaro_campaign(row, dry_run=dry_run)
+        return {"action": "all_unmon_pause_sk", **sk_res}
+
+    sid, flow_offers = list_regular_flow_feed_offers(client, int(row.campaign_id))
+    if not sid or not flow_offers:
+        return {"action": "skip_no_stream"}
+    fo_by_id = {fo.offer_id: fo for fo in flow_offers}
+
+    streams = client.get_streams(int(row.campaign_id))
+    stream = next((s for s in streams if int(s.get("id") or 0) == int(sid)), None)
+    if not stream:
+        return {"action": "skip_no_stream"}
+
+    weights: Dict[int, float] = {}
+    zeros: List[int] = []
+    demoted: List[str] = []
+    for slot in stream.get("offers") or []:
+        oid = int(slot.get("offer_id") or 0)
+        if not oid:
+            continue
+        share = float(slot.get("share") or 0)
+        fo = fo_by_id.get(oid)
+        fk = fo.feed_key if fo else None
+        if fk and fk in dead_keys:
+            zeros.append(oid)
+            demoted.append(fk)
+            continue
+        if fo and fo.feed_key in live_keys:
+            weights[oid] = share if share > 0 else 1.0
+        else:
+            if share > 0:
+                weights[oid] = share
+
+    live_weights = {oid: w for oid, w in weights.items() if w > 0}
+    if not live_weights:
+        return {"action": "skip_no_live_feed", "demoted": demoted}
+
+    if dry_run:
+        return {
+            "action": "would_apply",
+            "stream_id": sid,
+            "demoted": sorted(set(demoted)),
+            "live_offers": len(live_weights),
+        }
+
+    from assistance import set_flow_offers_weighted_keep_zeros
+
+    set_flow_offers_weighted_keep_zeros(int(sid), live_weights, zero_offer_ids=zeros)
+    return {
+        "action": "applied",
+        "stream_id": sid,
+        "demoted": sorted(set(demoted)),
+        "live_offers": len(live_weights),
+        "zeroed": len(zeros),
+    }
 
 
 def _yadore_checkmon_fields(y: Dict[str, Any]) -> Dict[str, Any]:
@@ -853,6 +1096,7 @@ def run_checkmon_audit_dry(
                     enabled="",
                     stream_id=0,
                     error=str(e),
+                    alias=str(camp.get("alias") or ""),
                 )
             )
             continue
@@ -875,6 +1119,7 @@ def run_checkmon_audit_dry(
                     enabled=cfg.enabled,
                     stream_id=int(stream_id or 0),
                     error="no mapped feed offers on regular flow",
+                    alias=str(full.get("alias") or camp.get("alias") or ""),
                 )
             )
             continue
@@ -892,6 +1137,7 @@ def run_checkmon_audit_dry(
                     enabled=cfg.enabled,
                     stream_id=int(stream_id or 0),
                     error=str(e),
+                    alias=str(full.get("alias") or camp.get("alias") or ""),
                 )
             )
             continue
@@ -906,6 +1152,7 @@ def run_checkmon_audit_dry(
                 enabled=cfg.enabled,
                 stream_id=int(stream_id or 0),
                 feed_results=feed_results,
+                alias=str(full.get("alias") or camp.get("alias") or ""),
             )
         )
 
@@ -977,11 +1224,12 @@ def run_checkmon_update_notes(
     require_url_geo: bool = True,
 ) -> Dict[str, Any]:
     """
-    Run per-feed monetization checks and write the report into campaign notes.
-
-    Soft-launch scope: notes only — does not change stream shares or ``enabled``.
+    Run per-feed monetization checks, write the report into campaign notes, and
+    zero Flow 2 shares for feeds whose live probe is unmonetized (remaining feeds
+    are renormalized). Disable with ``KEITARO_FEED_BALANCE_APPLY_SHARES=0``.
     """
     c = client or KeitaroClient()
+    clear_feed_balance_sk_cache()
     audit = run_checkmon_audit_dry(
         c,
         campaign_ids=campaign_ids,
@@ -992,6 +1240,7 @@ def run_checkmon_update_notes(
     skipped_no_config = 0
     skipped_unchanged = 0
     errors = 0
+    shares_applied = 0
     rows: List[Dict[str, Any]] = []
 
     for row in audit.get("campaigns") or []:
@@ -1016,37 +1265,43 @@ def run_checkmon_update_notes(
             rows.append({"campaign_id": cid, "action": "skip_no_config"})
             continue
 
+        rec: Dict[str, Any] = {"campaign_id": cid, "adexa_golink": _adexa_golink_from_row(row)}
         new_notes = merge_notes_preserve_config(notes, report)
         if new_notes == notes:
             skipped_unchanged += 1
-            rows.append({"campaign_id": cid, "action": "skip_unchanged"})
-            continue
-
-        if dry_run:
+            rec["action"] = "skip_unchanged"
+        elif dry_run:
             updated += 1
-            rows.append(
-                {
-                    "campaign_id": cid,
-                    "action": "would_update",
-                    "adexa_golink": _adexa_golink_from_row(row),
-                }
-            )
-            continue
+            rec["action"] = "would_update"
+        else:
+            try:
+                c.update_campaign(cid, {"notes": new_notes})
+                updated += 1
+                rec["action"] = "updated"
+                logger.info("feed balance checkmon: updated notes for campaign %s", cid)
+            except KeitaroClientError as e:
+                errors += 1
+                rec["action"] = "error"
+                rec["error"] = str(e)
+                rows.append(rec)
+                continue
 
         try:
-            c.update_campaign(cid, {"notes": new_notes})
-            updated += 1
-            rows.append(
-                {
-                    "campaign_id": cid,
-                    "action": "updated",
-                    "adexa_golink": _adexa_golink_from_row(row),
-                }
-            )
-            logger.info("feed balance checkmon: updated notes for campaign %s", cid)
-        except KeitaroClientError as e:
-            errors += 1
-            rows.append({"campaign_id": cid, "action": "error", "error": str(e)})
+            share_res = apply_unmonetized_feed_shares(c, row, dry_run=dry_run)
+            rec["shares"] = share_res
+            if share_res.get("action") in ("applied", "would_apply"):
+                shares_applied += 1
+                logger.info(
+                    "feed balance shares campaign %s: %s demoted=%s",
+                    cid,
+                    share_res.get("action"),
+                    share_res.get("demoted"),
+                )
+        except Exception as e:
+            rec["shares"] = {"action": "error", "error": str(e)}
+            logger.warning("feed balance share apply failed campaign %s: %s", cid, e)
+
+        rows.append(rec)
 
     return {
         **audit,
@@ -1055,6 +1310,7 @@ def run_checkmon_update_notes(
         "notes_skipped_no_config": skipped_no_config,
         "notes_skipped_unchanged": skipped_unchanged,
         "notes_errors": errors,
+        "shares_applied": shares_applied,
         "notes_rows": rows,
     }
 
