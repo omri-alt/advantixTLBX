@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Run feed-balance checkmon and update Keitaro campaign notes (no share changes)."""
+"""Run feed-balance checkmon and update Keitaro campaign notes.
+
+Share PUTs only happen for campaigns with ``enabled: yes`` in notes.
+"""
 from __future__ import annotations
 
 import argparse

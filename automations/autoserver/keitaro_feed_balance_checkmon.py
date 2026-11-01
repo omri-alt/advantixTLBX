@@ -18,10 +18,12 @@ def _enabled() -> bool:
 class KeitaroFeedBalanceCheckmon(BaseAutomation):
     """Every 2 hours: refresh feed monetization reports in Keitaro campaign notes.
 
-    Also zeros Flow 2 share for unmonetized feeds and renormalizes remaining live
-    feeds (``KEITARO_FEED_BALANCE_APPLY_SHARES``, default on). If every checkable
-    feed is dead, pauses matching SK campaigns (Keitaro stays enabled).
-    When Adexa monetizes via golink only, notes include ``adexa_golink:``.
+    Share changes only when campaign notes have ``enabled: yes``: zero unmonetized
+    feeds and scale remaining already-positive offers (never revive operator zeros).
+    Disable share PUTs with ``KEITARO_FEED_BALANCE_APPLY_SHARES=0``. If every
+    checkable feed is dead on an enabled campaign, pause matching SK campaigns
+    (Keitaro stays enabled). When Adexa monetizes via golink only, notes include
+    ``adexa_golink:``.
     """
 
     def on_hourly_signal(self, hour: int) -> None:

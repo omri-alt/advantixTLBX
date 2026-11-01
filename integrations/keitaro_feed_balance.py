@@ -597,6 +597,130 @@ def _apply_shares_enabled() -> bool:
     return v not in ("0", "false", "no", "off")
 
 
+def _flag_enabled(val: str) -> bool:
+    return (val or "").strip().lower() in ("yes", "y", "true", "1")
+
+
+@dataclass
+class SharePlan:
+    action: str
+    weights: Dict[int, float] = field(default_factory=dict)
+    zeros: List[int] = field(default_factory=list)
+    demoted: List[str] = field(default_factory=list)
+    reason: str = ""
+
+    def as_dict(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {"action": self.action}
+        if self.demoted:
+            d["demoted"] = sorted(set(self.demoted))
+        if self.reason:
+            d["reason"] = self.reason
+        if self.weights:
+            d["live_offers"] = len(self.weights)
+        if self.zeros:
+            d["zeroed"] = len(self.zeros)
+        return d
+
+
+def plan_unmonetized_feed_shares(
+    *,
+    enabled: str,
+    slots: List[Tuple[int, int, Optional[str]]],
+    found_by_feed: Dict[str, Optional[bool]],
+) -> SharePlan:
+    """
+    Decide Flow 2 share updates without calling Keitaro.
+
+    Rules:
+    - ``enabled: no`` → do not touch shares (notes-only checkmon).
+    - Zero feeds whose live probe is ``found=False``.
+    - Never give traffic to an offer the operator already set to 0.
+    - If unmon feeds are already at 0, leave the rest of the split alone.
+    - If a previously-positive feed is demoted, scale remaining positive offers
+      in proportion (Keitaro still needs shares to sum to 100).
+    - Every input offer id is kept on the payload (zeros stay attached).
+    """
+    if not _flag_enabled(enabled):
+        return SharePlan(action="skip_disabled")
+
+    dead_keys = {fk for fk, found in found_by_feed.items() if found is False}
+    live_keys = {fk for fk, found in found_by_feed.items() if found is True}
+    unknown_keys = {fk for fk, found in found_by_feed.items() if found is None}
+
+    by_id: Dict[int, Tuple[int, Optional[str]]] = {}
+    for oid, share, fk in slots:
+        if not oid:
+            continue
+        by_id[int(oid)] = (int(share or 0), fk)
+
+    if not by_id:
+        return SharePlan(action="skip_no_stream")
+
+    if not dead_keys:
+        return SharePlan(action="skip_none_dead")
+
+    demoted: List[str] = []
+    newly_demoted_share = 0
+    zeros: List[int] = []
+    kept_positive: Dict[int, float] = {}
+    idle: List[int] = []
+
+    for oid, (share, fk) in by_id.items():
+        if fk and fk in dead_keys:
+            zeros.append(oid)
+            demoted.append(fk)
+            if share > 0:
+                newly_demoted_share += share
+            continue
+        if share > 0:
+            kept_positive[oid] = float(share)
+        else:
+            idle.append(oid)
+
+    zeros_all = sorted(set(zeros + idle))
+
+    if not live_keys:
+        if unknown_keys:
+            return SharePlan(
+                action="skip_no_live_feed",
+                reason="inconclusive",
+                demoted=demoted,
+                zeros=zeros_all,
+            )
+        return SharePlan(action="all_unmon_pause_sk", demoted=demoted, zeros=list(by_id))
+
+    if newly_demoted_share <= 0:
+        return SharePlan(
+            action="skip_already_zeroed",
+            demoted=demoted,
+            zeros=zeros_all,
+        )
+
+    if kept_positive:
+        return SharePlan(
+            action="apply",
+            weights=kept_positive,
+            zeros=zeros_all,
+            demoted=demoted,
+        )
+
+    fallback = {
+        oid: 1.0
+        for oid, (_share, fk) in by_id.items()
+        if fk and fk in live_keys
+    }
+    if not fallback:
+        return SharePlan(action="all_unmon_pause_sk", demoted=demoted, zeros=list(by_id))
+    zeros_rest = sorted(oid for oid in by_id if oid not in fallback)
+    return SharePlan(
+        action="apply",
+        weights=fallback,
+        zeros=zeros_rest,
+        demoted=demoted,
+        reason="fallback_equal_live",
+    )
+
+
 def _tracking_points_at_alias(url: str, alias: str) -> bool:
     a = (alias or "").strip()
     if not a or not (url or "").strip():
@@ -742,8 +866,10 @@ def apply_unmonetized_feed_shares(
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     """
-    Zero Flow 2 share for feeds whose live probe is ``found=False``; renormalize the rest.
+    For ``enabled: yes`` campaigns, zero Flow 2 share for feeds whose live probe
+    is ``found=False`` and scale remaining *already-positive* offers.
 
+    Operator zeros on still-monetized feeds are left at 0. Offers stay attached.
     If every checkable feed is unmonetized, pause matching SK campaigns (do not
     disable the Keitaro campaign). Inconclusive probes (found is None) skip the pause.
     """
@@ -751,23 +877,9 @@ def apply_unmonetized_feed_shares(
         return {"action": "disabled"}
     if not (row.url or "").strip() or not (row.geo or "").strip():
         return {"action": "skip_no_url_geo"}
-    dead_keys = {fr.feed_key for fr in row.feed_results if fr.found is False}
-    live_keys = {fr.feed_key for fr in row.feed_results if fr.found is True}
-    unknown_keys = {fr.feed_key for fr in row.feed_results if fr.found is None}
-    if not dead_keys:
-        return {"action": "skip_none_dead"}
-    if not live_keys:
-        if unknown_keys:
-            return {
-                "action": "skip_no_live_feed",
-                "reason": "inconclusive",
-                "unknown": sorted(unknown_keys),
-            }
-        sk_res = pause_sk_buyers_for_keitaro_campaign(row, dry_run=dry_run)
-        return {"action": "all_unmon_pause_sk", **sk_res}
 
     sid, flow_offers = list_regular_flow_feed_offers(client, int(row.campaign_id))
-    if not sid or not flow_offers:
+    if not sid:
         return {"action": "skip_no_stream"}
     fo_by_id = {fo.offer_id: fo for fo in flow_offers}
 
@@ -776,48 +888,46 @@ def apply_unmonetized_feed_shares(
     if not stream:
         return {"action": "skip_no_stream"}
 
-    weights: Dict[int, float] = {}
-    zeros: List[int] = []
-    demoted: List[str] = []
+    slots: List[Tuple[int, int, Optional[str]]] = []
+    seen: set[int] = set()
     for slot in stream.get("offers") or []:
         oid = int(slot.get("offer_id") or 0)
-        if not oid:
+        if not oid or oid in seen:
             continue
-        share = float(slot.get("share") or 0)
+        seen.add(oid)
         fo = fo_by_id.get(oid)
-        fk = fo.feed_key if fo else None
-        if fk and fk in dead_keys:
-            zeros.append(oid)
-            demoted.append(fk)
+        slots.append((oid, int(slot.get("share") or 0), fo.feed_key if fo else None))
+    for fo in flow_offers:
+        if fo.offer_id in seen:
             continue
-        if fo and fo.feed_key in live_keys:
-            weights[oid] = share if share > 0 else 1.0
-        else:
-            if share > 0:
-                weights[oid] = share
+        seen.add(fo.offer_id)
+        slots.append((fo.offer_id, int(fo.share or 0), fo.feed_key))
 
-    live_weights = {oid: w for oid, w in weights.items() if w > 0}
-    if not live_weights:
-        return {"action": "skip_no_live_feed", "demoted": demoted}
+    found_by_feed: Dict[str, Optional[bool]] = {fr.feed_key: fr.found for fr in row.feed_results}
+    plan = plan_unmonetized_feed_shares(
+        enabled=row.enabled,
+        slots=slots,
+        found_by_feed=found_by_feed,
+    )
+    out = plan.as_dict()
+    out["stream_id"] = sid
+    if plan.action != "apply" and plan.action != "all_unmon_pause_sk":
+        return out
+
+    if plan.action == "all_unmon_pause_sk":
+        sk_res = pause_sk_buyers_for_keitaro_campaign(row, dry_run=dry_run)
+        out.update(sk_res)
+        return out
 
     if dry_run:
-        return {
-            "action": "would_apply",
-            "stream_id": sid,
-            "demoted": sorted(set(demoted)),
-            "live_offers": len(live_weights),
-        }
+        out["action"] = "would_apply"
+        return out
 
     from assistance import set_flow_offers_weighted_keep_zeros
 
-    set_flow_offers_weighted_keep_zeros(int(sid), live_weights, zero_offer_ids=zeros)
-    return {
-        "action": "applied",
-        "stream_id": sid,
-        "demoted": sorted(set(demoted)),
-        "live_offers": len(live_weights),
-        "zeroed": len(zeros),
-    }
+    set_flow_offers_weighted_keep_zeros(int(sid), plan.weights, zero_offer_ids=plan.zeros)
+    out["action"] = "applied"
+    return out
 
 
 def _yadore_checkmon_fields(y: Dict[str, Any]) -> Dict[str, Any]:
@@ -1032,7 +1142,7 @@ def format_checkmon_report_block(row: CampaignCheckmonRow, *, ts: str, dry_run: 
     yadore_click = _yadore_click_url_from_row(row)
     if yadore_click:
         lines.append(f"yadore_click_url: {yadore_click}")
-    lines.extend(["", "Feed monetization (no weight changes):"])
+    lines.extend(["", "Feed monetization:"])
     if row.error:
         lines.append(f"  ERROR: {row.error}")
         return "\n".join(lines)
@@ -1224,9 +1334,11 @@ def run_checkmon_update_notes(
     require_url_geo: bool = True,
 ) -> Dict[str, Any]:
     """
-    Run per-feed monetization checks, write the report into campaign notes, and
-    zero Flow 2 shares for feeds whose live probe is unmonetized (remaining feeds
-    are renormalized). Disable with ``KEITARO_FEED_BALANCE_APPLY_SHARES=0``.
+    Run per-feed monetization checks and write the report into campaign notes.
+
+    Share changes run only when notes have ``enabled: yes``: unmonetized feeds
+    go to share=0 and remaining *already-positive* offers keep their ratio.
+    Disable share PUTs entirely with ``KEITARO_FEED_BALANCE_APPLY_SHARES=0``.
     """
     c = client or KeitaroClient()
     clear_feed_balance_sk_cache()
